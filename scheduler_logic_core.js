@@ -1288,7 +1288,7 @@
 								        if (block.event === 'League Game' || block.event === 'Specialty League') {
 								            pick = { field: "Unassigned League", sport: null, _activity: "Free" };
 								        }
-								        // 1) Specific buckets
+								       // 1) Specific buckets
         else if (block.event === 'Special Activity') {
             pick = window.findBestSpecial?.(
                 block,
@@ -1311,9 +1311,8 @@
                 divisions,
                 historicalCounts // <--- ADDED
             );
-        } else if (block.event === 'Swim') {
-            pick = { field: "Swim", sport: null, _activity: "Swim" };
-        }
+        } 
+        // ... (Swim block) ...
 
         // 2) Fallback to general
         if (!pick) {
