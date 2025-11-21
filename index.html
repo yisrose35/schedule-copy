@@ -123,6 +123,7 @@
                 <!-- MAIN CONTENT -->
                 <main class="app-content">
                     <h1 class="app-page-title">🏕️ Camp Scheduler</h1>
+
                     <!-- SETUP TAB -->
                     <div id="setup" class="tab-content active">
                         <h3>Add Divisions</h3>
@@ -279,21 +280,6 @@
     <script src="updates.js" defer></script>
 
     <script>
-        function enhanceBunkPill(bunkEl) {
-    if (!bunkEl || bunkEl.dataset.pillEnhanced === "true") return;
-    bunkEl.dataset.pillEnhanced = "true";
-
-    // Make sure the bunk text remains visible
-    bunkEl.style.display = "inline-flex";
-    bunkEl.style.alignItems = "center";
-    bunkEl.style.justifyContent = "center";
-    bunkEl.style.padding = "4px 10px";
-    bunkEl.style.borderRadius = "12px";
-    bunkEl.style.backgroundColor = "#e0e0e0";
-    bunkEl.style.color = "#111";  // <-- ensures text visible
-    bunkEl.style.fontWeight = "500";
-}
-
         // ============================
         // Helpers for color parsing
         // ============================
@@ -347,6 +333,14 @@
 
             let draggingBunk = null;
 
+            // NO-OP enhancer to avoid "white pill" issues
+            function enhanceBunkPill(bunkEl) {
+                if (!bunkEl || bunkEl.dataset.pillEnhanced === 'true') return;
+                bunkEl.dataset.pillEnhanced = 'true';
+                // Do NOT change text or innerHTML here.
+                // We just mark it so we don't enhance twice.
+            }
+
             function makeBunkDraggable(bunkEl) {
                 if (!bunkEl || bunkEl.dataset.dragEnhanced === 'true') return;
                 bunkEl.dataset.dragEnhanced = 'true';
@@ -395,17 +389,17 @@
             }
 
             function getDivisionName(wrapper) {
-    // Look ONLY for the division number label inside the button
-    const labelEl = wrapper.querySelector('.division-number, .divisionLabel, .division-name');
-    if (labelEl) {
-        return labelEl.textContent.trim().replace(/[^A-Za-z0-9]/g, '');
-    }
+                // Look for the main division button span (created by app1.js)
+                const titleSpan = wrapper.querySelector('.bunk-button');
+                if (titleSpan) {
+                    return titleSpan.textContent.trim();
+                }
 
-    // Backup option: use stored dataset
-    const ds = wrapper.dataset.divisionName;
-    if (ds) return ds.trim();
+                // Backup option: use stored dataset
+                const ds = wrapper.dataset.divisionName;
+                if (ds) return ds.trim();
 
-    return ''; // No fallback guesswork — prevents weird names
+                return ''; // No fallback guesswork — prevents weird names like "1toUpdate"
             }
 
             function getDivisionColor(wrapper) {
@@ -434,7 +428,8 @@
 
                 const bunkSection = document.createElement('div');
                 bunkSection.style.marginTop = '10px';
-              const headerRow = document.createElement('div');
+
+                const headerRow = document.createElement('div');
                 headerRow.style.display = 'flex';
                 headerRow.style.alignItems = 'center';
                 headerRow.style.justifyContent = 'space-between';
@@ -482,7 +477,11 @@
                 setupDropZone(bunkContainer);
 
                 addBtn.addEventListener('click', () => {
-                    const nameRaw = prompt(`Bunk name / number for Division ${divisionName || ''}`.trim());
+                    const nameRaw = prompt(
+                        divisionName
+                            ? `Bunk name / number for Division ${divisionName}?`
+                            : 'Bunk name / number for this division?'
+                    );
                     if (!nameRaw) return;
                     const name = nameRaw.trim();
                     if (!name) return;
@@ -490,8 +489,9 @@
                     const bunk = document.createElement('span');
                     bunk.className = 'bunk-button';
                     bunk.textContent = name;
+                    enhanceBunkPill(bunk);
                     makeBunkDraggable(bunk);
-                    enhanceBunkPill(bunk); makeBunkDraggable(bunk); bunkContainer.appendChild(bunk);
+                    bunkContainer.appendChild(bunk);
                 });
             }
 
@@ -502,7 +502,13 @@
             }
 
             function prepareAllBunks() {
-                document.querySelectorAll('.bunk-button').forEach(makeBunkDraggable);
+                // Only bunk buttons inside the bunk containers (not division labels)
+                document
+                    .querySelectorAll('.division-bunks-container .bunk-button')
+                    .forEach(b => {
+                        enhanceBunkPill(b);
+                        makeBunkDraggable(b);
+                    });
             }
 
             function autoPlaceExistingBunksByColor() {
@@ -540,40 +546,45 @@
                     });
 
                     if (best && best.bunkContainer) {
+                        enhanceBunkPill(bunk);
                         makeBunkDraggable(bunk);
-                        best.enhanceBunkPill(bunk); makeBunkDraggable(bunk); bunkContainer.appendChild(bunk);
+                        best.bunkContainer.appendChild(bunk);
                     }
                 });
-              // After moving, clear the unassigned container so nothing is "floating"
+
+                // After moving, clear the unassigned container so nothing is "floating"
                 unassigned.innerHTML = '';
             }
 
             // Public hook for tab switch / initial load
             window.refreshBunksUI = function () {
                 enhanceAllDivisions();
-                prepareAllBunks();
                 autoPlaceExistingBunksByColor();
+                prepareAllBunks();
             };
 
             // Observe changes so we react to app1.js adding divisions/bunks
-            const divisionButtons = document.getElementById('divisionButtons');
-            if (divisionButtons && 'MutationObserver' in window) {
-                const obs1 = new MutationObserver(() => {
-                    window.refreshBunksUI();
-                });
-                obs1.observe(divisionButtons, { childList: true, subtree: true });
-            }
+            document.addEventListener('DOMContentLoaded', () => {
+                const divisionButtons = document.getElementById('divisionButtons');
+                const unassignedEl = document.getElementById('unassignedBunks');
 
-            const unassignedEl = document.getElementById('unassignedBunks');
-            if (unassignedEl && 'MutationObserver' in window) {
-                const obs2 = new MutationObserver(() => {
-                    window.refreshBunksUI();
-                });
-                obs2.observe(unassignedEl, { childList: true, subtree: true });
-            }
+                if (divisionButtons && 'MutationObserver' in window) {
+                    const obs1 = new MutationObserver(() => {
+                        window.refreshBunksUI?.();
+                    });
+                    obs1.observe(divisionButtons, { childList: true, subtree: true });
+                }
 
-            // Initial run
-            window.refreshBunksUI();
+                if (unassignedEl && 'MutationObserver' in window) {
+                    const obs2 = new MutationObserver(() => {
+                        window.refreshBunksUI?.();
+                    });
+                    obs2.observe(unassignedEl, { childList: true, subtree: true });
+                }
+
+                // Initial run
+                window.refreshBunksUI?.();
+            });
         })();
 
         function showTab(id) {
