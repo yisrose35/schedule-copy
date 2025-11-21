@@ -2,9 +2,10 @@
 // leagues.js
 //
 // UPDATED:
-// - PRIORITY FIX: Reads "League Game X" directly from the Schedule text.
-// - Fallback: If schedule text is generic, uses Auto-Count (History + 1).
-// - Ignores 'continuation' slots.
+// - Import Logic: Now prioritizes the explicit "League Game X" title 
+//   from the schedule block (entry._activity) before falling back to 
+//   auto-numbering.
+// - Handles multiple games per day correctly.
 // ===================================================================
 
 (function () {
@@ -594,25 +595,18 @@
         const foundMatches = new Set(); 
         const saveButton = target.parentElement.querySelector("button[style*='background: rgb(40, 167, 69)']") || target.parentElement.lastElementChild;
 
-        // --- 1. Calculate Fallback Auto-Count ---
+        // --- 1. Determine Previous Game Count ---
         let maxLeagueGameNum = 0;
         (league.games || []).forEach(g => {
-            (g.matches || []).forEach(m => {
-                if(m.timeLabel) {
-                    const match = m.timeLabel.match(/League Game (\d+)/);
-                    if(match) {
-                        const num = parseInt(match[1]);
-                        if(num > maxLeagueGameNum) maxLeagueGameNum = num;
-                    }
-                }
-            });
-            if(maxLeagueGameNum === 0) maxLeagueGameNum = league.games.length;
+            // Try to extract number from name "Game Set 5" or similar
+            if (g.name) {
+                const n = parseInt(g.name.replace(/\D/g, ''));
+                if (!isNaN(n) && n > maxLeagueGameNum) maxLeagueGameNum = n;
+            }
         });
 
-        // --- 2. Gather Matches ---
+        // --- 2. Gather Matches from Schedule ---
         const groupedMatches = {};
-        // Helper to track if we are using custom schedule labels or fallback
-        const slotsWithCustomLabels = new Set(); 
 
         league.teams.forEach(team => {
             const schedule = assignments[team] || [];
@@ -620,12 +614,15 @@
                 // IGNORE CONTINUATIONS
                 if (entry && entry._h2h && !entry.continuation) {
                     const label = entry.sport || ""; 
+                    
+                    // Attempt to extract teams from string: "Team A vs Team B (Sport)"
                     const match = label.match(/^(.*?) vs (.*?) \(/);
 
                     if (match) {
                         const t1 = match[1].trim();
                         const t2 = match[2].trim();
 
+                        // Ensure these teams belong to THIS league
                         if (league.teams.includes(t1) && league.teams.includes(t2)) {
                             const uniqueKey = [t1, t2].sort().join(" vs ") + "::" + slotIndex;
                             
@@ -635,15 +632,20 @@
                                 if(!groupedMatches[slotIndex]) groupedMatches[slotIndex] = { matches: [], label: null };
                                 groupedMatches[slotIndex].matches.push({ t1, t2 });
 
-                                // ** NEW: EXTRACT "League Game 5" from the schedule text **
-                                // Look for content inside parens: e.g. "(League Game 5)"
-                                const parenMatch = label.match(/\((.*?)\)$/);
-                                if (parenMatch) {
-                                    const textInParens = parenMatch[1];
-                                    // Check if it contains "Game" or "League" + number
-                                    if (textInParens.match(/Game \d+/i)) {
-                                        groupedMatches[slotIndex].label = textInParens; 
-                                        slotsWithCustomLabels.add(slotIndex);
+                                // ** PRIORITY: Check for explicit "League Game X" title in the activity field **
+                                // This catches manually named blocks or specific skeleton items
+                                const explicitName = (entry.field && typeof entry.field === 'string') ? entry.field : entry._activity;
+                                if (explicitName && explicitName.match(/League Game \d+/i)) {
+                                    groupedMatches[slotIndex].label = explicitName;
+                                } 
+                                // ** SECONDARY: Check for parens in the sport string **
+                                else {
+                                    const parenMatch = label.match(/\((.*?)\)$/);
+                                    if (parenMatch) {
+                                        const textInParens = parenMatch[1];
+                                        if (textInParens.match(/Game \d+/i)) {
+                                            groupedMatches[slotIndex].label = textInParens; 
+                                        }
                                     }
                                 }
                             }
@@ -653,6 +655,7 @@
             });
         });
 
+        // Sort slots by time
         const sortedSlots = Object.keys(groupedMatches).sort((a,b) => parseInt(a) - parseInt(b));
         
         if (sortedSlots.length === 0) {
@@ -660,16 +663,17 @@
             return;
         }
 
-        // --- 3. Render ---
+        // --- 3. Render Groups ---
         sortedSlots.forEach((slotIdx, displayIndex) => {
             const group = groupedMatches[slotIdx];
             let gameLabel = "";
 
-            // PRIORITY: Use label from schedule if it exists
+            // PRIORITY: Use specific label found in schedule (e.g. "League Game 5")
             if (group.label) {
                 gameLabel = group.label;
             } else {
-                // FALLBACK: Use History + 1
+                // FALLBACK: Sequential numbering based on History + Today's Order
+                // If we found 2 slots today, first is X+1, second is X+2
                 const gameNumber = maxLeagueGameNum + displayIndex + 1;
                 gameLabel = `League Game ${gameNumber}`;
             }
@@ -683,6 +687,8 @@
                 addMatchRow(target, m.t1, m.t2, "", "", saveButton, gameLabel);
             });
         });
+        
+        if(saveButton) saveButton.style.display = "inline-block";
     }
 
     function saveGameResults(league, gameId, container) {
@@ -714,10 +720,13 @@
         if (results.length === 0) return;
 
         if (gameId === "new") {
+            // Use the first label found in the import as the Game Name, or generic
+            const firstLabel = results[0].timeLabel || `Game Set ${league.games.length + 1}`;
+            
             league.games.push({
                 id: Date.now(),
                 date: window.currentScheduleDate || new Date().toLocaleDateString(),
-                name: `Game Set ${league.games.length + 1}`,
+                name: firstLabel,
                 matches: results
             });
         } else {
