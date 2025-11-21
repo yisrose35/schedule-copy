@@ -601,11 +601,13 @@ function loadData() {
 
         // Ensure time fields exist on old data
         Object.keys(divisions).forEach(divName => {
-            divisions[divName].startTime = divisions[divName].startTime || "";
-            divisions[divName].endTime = divisions[divName].endTime || "";
-            divisions[divName].bunks = divisions[divName].bunks || [];
-            divisions[divName].color = divisions[divName].color || defaultColors[0];
-        });
+    divisions[divName].startTime = divisions[divName].startTime || "";
+    divisions[divName].endTime = divisions[divName].endTime || "";
+    divisions[divName].bunks = divisions[divName].bunks || [];
+    sortBunksInPlace(divisions[divName].bunks);
+    divisions[divName].color = divisions[divName].color || defaultColors[0];
+});
+
 
         availableDivisions = (data.availableDivisions && Array.isArray(data.availableDivisions))
             ? data.availableDivisions.slice()
