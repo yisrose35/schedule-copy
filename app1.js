@@ -2,19 +2,14 @@
 // app1.js
 //
 // UPDATED (DIVISIONS LIKE FIELDS + SORTED BUNKS):
-// - Setup tab mirrors Fields layout:
-//   - Left: master list of Divisions (#divisionButtons) using .list-item.
-//   - Right: detail pane (#division-detail-pane) for the selected division.
-// - Clicking a division on the left opens its editor on the right:
-//   - Editable division name
-//   - Delete button
-//   - Color picker
-//   - Start/End time inputs (validated, am/pm required)
-//   - Bunks list (rename via double-click, remove via X)
-//   - Add-bunk input at the bottom
-// - NEW: bunks are automatically kept in numeric order, so
-//   "Bunk 1, Bunk 3, Bunk 2" becomes "Bunk 1, Bunk 2, Bunk 3".
-// - All data is persisted in global settings (app1) like Fields.
+// - Setup tab mirrors Fields layout.
+// - Division detail pane manages color, times, and bunks.
+// - Bunks are automatically kept in numeric order.
+// - NEW: Bunks are rendered as "pills" using the same styling
+//   as sport pills (activity-button).
+// - NEW: Clicking a bunk pill:
+//      • 2 clicks (double tap)  -> inline rename
+//      • 3+ clicks (quick)      -> remove bunk from this division
 //
 // Existing specialActivities, skeleton, and sports logic kept.
 // =================================================================
@@ -25,7 +20,7 @@
 // -------------------- State --------------------
 let bunks = [];
 let divisions = {}; // { divName:{ bunks:[], color, startTime, endTime } }
-let specialActivities = []; // For special_activities.js
+let specialActivities = [];
 
 let availableDivisions = [];
 let selectedDivision = null;
@@ -33,7 +28,7 @@ let selectedDivision = null;
 // Master list of all sports
 let allSports = [];
 const defaultSports = [
-    "Baseball", "Basketball", "Football", "Hockey", "Kickball", 
+    "Baseball", "Basketball", "Football", "Hockey", "Kickball",
     "Lacrosse", "Newcomb", "Punchball", "Soccer", "Volleyball"
 ];
 
@@ -48,7 +43,6 @@ const defaultColors = [
 ];
 let colorIndex = 0;
 
-// Expose to window
 window.divisions = divisions;
 window.availableDivisions = availableDivisions;
 
@@ -81,30 +75,24 @@ function parseTimeToMinutes(str) {
         mer = s.endsWith("am") ? "am" : "pm";
         s = s.replace(/am|pm/g, "").trim();
     }
-    
     const m = s.match(/^(\d{1,2})\s*:\s*(\d{2})$/);
     if (!m) return null;
     let hh = parseInt(m[1], 10);
     const mm = parseInt(m[2], 10);
     if (Number.isNaN(hh) || Number.isNaN(mm) || mm < 0 || mm > 59) return null;
-
     if (!mer) return null; // require am/pm
-
-    if (hh === 12) hh = (mer === "am") ? 0 : 12; // 12am -> 0, 12pm -> 12
-    else if (mer === "pm") hh += 12;             // 1pm -> 13
-
+    if (hh === 12) hh = (mer === "am") ? 0 : 12;
+    else if (mer === "pm") hh += 12;
     return hh * 60 + mm;
 }
 
-// Sort helper: put "Bunk 1, Bunk 2, Bunk 10" in numeric order
+// Sort helper: "Bunk 1, Bunk 3, Bunk 2" -> numeric order
 function compareBunks(a, b) {
     const sa = String(a);
     const sb = String(b);
-
     const re = /(\d+)/;
     const ma = sa.match(re);
     const mb = sb.match(re);
-
     if (ma && mb) {
         const na = parseInt(ma[1], 10);
         const nb = parseInt(mb[1], 10);
@@ -112,8 +100,6 @@ function compareBunks(a, b) {
             return na - nb;
         }
     }
-
-    // Fallback: natural string compare
     return sa.localeCompare(sb, undefined, { numeric: true, sensitivity: "base" });
 }
 
@@ -152,6 +138,38 @@ function renameBunkEverywhere(oldName, newName) {
     saveData();
     renderDivisionDetailPane();
     window.updateTable?.();
+}
+
+/**
+ * Inline edit for bunk pill (used on "double tap").
+ */
+function startBunkInlineEdit(chipEl, oldName) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = oldName;
+    input.className = "bunk-edit-input";
+    chipEl.replaceWith(input);
+    input.focus();
+
+    function finish(save) {
+        if (!save) {
+            renderDivisionDetailPane();
+            return;
+        }
+        const val = input.value.trim();
+        if (!val || val === oldName) {
+            renderDivisionDetailPane();
+            return;
+        }
+        renameBunkEverywhere(oldName, val);
+        // renderDivisionDetailPane already called inside rename
+    }
+
+    input.onblur = () => finish(true);
+    input.onkeyup = e => {
+        if (e.key === "Enter") finish(true);
+        else if (e.key === "Escape") finish(false);
+    };
 }
 
 // -------------------- Bunks (logic; UI in detail pane) --------------------
@@ -205,7 +223,6 @@ function addDivision() {
     window.divisions = divisions;
 
     selectedDivision = name;
-
     i.value = "";
     saveData();
     setupDivisionButtons();
@@ -417,6 +434,7 @@ function renderDivisionDetailPane() {
     timeSection.appendChild(timeTitle);
 
     const timeForm = document.createElement("div");
+    timeForm.className = "time-row";
     timeForm.style.display = "flex";
     timeForm.style.alignItems = "center";
     timeForm.style.gap = "6px";
@@ -496,39 +514,40 @@ function renderDivisionDetailPane() {
     } else {
         const sorted = divObj.bunks.slice().sort(compareBunks);
         sorted.forEach(bunkName => {
-            const chip = document.createElement("span");
+            // Make bunk pills look like sport pills: use activity-button
+            const chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "activity-button bunk-pill";
             chip.textContent = bunkName;
-            chip.style.padding = "4px 8px";
-            chip.style.borderRadius = "12px";
-            chip.style.border = "1px solid #ccc";
-            chip.style.cursor = "pointer";
-            chip.style.background = "#f0f0f0";
-            chip.style.display = "inline-flex";
-            chip.style.alignItems = "center";
-            chip.style.gap = "4px";
 
-            // rename on double-click
-            makeEditable(chip, newName => {
-                renameBunkEverywhere(bunkName, newName);
+            let clickCount = 0;
+            let clickTimer = null;
+
+            chip.addEventListener("click", e => {
+                e.stopPropagation();
+                clickCount++;
+
+                if (!clickTimer) {
+                    clickTimer = setTimeout(() => {
+                        if (clickCount === 2) {
+                            // Double tap: inline rename
+                            startBunkInlineEdit(chip, bunkName);
+                        } else if (clickCount >= 3) {
+                            // Triple click: remove from THIS division
+                            if (confirm(`Remove bunk "${bunkName}" from this division?`)) {
+                                const idx = divObj.bunks.indexOf(bunkName);
+                                if (idx !== -1) divObj.bunks.splice(idx, 1);
+                                saveData();
+                                renderDivisionDetailPane();
+                                window.updateTable?.();
+                            }
+                        }
+                        clickCount = 0;
+                        clickTimer = null;
+                    }, 260); // short window to detect multi-clicks
+                }
             });
 
-            // remove from this division
-            const xBtn = document.createElement("button");
-            xBtn.textContent = "×";
-            xBtn.style.border = "none";
-            xBtn.style.background = "transparent";
-            xBtn.style.cursor = "pointer";
-            xBtn.style.fontSize = "14px";
-            xBtn.onclick = e => {
-                e.stopPropagation();
-                const idx = divObj.bunks.indexOf(bunkName);
-                if (idx !== -1) divObj.bunks.splice(idx, 1);
-                saveData();
-                renderDivisionDetailPane();
-                window.updateTable?.();
-            };
-
-            chip.appendChild(xBtn);
             bunkList.appendChild(chip);
         });
     }
@@ -574,7 +593,7 @@ function renderDivisionDetailPane() {
 // -------------------- Persistence --------------------
 function saveData() {
     const app1Data = window.loadGlobalSettings?.().app1 || {};
-    const data = { 
+    const data = {
         ...app1Data,
         bunks,
         divisions,
@@ -619,7 +638,6 @@ function loadData() {
 
         savedSkeletons = data.savedSkeletons || {};
         skeletonAssignments = data.skeletonAssignments || {};
-
     } catch (e) {
         console.error("Error loading app1 data:", e);
     }
