@@ -3889,21 +3889,22 @@
 								        leagues: yesterdayData.leagueAssignments || {}
 								    };
 								
-								    return {
-								        divisions,
-								        availableDivisions,
-								        activityProperties,
-								        allActivities,
-								        h2hActivities,
-								        fieldsBySport,
-								        masterLeagues,
-								        masterSpecialtyLeagues,
-								        yesterdayHistory,
-								        rotationHistory,
-								        disabledLeagues,
-								        disabledSpecialtyLeagues
-								    };
-								}
+								   return {
+        divisions,
+        availableDivisions,
+        activityProperties,
+        allActivities,
+        h2hActivities,
+        fieldsBySport,
+        masterLeagues,
+        masterSpecialtyLeagues,
+        yesterdayHistory,
+        rotationHistory,
+        disabledLeagues,
+        disabledSpecialtyLeagues,
+        historicalCounts // <--- ADDED THIS
+    };
+}
 								
 								// END IIFE
 								})();
