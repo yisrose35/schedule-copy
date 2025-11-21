@@ -523,30 +523,24 @@ function renderDivisionDetailPane() {
             let clickCount = 0;
             let clickTimer = null;
 
-            chip.addEventListener("click", e => {
-                e.stopPropagation();
-                clickCount++;
+            // --- NEW CLICK BEHAVIOR ---
+// Single click = rename
+// Double click = delete
+chip.onclick = (e) => {
+    e.stopPropagation();
+    startBunkInlineEdit(chip, bunkName);
+};
 
-                if (!clickTimer) {
-                    clickTimer = setTimeout(() => {
-                        if (clickCount === 2) {
-                            // Double tap: inline rename
-                            startBunkInlineEdit(chip, bunkName);
-                        } else if (clickCount >= 3) {
-                            // Triple click: remove from THIS division
-                            if (confirm(`Remove bunk "${bunkName}" from this division?`)) {
-                                const idx = divObj.bunks.indexOf(bunkName);
-                                if (idx !== -1) divObj.bunks.splice(idx, 1);
-                                saveData();
-                                renderDivisionDetailPane();
-                                window.updateTable?.();
-                            }
-                        }
-                        clickCount = 0;
-                        clickTimer = null;
-                    }, 260); // short window to detect multi-clicks
-                }
-            });
+chip.ondblclick = (e) => {
+    e.stopPropagation();
+    if (confirm(`Delete bunk "${bunkName}" from this division?`)) {
+        const idx = divObj.bunks.indexOf(bunkName);
+        if (idx !== -1) divObj.bunks.splice(idx, 1);
+        saveData();
+        renderDivisionDetailPane();
+        window.updateTable?.();
+    }
+};
 
             bunkList.appendChild(chip);
         });
