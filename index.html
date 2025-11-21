@@ -333,12 +333,11 @@
 
             let draggingBunk = null;
 
-            // NO-OP enhancer to avoid "white pill" issues
+            // No-op enhancer: keeps text intact, avoids white-chip bug
             function enhanceBunkPill(bunkEl) {
                 if (!bunkEl || bunkEl.dataset.pillEnhanced === 'true') return;
                 bunkEl.dataset.pillEnhanced = 'true';
-                // Do NOT change text or innerHTML here.
-                // We just mark it so we don't enhance twice.
+                // We intentionally do NOT touch innerHTML or text here.
             }
 
             function makeBunkDraggable(bunkEl) {
@@ -389,34 +388,27 @@
             }
 
             function getDivisionName(wrapper) {
-                // Look for the main division button span (created by app1.js)
+                // Main division label created by app1.js
                 const titleSpan = wrapper.querySelector('.bunk-button');
                 if (titleSpan) {
                     return titleSpan.textContent.trim();
                 }
-
-                // Backup option: use stored dataset
                 const ds = wrapper.dataset.divisionName;
                 if (ds) return ds.trim();
-
-                return ''; // No fallback guesswork — prevents weird names like "1toUpdate"
+                return '';
             }
 
             function getDivisionColor(wrapper) {
-                // Try <input class="colorPicker" type="color">
                 const picker = wrapper.querySelector('.colorPicker');
-                if (picker && hexToRgb) {
-                    const rgb = hexToRgb(picker.value);
-                    if (rgb) return rgb;
-                }
-
-                // Fallback: any colored square inside wrapper
+                if (picker) return picker.value || null;
                 const swatch = wrapper.querySelector('.division-color, .divisionColorSwatch, .color-swatch');
-                if (swatch && rgbStringToObj) {
+                if (swatch) {
                     const cs = getComputedStyle(swatch).backgroundColor;
-                    return rgbStringToObj(cs);
+                    const rgb = rgbStringToObj(cs);
+                    if (!rgb) return null;
+                    // Back to rgb string
+                    return cs;
                 }
-
                 return null;
             }
 
@@ -489,6 +481,14 @@
                     const bunk = document.createElement('span');
                     bunk.className = 'bunk-button';
                     bunk.textContent = name;
+
+                    // ✅ give it this division's color so it's not a white pill
+                    const color = getDivisionColor(wrapper);
+                    if (color) {
+                        bunk.style.backgroundColor = color;
+                        bunk.style.color = '#fff';
+                    }
+
                     enhanceBunkPill(bunk);
                     makeBunkDraggable(bunk);
                     bunkContainer.appendChild(bunk);
@@ -502,10 +502,11 @@
             }
 
             function prepareAllBunks() {
-                // Only bunk buttons inside the bunk containers (not division labels)
                 document
                     .querySelectorAll('.division-bunks-container .bunk-button')
                     .forEach(b => {
+                        // ❌ kill old double-click edit from app1.js to prevent duplication
+                        b.ondblclick = null;
                         enhanceBunkPill(b);
                         makeBunkDraggable(b);
                     });
@@ -520,11 +521,17 @@
                 if (!divisionWrappers.length) return;
 
                 const divisions = divisionWrappers.map(wrapper => {
-                    const color = getDivisionColor(wrapper);
+                    const colorHex = getDivisionColor(wrapper);
+                    let rgb = null;
+                    if (colorHex && colorHex.startsWith('#')) {
+                        rgb = hexToRgb(colorHex);
+                    } else if (colorHex) {
+                        rgb = rgbStringToObj(colorHex);
+                    }
                     const bunkContainer =
                         wrapper.querySelector('.division-bunks-container') || wrapper;
                     setupDropZone(bunkContainer);
-                    return { wrapper, color, bunkContainer };
+                    return { wrapper, color: rgb, bunkContainer, colorHex };
                 });
 
                 const unassigned = document.getElementById('unassignedBunks');
@@ -546,13 +553,18 @@
                     });
 
                     if (best && best.bunkContainer) {
+                        // ensure color/text visible
+                        if (best.colorHex) {
+                            bunk.style.backgroundColor = best.colorHex;
+                            bunk.style.color = '#fff';
+                        }
                         enhanceBunkPill(bunk);
                         makeBunkDraggable(bunk);
                         best.bunkContainer.appendChild(bunk);
                     }
                 });
 
-                // After moving, clear the unassigned container so nothing is "floating"
+                // Clear unassigned container after moving
                 unassigned.innerHTML = '';
             }
 
