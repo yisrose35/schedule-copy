@@ -1,79 +1,84 @@
 // =================================================================
 // app1.js
 //
-// UPDATED (DIVISIONS LIKE FIELDS + SORTED BUNKS):
-// - Setup tab mirrors Fields layout.
-// - Division detail pane manages color, times, and bunks.
-// - Bunks are automatically kept in numeric order.
-// - NEW: Bunks are rendered as "pills" using the same styling
-//   as sport pills (activity-button).
-// - NEW: Clicking a bunk pill:
-//      • 2 clicks (double tap)  -> inline rename
-//      • 3+ clicks (quick)      -> remove bunk from this division
+// UPDATED (Divisions like Fields + Bunk Pills):
+// - Setup tab mirrors Fields layout: master list (left) + detail pane (right).
+// - Each division stores: bunks[], color, startTime, endTime.
+// - Bunks are auto-sorted (numeric aware, e.g. 1,2,3 even if added 1,3,2).
+// - Bunks are rendered as "pills" like field sport pills (activity-button).
+// - Single-click on a bunk pill (with small delay) => rename.
+// - Double-click on a bunk pill => delete from this division (no rename).
 //
-// Existing specialActivities, skeleton, and sports logic kept.
+// Existing features kept:
+// - Global sports list (getAllGlobalSports/addGlobalSport).
+// - Skeleton template system.
+// - Special activities array + helpers.
+// - addDivisionBunk helper exposed to other modules.
 // =================================================================
 
-(function() {
-'use strict';
+(function () {
+  'use strict';
 
-// -------------------- State --------------------
-let bunks = [];
-let divisions = {}; // { divName:{ bunks:[], color, startTime, endTime } }
-let specialActivities = [];
+  // -------------------- State --------------------
+  let bunks = [];
+  let divisions = {}; // { divName: { bunks:[], color, startTime, endTime } }
+  let specialActivities = [];
 
-let availableDivisions = [];
-let selectedDivision = null;
+  let availableDivisions = [];
+  let selectedDivision = null;
 
-// Master list of all sports
-let allSports = [];
-const defaultSports = [
+  // Master sport list
+  let allSports = [];
+  const defaultSports = [
     "Baseball", "Basketball", "Football", "Hockey", "Kickball",
     "Lacrosse", "Newcomb", "Punchball", "Soccer", "Volleyball"
-];
+  ];
 
-// Skeleton template management
-let savedSkeletons = {};
-let skeletonAssignments = {}; // { "Monday": "templateName", "Default": "templateName" }
+  // Skeleton templates
+  let savedSkeletons = {};
+  let skeletonAssignments = {}; // { "Monday": "templateName", "Default": "templateName" }
 
-const defaultColors = [
-    '#4CAF50','#2196F3','#E91E63','#FF9800',
-    '#9C27B0','#00BCD4','#FFC107','#F44336',
-    '#8BC34A','#3F51B5'
-];
-let colorIndex = 0;
+  const defaultColors = [
+    '#4CAF50', '#2196F3', '#E91E63', '#FF9800',
+    '#9C27B0', '#00BCD4', '#FFC107', '#F44336',
+    '#8BC34A', '#3F51B5'
+  ];
+  let colorIndex = 0;
 
-window.divisions = divisions;
-window.availableDivisions = availableDivisions;
+  // Expose for other modules
+  window.divisions = divisions;
+  window.availableDivisions = availableDivisions;
 
-// -------------------- Helpers --------------------
-function makeEditable(el, save) {
+  // -------------------- Helpers --------------------
+  function makeEditable(el, save) {
     el.ondblclick = e => {
-        e.stopPropagation();
-        const old = el.textContent;
-        const input = document.createElement("input");
-        input.type = "text";
-        input.value = old;
-        el.replaceWith(input);
-        input.focus();
-        function done() {
-            const val = input.value.trim();
-            if (val && val !== old) save(val);
-            el.textContent = val || old;
-            input.replaceWith(el);
-        }
-        input.onblur = done;
-        input.onkeyup = e => { if (e.key === "Enter") done(); };
-    };
-}
+      e.stopPropagation();
+      const old = el.textContent;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = old;
+      el.replaceWith(input);
+      input.focus();
 
-function parseTimeToMinutes(str) {
+      function done() {
+        const val = input.value.trim();
+        if (val && val !== old) save(val);
+        el.textContent = val || old;
+        input.replaceWith(el);
+      }
+
+      input.onblur = done;
+      input.onkeyup = e => { if (e.key === "Enter") done(); };
+    };
+  }
+
+  function parseTimeToMinutes(str) {
     if (!str || typeof str !== "string") return null;
     let s = str.trim().toLowerCase();
     let mer = null;
     if (s.endsWith("am") || s.endsWith("pm")) {
-        mer = s.endsWith("am") ? "am" : "pm";
-        s = s.replace(/am|pm/g, "").trim();
+      mer = s.endsWith("am") ? "am" : "pm";
+      s = s.replace(/am|pm/g, "").trim();
     }
     const m = s.match(/^(\d{1,2})\s*:\s*(\d{2})$/);
     if (!m) return null;
@@ -81,69 +86,70 @@ function parseTimeToMinutes(str) {
     const mm = parseInt(m[2], 10);
     if (Number.isNaN(hh) || Number.isNaN(mm) || mm < 0 || mm > 59) return null;
     if (!mer) return null; // require am/pm
+
     if (hh === 12) hh = (mer === "am") ? 0 : 12;
     else if (mer === "pm") hh += 12;
     return hh * 60 + mm;
-}
+  }
 
-// Sort helper: "Bunk 1, Bunk 3, Bunk 2" -> numeric order
-function compareBunks(a, b) {
+  // Sort helper: "Bunk 1, Bunk 3, Bunk 2" -> numeric order
+  function compareBunks(a, b) {
     const sa = String(a);
     const sb = String(b);
     const re = /(\d+)/;
     const ma = sa.match(re);
     const mb = sb.match(re);
     if (ma && mb) {
-        const na = parseInt(ma[1], 10);
-        const nb = parseInt(mb[1], 10);
-        if (!Number.isNaN(na) && !Number.isNaN(nb) && na !== nb) {
-            return na - nb;
-        }
+      const na = parseInt(ma[1], 10);
+      const nb = parseInt(mb[1], 10);
+      if (!Number.isNaN(na) && !Number.isNaN(nb) && na !== nb) {
+        return na - nb;
+      }
     }
     return sa.localeCompare(sb, undefined, { numeric: true, sensitivity: "base" });
-}
+  }
 
-function sortBunksInPlace(arr) {
+  function sortBunksInPlace(arr) {
     if (!Array.isArray(arr)) return;
     arr.sort(compareBunks);
-}
+  }
 
-function renameBunkEverywhere(oldName, newName) {
+  function renameBunkEverywhere(oldName, newName) {
     const trimmed = newName.trim();
     if (!trimmed || trimmed === oldName) return;
 
     const exists = bunks.some(
-        b => b.toLowerCase() === trimmed.toLowerCase() && b !== oldName
+      b => b.toLowerCase() === trimmed.toLowerCase() && b !== oldName
     );
     if (exists) {
-        alert("Another bunk with this name already exists.");
-        return;
+      alert("Another bunk with this name already exists.");
+      return;
     }
 
     const idx = bunks.indexOf(oldName);
     if (idx !== -1) bunks[idx] = trimmed;
 
     Object.values(divisions).forEach(d => {
-        const bi = d.bunks.indexOf(oldName);
-        if (bi !== -1) d.bunks[bi] = trimmed;
-        sortBunksInPlace(d.bunks);
+      const bi = d.bunks.indexOf(oldName);
+      if (bi !== -1) d.bunks[bi] = trimmed;
+      sortBunksInPlace(d.bunks);
     });
 
     if (window.scheduleAssignments && window.scheduleAssignments[oldName]) {
-        window.scheduleAssignments[trimmed] = window.scheduleAssignments[oldName];
-        delete window.scheduleAssignments[oldName];
-        window.saveCurrentDailyData?.("scheduleAssignments", window.scheduleAssignments);
+      window.scheduleAssignments[trimmed] = window.scheduleAssignments[oldName];
+      delete window.scheduleAssignments[oldName];
+      window.saveCurrentDailyData?.("scheduleAssignments", window.scheduleAssignments);
     }
 
     saveData();
     renderDivisionDetailPane();
     window.updateTable?.();
-}
+  }
 
-/**
- * Inline edit for bunk pill (used on "double tap").
- */
-function startBunkInlineEdit(chipEl, oldName) {
+  /**
+   * Inline edit for bunk pill (used on single-click after small delay).
+   */
+  function startBunkInlineEdit(chipEl, oldName) {
     const input = document.createElement("input");
     input.type = "text";
     input.value = oldName;
@@ -152,50 +158,50 @@ function startBunkInlineEdit(chipEl, oldName) {
     input.focus();
 
     function finish(save) {
-        if (!save) {
-            renderDivisionDetailPane();
-            return;
-        }
-        const val = input.value.trim();
-        if (!val || val === oldName) {
-            renderDivisionDetailPane();
-            return;
-        }
-        renameBunkEverywhere(oldName, val);
-        // renderDivisionDetailPane already called inside rename
+      if (!save) {
+        renderDivisionDetailPane();
+        return;
+      }
+      const val = input.value.trim();
+      if (!val || val === oldName) {
+        renderDivisionDetailPane();
+        return;
+      }
+      renameBunkEverywhere(oldName, val);
+      // renderDivisionDetailPane called inside rename
     }
 
     input.onblur = () => finish(true);
     input.onkeyup = e => {
-        if (e.key === "Enter") finish(true);
-        else if (e.key === "Escape") finish(false);
+      if (e.key === "Enter") finish(true);
+      else if (e.key === "Escape") finish(false);
     };
-}
+  }
 
-// -------------------- Bunks (logic; UI in detail pane) --------------------
-function addBunkToDivision(divName, bunkName) {
+  // -------------------- Bunks Logic --------------------
+  function addBunkToDivision(divName, bunkName) {
     if (!divName || !bunkName) return;
     const cleanDiv = String(divName).trim();
     const cleanBunk = String(bunkName).trim();
     if (!cleanDiv || !cleanBunk) return;
 
     if (!bunks.includes(cleanBunk)) {
-        bunks.push(cleanBunk);
+      bunks.push(cleanBunk);
     }
 
     const div = divisions[cleanDiv];
     if (div && !div.bunks.includes(cleanBunk)) {
-        div.bunks.push(cleanBunk);
-        sortBunksInPlace(div.bunks);
+      div.bunks.push(cleanBunk);
+      sortBunksInPlace(div.bunks);
     }
 
     saveData();
     renderDivisionDetailPane();
     window.updateTable?.();
-}
+  }
 
-// -------------------- Divisions --------------------
-function addDivision() {
+  // -------------------- Divisions --------------------
+  function addDivision() {
     const i = document.getElementById("divisionInput");
     if (!i) return;
     const raw = i.value.trim();
@@ -203,9 +209,9 @@ function addDivision() {
 
     const name = raw;
     if (availableDivisions.includes(name)) {
-        alert("That division already exists.");
-        i.value = "";
-        return;
+      alert("That division already exists.");
+      i.value = "";
+      return;
     }
 
     const color = defaultColors[colorIndex % defaultColors.length];
@@ -215,10 +221,10 @@ function addDivision() {
     window.availableDivisions = availableDivisions;
 
     divisions[name] = {
-        bunks: [],
-        color,
-        startTime: "",
-        endTime: ""
+      bunks: [],
+      color,
+      startTime: "",
+      endTime: ""
     };
     window.divisions = divisions;
 
@@ -229,111 +235,111 @@ function addDivision() {
     renderDivisionDetailPane();
     window.initLeaguesTab?.();
     window.updateTable?.();
-}
+  }
 
-/**
- * LEFT SIDE: master list of divisions, Fields-style.
- */
-function setupDivisionButtons() {
+  /**
+   * LEFT: master list of divisions (fields-style).
+   */
+  function setupDivisionButtons() {
     const cont = document.getElementById("divisionButtons");
     if (!cont) return;
     cont.innerHTML = "";
 
     if (!availableDivisions || availableDivisions.length === 0) {
-        cont.innerHTML = `<p class="muted">No divisions created yet. Add one above.</p>`;
-        renderDivisionDetailPane();
-        return;
+      cont.innerHTML = `<p class="muted">No divisions created yet. Add one above.</p>`;
+      renderDivisionDetailPane();
+      return;
     }
 
     const colorEnabledEl = document.getElementById("enableColor");
     const colorEnabled = colorEnabledEl ? colorEnabledEl.checked : true;
 
     availableDivisions.forEach(name => {
-        const obj = divisions[name];
-        if (!obj) {
-            console.warn(`Division "${name}" exists in availableDivisions but not in divisions object.`);
-            return;
+      const obj = divisions[name];
+      if (!obj) {
+        console.warn(`Division "${name}" exists in availableDivisions but not in divisions object.`);
+        return;
+      }
+
+      const item = document.createElement("div");
+      item.className = "list-item";
+      if (selectedDivision === name) item.classList.add("selected");
+
+      item.onclick = () => {
+        selectedDivision = name;
+        saveData();
+        setupDivisionButtons();
+        renderDivisionDetailPane();
+      };
+
+      const nameEl = document.createElement("span");
+      nameEl.className = "list-item-name";
+      nameEl.textContent = name;
+
+      if (colorEnabled) {
+        nameEl.style.borderLeft = `8px solid ${obj.color || "#007bff"}`;
+        nameEl.style.paddingLeft = "8px";
+      }
+
+      makeEditable(nameEl, newName => {
+        const trimmed = newName.trim();
+        const old = name;
+        if (!trimmed || trimmed === old) return;
+
+        if (divisions[trimmed]) {
+          alert("A division with this name already exists.");
+          return;
         }
 
-        const item = document.createElement("div");
-        item.className = "list-item";
-        if (selectedDivision === name) item.classList.add("selected");
+        divisions[trimmed] = divisions[old];
+        delete divisions[old];
 
-        item.onclick = () => {
-            selectedDivision = name;
-            saveData();
-            setupDivisionButtons();
-            renderDivisionDetailPane();
-        };
+        const idx = availableDivisions.indexOf(old);
+        if (idx !== -1) availableDivisions[idx] = trimmed;
 
-        const nameEl = document.createElement("span");
-        nameEl.className = "list-item-name";
-        nameEl.textContent = name;
+        if (selectedDivision === old) selectedDivision = trimmed;
 
-        if (colorEnabled) {
-            nameEl.style.borderLeft = `8px solid ${obj.color || "#007bff"}`;
-            nameEl.style.paddingLeft = "8px";
-        }
+        window.divisions = divisions;
+        window.availableDivisions = availableDivisions;
+        saveData();
+        setupDivisionButtons();
+        renderDivisionDetailPane();
+        window.initLeaguesTab?.();
+        window.updateTable?.();
+      });
 
-        makeEditable(nameEl, newName => {
-            const trimmed = newName.trim();
-            const old = name;
-            if (!trimmed || trimmed === old) return;
-
-            if (divisions[trimmed]) {
-                alert("A division with this name already exists.");
-                return;
-            }
-
-            divisions[trimmed] = divisions[old];
-            delete divisions[old];
-
-            const idx = availableDivisions.indexOf(old);
-            if (idx !== -1) availableDivisions[idx] = trimmed;
-
-            if (selectedDivision === old) selectedDivision = trimmed;
-
-            window.divisions = divisions;
-            window.availableDivisions = availableDivisions;
-            saveData();
-            setupDivisionButtons();
-            renderDivisionDetailPane();
-            window.initLeaguesTab?.();
-            window.updateTable?.();
-        });
-
-        item.appendChild(nameEl);
-        cont.appendChild(item);
+      item.appendChild(nameEl);
+      cont.appendChild(item);
     });
 
     renderDivisionDetailPane();
-}
+  }
 
-/**
- * RIGHT SIDE: detail pane for selected division.
- */
-function renderDivisionDetailPane() {
+  /**
+   * RIGHT: detail pane for selected division.
+   */
+  function renderDivisionDetailPane() {
     const pane = document.getElementById("division-detail-pane");
     if (!pane) return;
 
     pane.innerHTML = "";
 
     if (!selectedDivision || !divisions[selectedDivision]) {
-        pane.innerHTML = `
-            <p class="muted">
-                Select a division from the left to edit its details.
-                <br>Here you can:
-                <br>• Set <strong>start / end times</strong>
-                <br>• Add / edit <strong>bunks</strong>
-                <br>• Change the division color
-            </p>
-        `;
-        return;
+      pane.innerHTML = `
+        <p class="muted">
+          Select a division from the left to edit its details.
+          <br>Here you can:
+          <br>• Set <strong>start / end times</strong>
+          <br>• Add / edit <strong>bunks</strong>
+          <br>• Change the division color
+        </p>
+      `;
+      return;
     }
 
     const divObj = divisions[selectedDivision];
 
-    // --- Header: name + delete ---
+    // --- Header (title + delete) ---
     const header = document.createElement("div");
     header.style.display = "flex";
     header.style.justifyContent = "space-between";
@@ -347,28 +353,28 @@ function renderDivisionDetailPane() {
     title.textContent = selectedDivision;
 
     makeEditable(title, newName => {
-        const trimmed = newName.trim();
-        const old = selectedDivision;
-        if (!trimmed || trimmed === old) return;
-        if (divisions[trimmed]) {
-            alert("A division with this name already exists.");
-            return;
-        }
+      const trimmed = newName.trim();
+      const old = selectedDivision;
+      if (!trimmed || trimmed === old) return;
+      if (divisions[trimmed]) {
+        alert("A division with this name already exists.");
+        return;
+      }
 
-        divisions[trimmed] = divisions[old];
-        delete divisions[old];
+      divisions[trimmed] = divisions[old];
+      delete divisions[old];
 
-        const idx = availableDivisions.indexOf(old);
-        if (idx !== -1) availableDivisions[idx] = trimmed;
+      const idx = availableDivisions.indexOf(old);
+      if (idx !== -1) availableDivisions[idx] = trimmed;
 
-        selectedDivision = trimmed;
-        window.divisions = divisions;
-        window.availableDivisions = availableDivisions;
-        saveData();
-        setupDivisionButtons();
-        renderDivisionDetailPane();
-        window.initLeaguesTab?.();
-        window.updateTable?.();
+      selectedDivision = trimmed;
+      window.divisions = divisions;
+      window.availableDivisions = availableDivisions;
+      saveData();
+      setupDivisionButtons();
+      renderDivisionDetailPane();
+      window.initLeaguesTab?.();
+      window.updateTable?.();
     });
 
     const deleteBtn = document.createElement("button");
@@ -380,21 +386,21 @@ function renderDivisionDetailPane() {
     deleteBtn.style.borderRadius = "4px";
     deleteBtn.style.cursor = "pointer";
     deleteBtn.onclick = () => {
-        if (!confirm(`Delete division "${selectedDivision}"? Bunks remain globally but are removed from this division.`)) {
-            return;
-        }
-        const name = selectedDivision;
-        delete divisions[name];
-        const idx = availableDivisions.indexOf(name);
-        if (idx !== -1) availableDivisions.splice(idx, 1);
-        selectedDivision = availableDivisions[0] || null;
-        window.divisions = divisions;
-        window.availableDivisions = availableDivisions;
-        saveData();
-        setupDivisionButtons();
-        renderDivisionDetailPane();
-        window.initLeaguesTab?.();
-        window.updateTable?.();
+      if (!confirm(`Delete division "${selectedDivision}"? Bunks remain globally but are removed from this division.`)) {
+        return;
+      }
+      const name = selectedDivision;
+      delete divisions[name];
+      const idx = availableDivisions.indexOf(name);
+      if (idx !== -1) availableDivisions.splice(idx, 1);
+      selectedDivision = availableDivisions[0] || null;
+      window.divisions = divisions;
+      window.availableDivisions = availableDivisions;
+      saveData();
+      setupDivisionButtons();
+      renderDivisionDetailPane();
+      window.initLeaguesTab?.();
+      window.updateTable?.();
     };
 
     header.appendChild(title);
@@ -415,10 +421,10 @@ function renderDivisionDetailPane() {
     colorInput.type = "color";
     colorInput.value = divObj.color || "#007bff";
     colorInput.oninput = e => {
-        divObj.color = e.target.value;
-        saveData();
-        setupDivisionButtons();
-        window.updateTable?.();
+      divObj.color = e.target.value;
+      saveData();
+      setupDivisionButtons();
+      window.updateTable?.();
     };
 
     colorRow.appendChild(colorLabel);
@@ -460,30 +466,30 @@ function renderDivisionDetailPane() {
     updateBtn.style.padding = "4px 8px";
 
     updateBtn.onclick = () => {
-        const newStart = startInput.value.trim();
-        const newEnd = endInput.value.trim();
+      const newStart = startInput.value.trim();
+      const newEnd = endInput.value.trim();
 
-        const startMin = parseTimeToMinutes(newStart);
-        const endMin = parseTimeToMinutes(newEnd);
+      const startMin = parseTimeToMinutes(newStart);
+      const endMin = parseTimeToMinutes(newEnd);
 
-        if (startMin == null || endMin == null) {
-            alert("Invalid time format. Use '9:00am' or '2:30pm' with am/pm.");
-            return;
-        }
-        if (endMin <= startMin) {
-            alert("End time must be after start time.");
-            return;
-        }
+      if (startMin == null || endMin == null) {
+        alert("Invalid time format. Use '9:00am' or '2:30pm' with am/pm.");
+        return;
+      }
+      if (endMin <= startMin) {
+        alert("End time must be after start time.");
+        return;
+      }
 
-        divObj.startTime = newStart;
-        divObj.endTime = newEnd;
-        saveData();
+      divObj.startTime = newStart;
+      divObj.endTime = newEnd;
+      saveData();
 
-        if (document.getElementById('master-scheduler')?.classList.contains('active')) {
-            window.initMasterScheduler?.();
-        } else if (document.getElementById('daily-adjustments')?.classList.contains('active')) {
-            window.initDailyAdjustments?.();
-        }
+      if (document.getElementById('master-scheduler')?.classList.contains('active')) {
+        window.initMasterScheduler?.();
+      } else if (document.getElementById('daily-adjustments')?.classList.contains('active')) {
+        window.initDailyAdjustments?.();
+      }
     };
 
     timeForm.appendChild(startInput);
@@ -506,49 +512,54 @@ function renderDivisionDetailPane() {
     bunkList.style.gap = "6px";
 
     if (!divObj.bunks || divObj.bunks.length === 0) {
-        const msg = document.createElement("p");
-        msg.className = "muted";
-        msg.style.margin = "4px 0 0 0";
-        msg.textContent = "No bunks assigned yet. Add one below.";
-        bunksSection.appendChild(msg);
+      const msg = document.createElement("p");
+      msg.className = "muted";
+      msg.style.margin = "4px 0 0 0";
+      msg.textContent = "No bunks assigned yet. Add one below.";
+      bunksSection.appendChild(msg);
     } else {
-        const sorted = divObj.bunks.slice().sort(compareBunks);
-        sorted.forEach(bunkName => {
-            // Make bunk pills look like sport pills: use activity-button
-            const chip = document.createElement("button");
-            chip.type = "button";
-            chip.className = "activity-button bunk-pill";
-            chip.textContent = bunkName;
+      const sorted = divObj.bunks.slice().sort(compareBunks);
+      sorted.forEach(bunkName => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "activity-button bunk-pill";
+        chip.textContent = bunkName;
 
-            let clickCount = 0;
-            let clickTimer = null;
+        let clickTimer = null;
 
-            // --- NEW CLICK BEHAVIOR ---
-// Single click = rename
-// Double click = delete
-chip.onclick = (e) => {
-    e.stopPropagation();
-    startBunkInlineEdit(chip, bunkName);
-};
-
-chip.ondblclick = (e) => {
-    e.stopPropagation();
-    if (confirm(`Delete bunk "${bunkName}" from this division?`)) {
-        const idx = divObj.bunks.indexOf(bunkName);
-        if (idx !== -1) divObj.bunks.splice(idx, 1);
-        saveData();
-        renderDivisionDetailPane();
-        window.updateTable?.();
-    }
-};
-
-            bunkList.appendChild(chip);
+        // Single click -> rename (after short delay)
+        chip.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (clickTimer) return; // already waiting to see if it's a double
+          clickTimer = setTimeout(() => {
+            startBunkInlineEdit(chip, bunkName);
+            clickTimer = null;
+          }, 220); // short delay so double-click can cancel
         });
+
+        // Double click -> delete (and cancel rename)
+        chip.addEventListener("dblclick", (e) => {
+          e.stopPropagation();
+          if (clickTimer) {
+            clearTimeout(clickTimer);
+            clickTimer = null;
+          }
+          if (confirm(`Delete bunk "${bunkName}" from this division?`)) {
+            const idx = divObj.bunks.indexOf(bunkName);
+            if (idx !== -1) divObj.bunks.splice(idx, 1);
+            saveData();
+            renderDivisionDetailPane();
+            window.updateTable?.();
+          }
+        });
+
+        bunkList.appendChild(chip);
+      });
     }
 
     bunksSection.appendChild(bunkList);
 
-    // add bunk row
+    // Add bunk row
     const addRow = document.createElement("div");
     addRow.style.marginTop = "10px";
     addRow.style.display = "flex";
@@ -562,19 +573,19 @@ chip.ondblclick = (e) => {
     const addBtn = document.createElement("button");
     addBtn.textContent = "Add Bunk";
     addBtn.onclick = () => {
+      const name = addInput.value.trim();
+      if (!name) return;
+      addBunkToDivision(selectedDivision, name);
+      addInput.value = "";
+    };
+
+    addInput.onkeyup = e => {
+      if (e.key === "Enter") {
         const name = addInput.value.trim();
         if (!name) return;
         addBunkToDivision(selectedDivision, name);
         addInput.value = "";
-    };
-
-    addInput.onkeyup = e => {
-        if (e.key === "Enter") {
-            const name = addInput.value.trim();
-            if (!name) return;
-            addBunkToDivision(selectedDivision, name);
-            addInput.value = "";
-        }
+      }
     };
 
     addRow.appendChild(addInput);
@@ -582,139 +593,148 @@ chip.ondblclick = (e) => {
     bunksSection.appendChild(addRow);
 
     pane.appendChild(bunksSection);
-}
+  }
 
-// -------------------- Persistence --------------------
-function saveData() {
+  // -------------------- Persistence --------------------
+  function saveData() {
     const app1Data = window.loadGlobalSettings?.().app1 || {};
     const data = {
-        ...app1Data,
-        bunks,
-        divisions,
-        availableDivisions,
-        selectedDivision,
-        allSports,
-        savedSkeletons,
-        skeletonAssignments,
-        specialActivities
+      ...app1Data,
+      bunks,
+      divisions,
+      availableDivisions,
+      selectedDivision,
+      allSports,
+      savedSkeletons,
+      skeletonAssignments,
+      specialActivities
     };
     window.saveGlobalSettings?.("app1", data);
-}
+  }
 
-function loadData() {
+  function loadData() {
     const data = window.loadGlobalSettings?.().app1 || {};
     try {
-        bunks = data.bunks || [];
-        divisions = data.divisions || {};
-        specialActivities = data.specialActivities || [];
+      bunks = data.bunks || [];
+      divisions = data.divisions || {};
+      specialActivities = data.specialActivities || [];
 
-        Object.keys(divisions).forEach(divName => {
-            divisions[divName].startTime = divisions[divName].startTime || "";
-            divisions[divName].endTime = divisions[divName].endTime || "";
-            divisions[divName].bunks = divisions[divName].bunks || [];
-            sortBunksInPlace(divisions[divName].bunks);
-            divisions[divName].color = divisions[divName].color || defaultColors[0];
-        });
+      Object.keys(divisions).forEach(divName => {
+        const d = divisions[divName];
+        d.startTime = d.startTime || "";
+        d.endTime = d.endTime || "";
+        d.bunks = d.bunks || [];
+        sortBunksInPlace(d.bunks);
+        d.color = d.color || defaultColors[0];
+      });
 
-        availableDivisions = (data.availableDivisions && Array.isArray(data.availableDivisions))
-            ? data.availableDivisions.slice()
-            : Object.keys(divisions);
+      availableDivisions = (data.availableDivisions && Array.isArray(data.availableDivisions))
+        ? data.availableDivisions.slice()
+        : Object.keys(divisions);
 
-        window.divisions = divisions;
-        window.availableDivisions = availableDivisions;
-        selectedDivision = data.selectedDivision || availableDivisions[0] || null;
+      window.divisions = divisions;
+      window.availableDivisions = availableDivisions;
 
-        if (data.allSports && Array.isArray(data.allSports)) {
-            allSports = data.allSports;
-        } else {
-            allSports = [...defaultSports];
-        }
+      selectedDivision = data.selectedDivision || availableDivisions[0] || null;
 
-        savedSkeletons = data.savedSkeletons || {};
-        skeletonAssignments = data.skeletonAssignments || {};
+      if (data.allSports && Array.isArray(data.allSports)) {
+        allSports = data.allSports;
+      } else {
+        allSports = [...defaultSports];
+      }
+
+      savedSkeletons = data.savedSkeletons || {};
+      skeletonAssignments = data.skeletonAssignments || {};
     } catch (e) {
-        console.error("Error loading app1 data:", e);
+      console.error("Error loading app1 data:", e);
     }
-}
+  }
 
-// -------------------- Init --------------------
-function initApp1() {
+  // -------------------- Init --------------------
+  function initApp1() {
     const addDivisionBtn = document.getElementById("addDivisionBtn");
     if (addDivisionBtn) addDivisionBtn.onclick = addDivision;
 
     const divisionInput = document.getElementById("divisionInput");
     if (divisionInput) {
-        divisionInput.addEventListener("keyup", e => {
-            if (e.key === "Enter") addDivision();
-        });
+      divisionInput.addEventListener("keyup", e => {
+        if (e.key === "Enter") addDivision();
+      });
     }
 
     loadData();
 
     const enableColorEl = document.getElementById("enableColor");
     if (enableColorEl) {
-        enableColorEl.onchange = setupDivisionButtons;
+      enableColorEl.onchange = setupDivisionButtons;
     }
 
     setupDivisionButtons();
     renderDivisionDetailPane();
-}
-window.initApp1 = initApp1;
+  }
 
-// Expose some helpers
-window.getDivisions = () => divisions;
+  window.initApp1 = initApp1;
 
-// Sports
-window.getAllGlobalSports = function() {
+  // -------------------- Exposed Helpers --------------------
+  window.getDivisions = () => divisions;
+
+  // Sports
+  window.getAllGlobalSports = function () {
     return (allSports || []).slice().sort();
-};
-window.addGlobalSport = function(sportName) {
+  };
+
+  window.addGlobalSport = function (sportName) {
     if (!sportName) return;
     const s = sportName.trim();
     if (s && !allSports.find(sp => sp.toLowerCase() === s.toLowerCase())) {
-        allSports.push(s);
-        saveData();
+      allSports.push(s);
+      saveData();
     }
-};
+  };
 
-// Skeletons
-window.getSavedSkeletons = function() {
+  // Skeletons
+  window.getSavedSkeletons = function () {
     return savedSkeletons || {};
-};
-window.saveSkeleton = function(name, skeletonData) {
+  };
+
+  window.saveSkeleton = function (name, skeletonData) {
     if (!name || !skeletonData) return;
     savedSkeletons[name] = skeletonData;
     saveData();
-};
-window.deleteSkeleton = function(name) {
+  };
+
+  window.deleteSkeleton = function (name) {
     if (!name) return;
     delete savedSkeletons[name];
     Object.keys(skeletonAssignments).forEach(day => {
-        if (skeletonAssignments[day] === name) {
-            delete skeletonAssignments[day];
-        }
+      if (skeletonAssignments[day] === name) {
+        delete skeletonAssignments[day];
+      }
     });
     saveData();
-};
-window.getSkeletonAssignments = function() {
+  };
+
+  window.getSkeletonAssignments = function () {
     return skeletonAssignments || {};
-};
-window.saveSkeletonAssignments = function(assignments) {
+  };
+
+  window.saveSkeletonAssignments = function (assignments) {
     if (!assignments) return;
     skeletonAssignments = assignments;
     saveData();
-};
+  };
 
-// Special activities
-window.getGlobalSpecialActivities = function() {
+  // Special activities
+  window.getGlobalSpecialActivities = function () {
     return specialActivities;
-};
-window.saveGlobalSpecialActivities = function(updatedActivities) {
+  };
+
+  window.saveGlobalSpecialActivities = function (updatedActivities) {
     specialActivities = updatedActivities;
     saveData();
-};
+  };
 
-// Keep helper name for other modules
-window.addDivisionBunk = addBunkToDivision;
+  // Keep helper for other modules
+  window.addDivisionBunk = addBunkToDivision;
 
 })();
