@@ -9,6 +9,9 @@
 // - Single-click on a bunk pill (with small delay) => rename.
 // - Double-click on a bunk pill => delete from this division (no rename).
 //
+// UPDATED (Data Normalization):
+// - loadData now ensures specialActivities have 'maxUsage' initialized.
+//
 // Existing features kept:
 // - Global sports list (getAllGlobalSports/addGlobalSport).
 // - Skeleton template system.
@@ -618,6 +621,16 @@
       bunks = data.bunks || [];
       divisions = data.divisions || {};
       specialActivities = data.specialActivities || [];
+
+      // --- NEW: Normalize Special Activities ---
+      specialActivities.forEach(s => {
+          s.available = s.available !== false;
+          s.maxUsage = s.maxUsage || 0; // Default to unlimited if missing
+          s.timeRules = s.timeRules || [];
+          s.sharableWith = s.sharableWith || { type: 'not_sharable', divisions: [] };
+          s.limitUsage = s.limitUsage || { enabled: false, divisions: {} };
+      });
+      // -----------------------------------------
 
       Object.keys(divisions).forEach(divName => {
         const d = divisions[divName];
