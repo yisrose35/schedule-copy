@@ -167,12 +167,11 @@ function addBunkToDivision(divName, bunkName) {
         bunks.push(cleanBunk);
     }
 
-    const div = divisions[cleanDiv];
-    if (div) {
-        if (!div.bunks.includes(cleanBunk)) {
-            div.bunks.push(cleanBunk);
-        }
-    }
+    const if (div && !div.bunks.includes(cleanBunk)) {
+    div.bunks.push(cleanBunk);
+    sortBunksInPlace(div.bunks);
+}
+
 
     saveData();
     renderDivisionDetailPane();
