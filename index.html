@@ -333,11 +333,10 @@
 
             let draggingBunk = null;
 
-            // No-op enhancer: keeps text intact, avoids white-chip bug
+            // No-op enhancer – keeps text / structure intact
             function enhanceBunkPill(bunkEl) {
                 if (!bunkEl || bunkEl.dataset.pillEnhanced === 'true') return;
                 bunkEl.dataset.pillEnhanced = 'true';
-                // We intentionally do NOT touch innerHTML or text here.
             }
 
             function makeBunkDraggable(bunkEl) {
@@ -388,7 +387,7 @@
             }
 
             function getDivisionName(wrapper) {
-                // Main division label created by app1.js
+                // main division label span from app1.js
                 const titleSpan = wrapper.querySelector('.bunk-button');
                 if (titleSpan) {
                     return titleSpan.textContent.trim();
@@ -400,13 +399,11 @@
 
             function getDivisionColor(wrapper) {
                 const picker = wrapper.querySelector('.colorPicker');
-                if (picker) return picker.value || null;
+                if (picker && picker.value) return picker.value;
+
                 const swatch = wrapper.querySelector('.division-color, .divisionColorSwatch, .color-swatch');
                 if (swatch) {
                     const cs = getComputedStyle(swatch).backgroundColor;
-                    const rgb = rgbStringToObj(cs);
-                    if (!rgb) return null;
-                    // Back to rgb string
                     return cs;
                 }
                 return null;
@@ -468,10 +465,12 @@
 
                 setupDropZone(bunkContainer);
 
+                // + Add Bunk: create, color, save, and allow rename
                 addBtn.addEventListener('click', () => {
+                    const divName = getDivisionName(wrapper);
                     const nameRaw = prompt(
-                        divisionName
-                            ? `Bunk name / number for Division ${divisionName}?`
+                        divName
+                            ? `Bunk name / number for Division ${divName}?`
                             : 'Bunk name / number for this division?'
                     );
                     if (!nameRaw) return;
@@ -482,16 +481,30 @@
                     bunk.className = 'bunk-button';
                     bunk.textContent = name;
 
-                    // ✅ give it this division's color so it's not a white pill
                     const color = getDivisionColor(wrapper);
                     if (color) {
                         bunk.style.backgroundColor = color;
                         bunk.style.color = '#fff';
                     }
 
+                    // Double-click rename (DOM level)
+                    bunk.addEventListener('dblclick', () => {
+                        const current = bunk.textContent.trim();
+                        const nextRaw = prompt('Rename bunk:', current);
+                        if (!nextRaw) return;
+                        const next = nextRaw.trim();
+                        if (!next || next === current) return;
+                        bunk.textContent = next;
+                    });
+
                     enhanceBunkPill(bunk);
                     makeBunkDraggable(bunk);
                     bunkContainer.appendChild(bunk);
+
+                    // Persist in app1.js data (helper you added there)
+                    if (window.addDivisionBunk && divName) {
+                        window.addDivisionBunk(divName, name);
+                    }
                 });
             }
 
@@ -505,8 +518,7 @@
                 document
                     .querySelectorAll('.division-bunks-container .bunk-button')
                     .forEach(b => {
-                        // ❌ kill old double-click edit from app1.js to prevent duplication
-                        b.ondblclick = null;
+                        // keep app1.js double-click behavior; just add drag
                         enhanceBunkPill(b);
                         makeBunkDraggable(b);
                     });
@@ -521,17 +533,17 @@
                 if (!divisionWrappers.length) return;
 
                 const divisions = divisionWrappers.map(wrapper => {
-                    const colorHex = getDivisionColor(wrapper);
+                    const colorVal = getDivisionColor(wrapper);
                     let rgb = null;
-                    if (colorHex && colorHex.startsWith('#')) {
-                        rgb = hexToRgb(colorHex);
-                    } else if (colorHex) {
-                        rgb = rgbStringToObj(colorHex);
+                    if (colorVal && colorVal.startsWith('#')) {
+                        rgb = hexToRgb(colorVal);
+                    } else if (colorVal) {
+                        rgb = rgbStringToObj(colorVal);
                     }
                     const bunkContainer =
                         wrapper.querySelector('.division-bunks-container') || wrapper;
                     setupDropZone(bunkContainer);
-                    return { wrapper, color: rgb, bunkContainer, colorHex };
+                    return { wrapper, color: rgb, bunkContainer, colorVal };
                 });
 
                 const unassigned = document.getElementById('unassignedBunks');
@@ -553,9 +565,8 @@
                     });
 
                     if (best && best.bunkContainer) {
-                        // ensure color/text visible
-                        if (best.colorHex) {
-                            bunk.style.backgroundColor = best.colorHex;
+                        if (best.colorVal) {
+                            bunk.style.backgroundColor = best.colorVal;
                             bunk.style.color = '#fff';
                         }
                         enhanceBunkPill(bunk);
@@ -564,7 +575,7 @@
                     }
                 });
 
-                // Clear unassigned container after moving
+                // Clear unassigned after moving
                 unassigned.innerHTML = '';
             }
 
