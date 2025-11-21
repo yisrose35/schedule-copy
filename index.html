@@ -279,6 +279,21 @@
     <script src="updates.js" defer></script>
 
     <script>
+        function enhanceBunkPill(bunkEl) {
+    if (!bunkEl || bunkEl.dataset.pillEnhanced === "true") return;
+    bunkEl.dataset.pillEnhanced = "true";
+
+    // Make sure the bunk text remains visible
+    bunkEl.style.display = "inline-flex";
+    bunkEl.style.alignItems = "center";
+    bunkEl.style.justifyContent = "center";
+    bunkEl.style.padding = "4px 10px";
+    bunkEl.style.borderRadius = "12px";
+    bunkEl.style.backgroundColor = "#e0e0e0";
+    bunkEl.style.color = "#111";  // <-- ensures text visible
+    bunkEl.style.fontWeight = "500";
+}
+
         // ============================
         // Helpers for color parsing
         // ============================
