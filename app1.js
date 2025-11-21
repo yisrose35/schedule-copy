@@ -1,21 +1,22 @@
 // =================================================================
 // app1.js
 //
-// UPDATED (DIVISIONS LIKE FIELDS):
-// - Setup tab now mirrors Fields layout:
-//   - Left: master list of Divisions (`#divisionButtons`) using .list-item.
-//   - Right: detail pane (`#division-detail-pane`) for the selected division.
-// - Division row NO LONGER contains time inputs; times + bunks live in the
-//   right-hand detail pane.
-// - Detail pane includes:
-//   - Editable division name + Delete button
+// UPDATED (DIVISIONS LIKE FIELDS + SORTED BUNKS):
+// - Setup tab mirrors Fields layout:
+//   - Left: master list of Divisions (#divisionButtons) using .list-item.
+//   - Right: detail pane (#division-detail-pane) for the selected division.
+// - Clicking a division on the left opens its editor on the right:
+//   - Editable division name
+//   - Delete button
 //   - Color picker
-//   - Start/End time inputs with validation (am/pm required)
-//   - Bunk list (edit + remove per bunk)
-//   - Add-bunk input that saves globally + into that division.
-// - Bunks and divisions are saved via globalSettings just like Fields.
+//   - Start/End time inputs (validated, am/pm required)
+//   - Bunks list (rename via double-click, remove via X)
+//   - Add-bunk input at the bottom
+// - NEW: bunks are automatically kept in numeric order, so
+//   "Bunk 1, Bunk 3, Bunk 2" becomes "Bunk 1, Bunk 2, Bunk 3".
+// - All data is persisted in global settings (app1) like Fields.
 //
-// Special activities + skeleton logic remain intact.
+// Existing specialActivities, skeleton, and sports logic kept.
 // =================================================================
 
 (function() {
@@ -29,15 +30,14 @@ let specialActivities = []; // For special_activities.js
 let availableDivisions = [];
 let selectedDivision = null;
 
-// NEW: Master list of all sports
+// Master list of all sports
 let allSports = [];
-// NEW: User-defined default sports list
 const defaultSports = [
     "Baseball", "Basketball", "Football", "Hockey", "Kickball", 
     "Lacrosse", "Newcomb", "Punchball", "Soccer", "Volleyball"
 ];
 
-// NEW: Skeleton template management
+// Skeleton template management
 let savedSkeletons = {};
 let skeletonAssignments = {}; // { "Monday": "templateName", "Default": "templateName" }
 
@@ -48,7 +48,7 @@ const defaultColors = [
 ];
 let colorIndex = 0;
 
-// Expose internal variable to the window for use by other modules
+// Expose to window
 window.divisions = divisions;
 window.availableDivisions = availableDivisions;
 
@@ -88,14 +88,15 @@ function parseTimeToMinutes(str) {
     const mm = parseInt(m[2], 10);
     if (Number.isNaN(hh) || Number.isNaN(mm) || mm < 0 || mm > 59) return null;
 
-    if (!mer) return null; // AM/PM is required
+    if (!mer) return null; // require am/pm
 
     if (hh === 12) hh = (mer === "am") ? 0 : 12; // 12am -> 0, 12pm -> 12
     else if (mer === "pm") hh += 12;             // 1pm -> 13
 
     return hh * 60 + mm;
 }
-    // Sort helper: put "Bunk 1, Bunk 2, Bunk 10" in numeric order
+
+// Sort helper: put "Bunk 1, Bunk 2, Bunk 10" in numeric order
 function compareBunks(a, b) {
     const sa = String(a);
     const sb = String(b);
@@ -121,13 +122,10 @@ function sortBunksInPlace(arr) {
     arr.sort(compareBunks);
 }
 
-
-// Rename a bunk everywhere (global + all divisions + scheduleAssignments)
 function renameBunkEverywhere(oldName, newName) {
     const trimmed = newName.trim();
     if (!trimmed || trimmed === oldName) return;
 
-    // Prevent duplicate bunk names (case-insensitive)
     const exists = bunks.some(
         b => b.toLowerCase() === trimmed.toLowerCase() && b !== oldName
     );
@@ -142,6 +140,7 @@ function renameBunkEverywhere(oldName, newName) {
     Object.values(divisions).forEach(d => {
         const bi = d.bunks.indexOf(oldName);
         if (bi !== -1) d.bunks[bi] = trimmed;
+        sortBunksInPlace(d.bunks);
     });
 
     if (window.scheduleAssignments && window.scheduleAssignments[oldName]) {
@@ -155,23 +154,22 @@ function renameBunkEverywhere(oldName, newName) {
     window.updateTable?.();
 }
 
-// -------------------- Bunks (logic only; UI is in detail pane) --------------------
+// -------------------- Bunks (logic; UI in detail pane) --------------------
 function addBunkToDivision(divName, bunkName) {
     if (!divName || !bunkName) return;
     const cleanDiv = String(divName).trim();
     const cleanBunk = String(bunkName).trim();
     if (!cleanDiv || !cleanBunk) return;
 
-    // Make sure bunks[] contains it
     if (!bunks.includes(cleanBunk)) {
         bunks.push(cleanBunk);
     }
 
-    const if (div && !div.bunks.includes(cleanBunk)) {
-    div.bunks.push(cleanBunk);
-    sortBunksInPlace(div.bunks);
-}
-
+    const div = divisions[cleanDiv];
+    if (div && !div.bunks.includes(cleanBunk)) {
+        div.bunks.push(cleanBunk);
+        sortBunksInPlace(div.bunks);
+    }
 
     saveData();
     renderDivisionDetailPane();
@@ -217,7 +215,7 @@ function addDivision() {
 }
 
 /**
- * LEFT SIDE: Master list of Divisions (Fields-style).
+ * LEFT SIDE: master list of divisions, Fields-style.
  */
 function setupDivisionButtons() {
     const cont = document.getElementById("divisionButtons");
@@ -236,7 +234,7 @@ function setupDivisionButtons() {
     availableDivisions.forEach(name => {
         const obj = divisions[name];
         if (!obj) {
-            console.warn(`Data mismatch: Division "${name}" exists in availableDivisions but not in divisions object.`);
+            console.warn(`Division "${name}" exists in availableDivisions but not in divisions object.`);
             return;
         }
 
@@ -262,20 +260,21 @@ function setupDivisionButtons() {
 
         makeEditable(nameEl, newName => {
             const trimmed = newName.trim();
-            if (!trimmed || trimmed === name) return;
+            const old = name;
+            if (!trimmed || trimmed === old) return;
 
             if (divisions[trimmed]) {
                 alert("A division with this name already exists.");
                 return;
             }
 
-            divisions[trimmed] = divisions[name];
-            delete divisions[name];
+            divisions[trimmed] = divisions[old];
+            delete divisions[old];
 
-            const idx = availableDivisions.indexOf(name);
+            const idx = availableDivisions.indexOf(old);
             if (idx !== -1) availableDivisions[idx] = trimmed;
 
-            if (selectedDivision === name) selectedDivision = trimmed;
+            if (selectedDivision === old) selectedDivision = trimmed;
 
             window.divisions = divisions;
             window.availableDivisions = availableDivisions;
@@ -290,13 +289,11 @@ function setupDivisionButtons() {
         cont.appendChild(item);
     });
 
-    // Ensure detail pane reflects the current selection
     renderDivisionDetailPane();
 }
 
 /**
- * RIGHT SIDE: Detail pane for selected division.
- * Includes name, delete, color, start/end time, and bunk list.
+ * RIGHT SIDE: detail pane for selected division.
  */
 function renderDivisionDetailPane() {
     const pane = document.getElementById("division-detail-pane");
@@ -308,10 +305,10 @@ function renderDivisionDetailPane() {
         pane.innerHTML = `
             <p class="muted">
                 Select a division from the left to edit its details.
-                <br>Here you will be able to:
-                <br>• Set <strong>start / end times</strong> for the division
-                <br>• Add / edit <strong>bunks</strong> in this division
-                <br>• Adjust the division color
+                <br>Here you can:
+                <br>• Set <strong>start / end times</strong>
+                <br>• Add / edit <strong>bunks</strong>
+                <br>• Change the division color
             </p>
         `;
         return;
@@ -319,7 +316,7 @@ function renderDivisionDetailPane() {
 
     const divObj = divisions[selectedDivision];
 
-    // --- Header: Name + Delete ---
+    // --- Header: name + delete ---
     const header = document.createElement("div");
     header.style.display = "flex";
     header.style.justifyContent = "space-between";
@@ -366,7 +363,7 @@ function renderDivisionDetailPane() {
     deleteBtn.style.borderRadius = "4px";
     deleteBtn.style.cursor = "pointer";
     deleteBtn.onclick = () => {
-        if (!confirm(`Delete division "${selectedDivision}"? Bunks will remain globally but will no longer belong to this division.`)) {
+        if (!confirm(`Delete division "${selectedDivision}"? Bunks remain globally but are removed from this division.`)) {
             return;
         }
         const name = selectedDivision;
@@ -387,7 +384,7 @@ function renderDivisionDetailPane() {
     header.appendChild(deleteBtn);
     pane.appendChild(header);
 
-    // --- Division Color ---
+    // --- Color picker ---
     const colorRow = document.createElement("div");
     colorRow.style.display = "flex";
     colorRow.style.alignItems = "center";
@@ -396,13 +393,14 @@ function renderDivisionDetailPane() {
 
     const colorLabel = document.createElement("span");
     colorLabel.textContent = "Division Color:";
+
     const colorInput = document.createElement("input");
     colorInput.type = "color";
     colorInput.value = divObj.color || "#007bff";
     colorInput.oninput = e => {
         divObj.color = e.target.value;
         saveData();
-        setupDivisionButtons(); // Repaint left list color stripes
+        setupDivisionButtons();
         window.updateTable?.();
     };
 
@@ -410,7 +408,7 @@ function renderDivisionDetailPane() {
     colorRow.appendChild(colorInput);
     pane.appendChild(colorRow);
 
-    // --- Start/End Time Section ---
+    // --- Times ---
     const timeSection = document.createElement("div");
     timeSection.style.marginBottom = "20px";
 
@@ -451,7 +449,7 @@ function renderDivisionDetailPane() {
         const endMin = parseTimeToMinutes(newEnd);
 
         if (startMin == null || endMin == null) {
-            alert("Invalid time format. Use '9:00am' or '2:30pm'. AM/PM is required.");
+            alert("Invalid time format. Use '9:00am' or '2:30pm' with am/pm.");
             return;
         }
         if (endMin <= startMin) {
@@ -463,7 +461,6 @@ function renderDivisionDetailPane() {
         divObj.endTime = newEnd;
         saveData();
 
-        // Refresh any time-based views
         if (document.getElementById('master-scheduler')?.classList.contains('active')) {
             window.initMasterScheduler?.();
         } else if (document.getElementById('daily-adjustments')?.classList.contains('active')) {
@@ -478,7 +475,7 @@ function renderDivisionDetailPane() {
     timeSection.appendChild(timeForm);
     pane.appendChild(timeSection);
 
-    // --- Bunks Section ---
+    // --- Bunks list ---
     const bunksSection = document.createElement("div");
     const bunksTitle = document.createElement("strong");
     bunksTitle.textContent = "Bunks in this Division:";
@@ -497,7 +494,8 @@ function renderDivisionDetailPane() {
         msg.textContent = "No bunks assigned yet. Add one below.";
         bunksSection.appendChild(msg);
     } else {
-        divObj.bunks.forEach(bunkName => {
+        const sorted = divObj.bunks.slice().sort(compareBunks);
+        sorted.forEach(bunkName => {
             const chip = document.createElement("span");
             chip.textContent = bunkName;
             chip.style.padding = "4px 8px";
@@ -509,12 +507,12 @@ function renderDivisionDetailPane() {
             chip.style.alignItems = "center";
             chip.style.gap = "4px";
 
-            // Editable name (double-click)
+            // rename on double-click
             makeEditable(chip, newName => {
                 renameBunkEverywhere(bunkName, newName);
             });
 
-            // Remove from THIS division (X button)
+            // remove from this division
             const xBtn = document.createElement("button");
             xBtn.textContent = "×";
             xBtn.style.border = "none";
@@ -537,7 +535,7 @@ function renderDivisionDetailPane() {
 
     bunksSection.appendChild(bunkList);
 
-    // Add-bunk row
+    // add bunk row
     const addRow = document.createElement("div");
     addRow.style.marginTop = "10px";
     addRow.style.display = "flex";
@@ -573,10 +571,9 @@ function renderDivisionDetailPane() {
     pane.appendChild(bunksSection);
 }
 
-// -------------------- Local Storage (UPDATED) --------------------
+// -------------------- Persistence --------------------
 function saveData() {
     const app1Data = window.loadGlobalSettings?.().app1 || {};
-    
     const data = { 
         ...app1Data,
         bunks,
@@ -598,15 +595,13 @@ function loadData() {
         divisions = data.divisions || {};
         specialActivities = data.specialActivities || [];
 
-        // Ensure time fields exist on old data
         Object.keys(divisions).forEach(divName => {
-    divisions[divName].startTime = divisions[divName].startTime || "";
-    divisions[divName].endTime = divisions[divName].endTime || "";
-    divisions[divName].bunks = divisions[divName].bunks || [];
-    sortBunksInPlace(divisions[divName].bunks);
-    divisions[divName].color = divisions[divName].color || defaultColors[0];
-});
-
+            divisions[divName].startTime = divisions[divName].startTime || "";
+            divisions[divName].endTime = divisions[divName].endTime || "";
+            divisions[divName].bunks = divisions[divName].bunks || [];
+            sortBunksInPlace(divisions[divName].bunks);
+            divisions[divName].color = divisions[divName].color || defaultColors[0];
+        });
 
         availableDivisions = (data.availableDivisions && Array.isArray(data.availableDivisions))
             ? data.availableDivisions.slice()
@@ -616,25 +611,22 @@ function loadData() {
         window.availableDivisions = availableDivisions;
         selectedDivision = data.selectedDivision || availableDivisions[0] || null;
 
-        // Master sports list
         if (data.allSports && Array.isArray(data.allSports)) {
             allSports = data.allSports;
         } else {
             allSports = [...defaultSports];
         }
 
-        // Skeleton data
         savedSkeletons = data.savedSkeletons || {};
         skeletonAssignments = data.skeletonAssignments || {};
 
     } catch (e) {
-        console.error("Error loading data:", e);
+        console.error("Error loading app1 data:", e);
     }
 }
 
-// -------------------- Init (UPDATED) --------------------
+// -------------------- Init --------------------
 function initApp1() {
-    // DIVISION LISTENERS (top of Setup tab)
     const addDivisionBtn = document.getElementById("addDivisionBtn");
     if (addDivisionBtn) addDivisionBtn.onclick = addDivision;
 
@@ -647,7 +639,6 @@ function initApp1() {
 
     loadData();
 
-    // Ensure color checkbox re-renders list when toggled
     const enableColorEl = document.getElementById("enableColor");
     if (enableColorEl) {
         enableColorEl.onchange = setupDivisionButtons;
@@ -658,14 +649,13 @@ function initApp1() {
 }
 window.initApp1 = initApp1;
 
-// Expose internal objects
+// Expose some helpers
 window.getDivisions = () => divisions;
 
-// --- GLOBAL SPORT FUNCTIONS ---
+// Sports
 window.getAllGlobalSports = function() {
     return (allSports || []).slice().sort();
 };
-
 window.addGlobalSport = function(sportName) {
     if (!sportName) return;
     const s = sportName.trim();
@@ -675,7 +665,7 @@ window.addGlobalSport = function(sportName) {
     }
 };
 
-// --- SKELETON MANAGEMENT FUNCTIONS ---
+// Skeletons
 window.getSavedSkeletons = function() {
     return savedSkeletons || {};
 };
@@ -703,7 +693,7 @@ window.saveSkeletonAssignments = function(assignments) {
     saveData();
 };
 
-// --- special_activities.js integration ---
+// Special activities
 window.getGlobalSpecialActivities = function() {
     return specialActivities;
 };
@@ -712,7 +702,7 @@ window.saveGlobalSpecialActivities = function(updatedActivities) {
     saveData();
 };
 
-// Keep the helper exposed (used elsewhere)
+// Keep helper name for other modules
 window.addDivisionBunk = addBunkToDivision;
 
 })();
