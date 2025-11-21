@@ -1925,9 +1925,11 @@
 								                ? f.sharableWith.divisions.slice()
 								                : null,
 								            limitUsage: f.limitUsage || { enabled: false, divisions: {} },
-								            preferences: f.preferences || { enabled: false, exclusive: false, list: [] }, // --- NEW: Load Preferences
-								            timeRules: finalRules
-								        };
+            preferences: f.preferences || { enabled: false, exclusive: false, list: [] }, // --- NEW: Load Preferences
+            // --- NEW: Pass maxUsage ---
+            maxUsage: f.maxUsage || 0,
+            timeRules: finalRules
+        };
 								
 								        if (isMasterAvailable) {
 								            availableActivityNames.push(f.name);
