@@ -114,49 +114,61 @@
                     <h1 class="app-page-title">🏕️ Camp Scheduler</h1>
 
                     <!-- ===================== -->
-                    <!-- SETUP TAB (LEFT/RIGHT) -->
+                    <!-- SETUP TAB (FIELDS-STYLE) -->
                     <!-- ===================== -->
                     <div id="setup" class="tab-content active">
 
-                        <h3>Add Divisions &amp; Bunks</h3>
+                        <h3>Divisions &amp; Bunks</h3>
                         <p style="font-size: 0.9em; color: #555;">
-                            Add divisions and set their times on the left. Add bunks on the right, then
-                            <strong>click a division</strong> and <strong>click a bunk</strong> to assign it to that division.
-                            Colors show which division a bunk belongs to.
+                            Create your divisions on the left. When you <strong>click a division</strong>, a
+                            <strong>details sidebar</strong> opens on the right where you can set its
+                            <strong>start time</strong> and manage <strong>bunks assigned</strong> to that division.
+                            All data is saved automatically using the same system as Fields.
                         </p>
 
-                        <!-- Two-column layout like Fields tab -->
-                        <div class="setup-two-column">
-                            <!-- LEFT: DIVISIONS -->
-                            <section class="setup-column">
-                                <h4>Divisions</h4>
-                                <div class="card-like">
-                                    <div style="margin-bottom: 8px;">
-                                        <input id="divisionInput" placeholder="Enter division name (e.g., 5th Grade)">
-                                        <button id="addDivisionBtn">Add Division</button>
-                                        <label style="margin-left:8px; font-size:0.9em;">
-                                            <input type="checkbox" id="enableColor" checked> Enable Colors
-                                        </label>
-                                    </div>
-                                    <div id="divisionButtons" style="margin-top:8px;"></div>
-                                </div>
-                            </section>
+                        <!-- Layout mirrors Fields: master list left, detail pane right -->
+                        <div style="display: flex; flex-wrap: wrap; gap: 20px;">
 
-                            <!-- RIGHT: BUNKS -->
-                            <section class="setup-column">
-                                <h4>Bunks</h4>
-                                <div class="card-like">
-                                    <div style="margin-bottom: 8px;">
-                                        <input id="bunkInput" placeholder="Enter bunk (e.g., Bunk 1)">
-                                        <button id="addBunkBtn">Add Bunk</button>
-                                    </div>
-                                    <p style="font-size:0.85em; color:#666; margin-bottom:6px;">
-                                        Tip: Select a division on the left, then click a bunk below to assign it.
-                                        Bunk color will match its division.
-                                    </p>
-                                    <div id="unassignedBunks" class="bunk-container"></div>
+                            <!-- LEFT: DIVISIONS MASTER LIST -->
+                            <div style="flex: 1; min-width: 300px;">
+                                <h3>Add New Division</h3>
+                                <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                                    <!-- IDs preserved so existing JS can still hook in if needed -->
+                                    <input id="divisionInput"
+                                           placeholder="Enter division (e.g., 5th Grade)"
+                                           style="flex: 1;">
+                                    <button id="addDivisionBtn">Add Division</button>
                                 </div>
-                            </section>
+
+                                <label style="font-size:0.9em; color:#555; display:block; margin-bottom:10px;">
+                                    <input type="checkbox" id="enableColor" checked>
+                                    Enable automatic division colors
+                                </label>
+
+                                <h3>All Divisions</h3>
+                                <!-- Use same class names as fields for consistent styling -->
+                                <div id="divisionButtons" class="master-list"></div>
+                            </div>
+
+                            <!-- RIGHT: DIVISION DETAIL SIDEBAR -->
+                            <div style="flex: 2; min-width: 400px; position: sticky; top: 20px;">
+                                <h3>Division Details</h3>
+                                <!-- Detail pane that app1.js can populate -->
+                                <div id="division-detail-pane" class="detail-pane">
+                                    <p class="muted">
+                                        Select a division from the left to edit its details:
+                                        <br>• Set division <strong>start / end time</strong>
+                                        <br>• Add or remove <strong>bunks</strong>
+                                        <br>• Adjust any other division-specific settings
+                                    </p>
+                                    <!--
+                                      Your app1.js should:
+                                      - Read divisions from global settings (like fields.js does)
+                                      - Write bunks + times back to global settings
+                                      - Render the UI inside this pane based on the selected division
+                                    -->
+                                </div>
+                            </div>
                         </div>
 
                         <hr style="margin: 24px 0;">
@@ -303,17 +315,33 @@
                 btn.classList.toggle('active', tab === id);
             });
 
-            if (id === 'schedule') window.updateTable?.();
-            else if (id === 'leagues') window.initLeagues?.();
-            else if (id === 'specialty-leagues') window.initSpecialtyLeagues?.();
-            else if (id === 'master-scheduler') window.initMasterScheduler?.();
-            else if (id === 'fields') window.initFieldsTab?.();
-            else if (id === 'special_activities') window.initSpecialActivitiesTab?.();
-            else if (id === 'daily-adjustments') window.initDailyAdjustments?.();
-            else if (id === 'report') window.initReportTab?.();
-            else if (id === 'print') window.initPrintCenter?.();
-            else if (id === 'helper') window.initHelperTab?.();
-            else if (id === 'updates') window.initUpdatesTab?.();
+            if (id === 'schedule') {
+                window.updateTable?.();
+            } else if (id === 'leagues') {
+                window.initLeagues?.();
+            } else if (id === 'specialty-leagues') {
+                window.initSpecialtyLeagues?.();
+            } else if (id === 'master-scheduler') {
+                window.initMasterScheduler?.();
+            } else if (id === 'fields') {
+                window.initFieldsTab?.();
+            } else if (id === 'special_activities') {
+                window.initSpecialActivitiesTab?.();
+            } else if (id === 'daily-adjustments') {
+                window.initDailyAdjustments?.();
+            } else if (id === 'report') {
+                window.initReportTab?.();
+            } else if (id === 'print') {
+                window.initPrintCenter?.();
+            } else if (id === 'helper') {
+                window.initHelperTab?.();
+            } else if (id === 'updates') {
+                window.initUpdatesTab?.();
+            } else if (id === 'setup') {
+                // Hook Setup tab into its JS initializer so it can
+                // load/save divisions & bunks just like fields.js
+                window.initApp1?.();
+            }
         }
 
         // Hamburger + sidebar wiring
