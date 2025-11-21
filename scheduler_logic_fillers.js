@@ -39,10 +39,13 @@ function isOverUsageLimit(activityName, bunk, activityProperties, historicalCoun
     // 0 means unlimited
     if (max === 0) return false; 
 
-    const pastCount = historicalCounts[bunk]?.[activityName] || 0;
+    // SAFETY FIX: Handle undefined historicalCounts gracefully
+    const safeHistory = historicalCounts || {};
+    const pastCount = safeHistory[bunk]?.[activityName] || 0;
     
     // If they already hit the limit in past days
     if (pastCount >= max) return true;
+    // ...
 
     // If they are at limit-1, and they already did it today, they can't do it again
     if (activitiesDoneToday.has(activityName) && (pastCount + 1 >= max)) return true;
