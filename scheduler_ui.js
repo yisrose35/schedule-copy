@@ -1,645 +1,376 @@
-// -------------------- scheduler_ui.js --------------------
+// =================================================================
+// special_activities.js
 //
-// --- FEATURES ---
-// - Staggered (YKLI) view: one table per division
-// - League mirroring via _allMatchups list
-// - Post-generation editing for ALL cells (generated + pins)
-// - Dismissal / Snacks / custom tiles shown as fixed pin tiles
-// - Split blocks: UI shows whatever the core actually scheduled
-// - League counters (League Game 1, 2, 3...) persisted day-to-day
-//
-// -----------------------------------------------------------------
+// UPDATED:
+// - Added "Max Usage" (Limit per season) input.
+// =================================================================
 
-// ===== HELPERS =====
-const INCREMENT_MINS = 30; // Base optimizer grid size
+(function() {
+'use strict';
 
-function parseTimeToMinutes(str) {
-  if (!str || typeof str !== "string") return null;
-  let s = str.trim().toLowerCase();
-  let mer = null;
-  if (s.endsWith("am") || s.endsWith("pm")) {
-    mer = s.endsWith("am") ? "am" : "pm";
-    s = s.replace(/am|pm/g, "").trim();
-  }
+let specialActivities = []; 
+let selectedItemId = null;
 
-  const m = s.match(/^(\d{1,2})\s*:\s*(\d{2})$/);
-  if (!m) return null;
-  let hh = parseInt(m[1], 10);
-  const mm = parseInt(m[2], 10);
-  if (Number.isNaN(hh) || Number.isNaN(mm) || mm < 0 || mm > 59) return null;
+let specialsListEl = null;
+let detailPaneEl = null;
+let addSpecialInput = null;
 
-  if (mer) {
-    if (hh === 12) hh = mer === "am" ? 0 : 12; // 12am -> 0, 12pm -> 12
-    else if (mer === "pm") hh += 12; // 1pm -> 13
-  } else {
-    return null; // AM/PM is required
-  }
+function initSpecialActivitiesTab() {
+    const container = document.getElementById("special_activities");
+    if (!container) return;
+    
+    specialActivities = window.getGlobalSpecialActivities?.() || [];
+    
+    // Migration for new fields
+    specialActivities.forEach(s => {
+        s.available = s.available !== false;
+        s.timeRules = s.timeRules || [];
+        s.sharableWith = s.sharableWith || { type: 'not_sharable', divisions: [] };
+        s.limitUsage = s.limitUsage || { enabled: false, divisions: {} };
+        s.maxUsage = s.maxUsage !== undefined ? s.maxUsage : 0; // 0 = unlimited
+    });
 
-  return hh * 60 + mm;
+    container.innerHTML = `
+        <div style="display: flex; flex-wrap: wrap; gap: 20px;">
+            <div style="flex: 1; min-width: 300px;">
+                <h3>Add New Special Activity</h3>
+                <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+                    <input id="new-special-input" placeholder="New Special (e.g., Canteen)" style="flex: 1;">
+                    <button id="add-special-btn">Add Special</button>
+                </div>
+                <h3>All Special Activities</h3>
+                <div id="specials-master-list" class="master-list"></div>
+            </div>
+            <div style="flex: 2; min-width: 400px; position: sticky; top: 20px;">
+                <h3>Details</h3>
+                <div id="specials-detail-pane" class="detail-pane">
+                    <p class="muted">Select a special activity from the left to edit its details.</p>
+                </div>
+            </div>
+        </div>
+        <style>
+            .master-list .list-item { padding: 12px 10px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 5px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; background: #fff; }
+            .master-list .list-item:hover { background: #f9f9f9; }
+            .master-list .list-item.selected { background: #e7f3ff; border-color: #007bff; font-weight: 600; }
+            .master-list .list-item-name { flex-grow: 1; }
+            .master-list .list-item-toggle { margin-left: 10px; }
+            .detail-pane { border: 1px solid #ccc; border-radius: 8px; padding: 20px; background: #fdfdfd; min-height: 400px; }
+        </style>
+    `;
+
+    specialsListEl = document.getElementById("specials-master-list");
+    detailPaneEl = document.getElementById("specials-detail-pane");
+    addSpecialInput = document.getElementById("new-special-input");
+
+    document.getElementById("add-special-btn").onclick = addSpecial;
+    addSpecialInput.onkeyup = (e) => { if (e.key === "Enter") addSpecial(); };
+
+    renderMasterLists();
+    renderDetailPane();
 }
 
-function fieldLabel(f) {
-  if (typeof f === "string") return f;
-  if (f && typeof f === "object" && typeof f.name === "string") return f.name;
-  return "";
-}
-
-function fmtTime(d) {
-  if (!d) return "";
-  if (typeof d === "string") {
-    d = new Date(d);
-  }
-  let h = d.getHours();
-  const m = d.getMinutes().toString().padStart(2, "0");
-  const ap = h >= 12 ? "PM" : "AM";
-  h = h % 12 || 12;
-  return `${h}:${m} ${ap}`;
-}
-
-/**
- * Helper: Converts minutes (e.g., 740) to a 12-hour string (e.g., "12:20 PM")
- */
-function minutesToTimeLabel(min) {
-  if (min == null || Number.isNaN(min)) return "Invalid Time"; // safety check
-  let h = Math.floor(min / 60);
-  const m = (min % 60).toString().padStart(2, "0");
-  const ap = h >= 12 ? "PM" : "AM";
-  h = h % 12 || 12;
-  return `${h}:${m} ${ap}`;
-}
-
-// ===== MATCH GENERATED EVENTS (mirror of core) =====
-const UI_GENERATED_EVENTS = new Set([
-  "activity",
-  "activities",
-  "general activity",
-  "general activity slot",
-  "sports",
-  "sport",
-  "sports slot",
-  "special activity",
-  "league game",
-  "specialty league",
-  "speciality league",
-  "swim"
-]);
-
-function uiIsGeneratedEventName(name) {
-  if (!name) return false;
-  return UI_GENERATED_EVENTS.has(String(name).trim().toLowerCase());
-}
-
-// ===== EDITING FUNCTIONS =====
-
-/**
- * Helper: Finds all unified slot indices within a time range.
- */
-function findSlotsForRange(startMin, endMin) {
-  const slots = [];
-  if (!window.unifiedTimes) return slots;
-  for (let i = 0; i < window.unifiedTimes.length; i++) {
-    const slot = window.unifiedTimes[i];
-    const slotStart =
-      new Date(slot.start).getHours() * 60 +
-      new Date(slot.start).getMinutes();
-    // Slot starts within the block
-    if (slotStart >= startMin && slotStart < endMin) {
-      slots.push(i);
+function renderMasterLists() {
+    specialsListEl.innerHTML = "";
+    if (specialActivities.length === 0) {
+        specialsListEl.innerHTML = `<p class="muted">No special activities created yet.</p>`;
     }
-  }
-  return slots;
-}
-
-/**
- * Handles the editing of a single schedule cell.
- */
-function editCell(bunkName, startMin, endMin, currentActivity) {
-  if (!bunkName) return;
-
-  const newActivityName = prompt(
-    `Edit activity for ${bunkName}\n(${minutesToTimeLabel(
-      startMin
-    )} - ${minutesToTimeLabel(
-      endMin
-    )}):\n\n(Enter 'CLEAR' or 'FREE' to empty the slot)`,
-    currentActivity
-  );
-
-  // User cancelled
-  if (newActivityName === null) return;
-
-  const finalActivityName = newActivityName.trim();
-  const slotsToUpdate = findSlotsForRange(startMin, endMin);
-
-  if (slotsToUpdate.length === 0) {
-    console.error("Could not find slots to update for", startMin, endMin);
-    return;
-  }
-
-  if (!window.scheduleAssignments[bunkName]) {
-    window.scheduleAssignments[bunkName] = new Array(
-      window.unifiedTimes.length
-    );
-  }
-
-  if (
-    finalActivityName === "" ||
-    finalActivityName.toUpperCase() === "CLEAR" ||
-    finalActivityName.toUpperCase() === "FREE"
-  ) {
-    // Clear the slots by setting to "Free"
-    slotsToUpdate.forEach((slotIndex, idx) => {
-      window.scheduleAssignments[bunkName][slotIndex] = {
-        field: "Free",
-        sport: null,
-        continuation: idx > 0, // "Free" can also be a block
-        _fixed: true, // Mark as manually set
-        _h2h: false,
-        _activity: "Free"
-      };
+    specialActivities.forEach(item => {
+        specialsListEl.appendChild(createMasterListItem('special', item));
     });
-  } else {
-    // Set the new activity
-    slotsToUpdate.forEach((slotIndex, idx) => {
-      window.scheduleAssignments[bunkName][slotIndex] = {
-        field: finalActivityName,
-        sport: null, // It's a custom pin, not a sport/field combo
-        continuation: idx > 0, // Mark as continuation
-        _fixed: true, // Mark as a manual override
-        _h2h: false,
-        vs: null,
-        _activity: finalActivityName
-      };
-    });
-  }
-
-  // Save and re-render
-  saveSchedule();
-  updateTable();
 }
 
-// ===== Main updateTable function =====
-
-function updateTable() {
-  const container = document.getElementById("scheduleTable");
-  if (!container) return;
-
-  // Always render the Staggered View
-  renderStaggeredView(container);
-}
-
-/**
- * Helper function to get the schedule entry for a slot.
- */
-function getEntry(bunk, slotIndex) {
-  const assignments = window.scheduleAssignments || {};
-  if (bunk && assignments[bunk] && assignments[bunk][slotIndex]) {
-    return assignments[bunk][slotIndex];
-  }
-  return null; // Return null if empty or bunk is invalid
-}
-
-/**
- * Helper to format a schedule entry into text.
- */
-function formatEntry(entry) {
-  if (!entry) return "";
-
-  // Safety: if core flagged it, force label
-  if (entry._isDismissal) {
-    return "Dismissal";
-  }
-  if (entry._isSnack) {
-    return "Snacks";
-  }
-
-  const label = fieldLabel(entry.field) || "";
-
-  if (entry._h2h) {
-    // League game, 'sport' holds matchup label
-    return entry.sport || "League Game";
-  } else if (entry._fixed) {
-    // Fixed/pinned activities (Lunch, Learning, etc.)
-    return label || entry._activity || "";
-  } else if (entry.sport) {
-    return `${label} – ${entry.sport}`;
-  } else {
-    return label;
-  }
-}
-
-/**
- * Helper: Finds the *first* 30-min slot index
- * that matches the start time of a custom block.
- */
-function findFirstSlotForTime(startMin) {
-  if (startMin === null || !window.unifiedTimes) return -1; // safety
-  for (let i = 0; i < window.unifiedTimes.length; i++) {
-    const slot = window.unifiedTimes[i];
-    const slotStart =
-      new Date(slot.start).getHours() * 60 +
-      new Date(slot.start).getMinutes();
-    // Failsafe: find the closest one
-    if (slotStart >= startMin && slotStart < startMin + INCREMENT_MINS) {
-      return i;
-    }
-  }
-  return -1;
-}
-
-/**
- * Renders the "Staggered" (YKLI) view
- * --- one table PER DIVISION ---
- * --- with LEAGUE MIRRORING & EDIT-ON-CLICK ---
- * --- and explicit Dismissal + Snacks + custom pin tiles ---
- */
-function renderStaggeredView(container) {
-  container.innerHTML = "";
-
-  const availableDivisions = window.availableDivisions || [];
-  const divisions = window.divisions || {};
-  const scheduleAssignments = window.scheduleAssignments || {};
-
-  const dailyData = window.loadCurrentDailyData?.() || {};
-  const manualSkeleton = dailyData.manualSkeleton || [];
-
-  // Load previous day's league counters
-  const prevDailyData = window.loadPreviousDailyData?.() || {};
-  const prevCounters = prevDailyData.leagueDayCounters || {};
-  const todayCounters = {}; // This will be saved at the end
-
-  if (manualSkeleton.length === 0) {
-    container.innerHTML =
-      "<p>No schedule built for this day. Go to the 'Daily Adjustments' tab to build one.</p>";
-    return;
-  }
-
-  // Wrapper for side-by-side styling
-  const wrapper = document.createElement("div");
-  wrapper.className = "schedule-view-wrapper";
-  container.appendChild(wrapper);
-
-  // 1. Loop over each division and create a separate table
-  availableDivisions.forEach((div) => {
-    const bunks = (divisions[div]?.bunks || []).sort();
-    if (bunks.length === 0) return; // no bunks, no table
-
-    const table = document.createElement("table");
-    table.className = "schedule-division-table";
-    table.style.borderCollapse = "collapse";
-
-    // Header
-    const thead = document.createElement("thead");
-    const tr1 = document.createElement("tr"); // Division name
-    const tr2 = document.createElement("tr"); // Column titles
-
-    const thDiv = document.createElement("th");
-    thDiv.colSpan = 1 + bunks.length; // 1 for Time, N for bunks
-    thDiv.textContent = div;
-    thDiv.style.background = divisions[div]?.color || "#333";
-    thDiv.style.color = "#fff";
-    thDiv.style.border = "1px solid #999";
-    tr1.appendChild(thDiv);
-
-    const thTime = document.createElement("th");
-    thTime.textContent = "Time";
-    thTime.style.minWidth = "100px";
-    thTime.style.border = "1px solid #999";
-    tr2.appendChild(thTime);
-
-    bunks.forEach((b) => {
-      const thBunk = document.createElement("th");
-      thBunk.textContent = b;
-      thBunk.style.border = "1px solid #999";
-      thBunk.style.minWidth = "120px";
-      tr2.appendChild(thBunk);
-    });
-    thead.appendChild(tr1);
-    thead.appendChild(tr2);
-    table.appendChild(thead);
-
-    // Body
-    const tbody = document.createElement("tbody");
-
-    // Pre-filter, validate, and sort blocks for this division
-    const tempSortedBlocks = [];
-    manualSkeleton.forEach((item) => {
-      if (item.division === div) {
-        const startMin = parseTimeToMinutes(item.startTime);
-        const endMin = parseTimeToMinutes(item.endTime);
-
-        if (startMin === null || endMin === null) {
-          return; // invalid time
-        }
-
-        const divData = divisions[div];
-        if (divData) {
-          const divStartMin = parseTimeToMinutes(divData.startTime);
-          const divEndMin = parseTimeToMinutes(divData.endTime);
-
-          if (divStartMin !== null && endMin <= divStartMin) {
-            return; // too early
-          }
-          if (divEndMin !== null && startMin >= divEndMin) {
-            return; // too late
-          }
-        }
-
-        tempSortedBlocks.push({ item, startMin, endMin });
-      }
-    });
-
-    // Sort by start time
-    tempSortedBlocks.sort((a, b) => a.startMin - b.startMin);
-
-    // Build final blocks with league/specialty counters
-    const prevDivCounts = prevCounters[div] || { league: 0, specialty: 0 };
-    let todayLeagueCount = prevDivCounts.league;
-    let todaySpecialtyCount = prevDivCounts.specialty;
-
-    const divisionBlocks = [];
-
-    tempSortedBlocks.forEach((block) => {
-      const { item, startMin, endMin } = block;
-
-      let eventName = item.event;
-
-      if (item.event === "League Game") {
-        todayLeagueCount++;
-        eventName = `League Game ${todayLeagueCount}`;
-      } else if (item.event === "Specialty League") {
-        todaySpecialtyCount++;
-        eventName = `Specialty League ${todaySpecialtyCount}`;
-      }
-
-      divisionBlocks.push({
-        label: `${minutesToTimeLabel(startMin)} - ${minutesToTimeLabel(
-          endMin
-        )}`,
-        startMin,
-        endMin,
-        event: eventName,
-        type: item.type
-      });
-    });
-
-    todayCounters[div] = {
-      league: todayLeagueCount,
-      specialty: todaySpecialtyCount
+function createMasterListItem(type, item) {
+    const el = document.createElement('div');
+    el.className = 'list-item';
+    const id = `${type}-${item.name}`;
+    if (id === selectedItemId) el.classList.add('selected');
+    
+    el.onclick = () => {
+        selectedItemId = id;
+        renderMasterLists(); 
+        renderDetailPane(); 
     };
 
-    const uniqueBlocks = divisionBlocks.filter(
-      (block, index, self) =>
-        index === self.findIndex((t) => t.label === block.label)
-    );
+    const nameEl = document.createElement('span');
+    nameEl.className = 'list-item-name';
+    nameEl.textContent = item.name;
+    el.appendChild(nameEl);
 
-    // Flatten split blocks into two half-blocks (UI-level time split;
-    // content comes from scheduleAssignments, not from this split)
-    const flattenedBlocks = [];
-    uniqueBlocks.forEach((block) => {
-      if (
-        block.type === "split" &&
-        block.startMin !== null &&
-        block.endMin !== null
-      ) {
-        const midMin = Math.round(
-          block.startMin + (block.endMin - block.startMin) / 2
-        );
+    const tog = document.createElement("label"); 
+    tog.className = "switch list-item-toggle";
+    tog.title = "Available (Master)";
+    tog.onclick = (e) => e.stopPropagation();
+    const cb = document.createElement("input"); 
+    cb.type = "checkbox"; 
+    cb.checked = item.available;
+    cb.onchange = (e) => { 
+        e.stopPropagation();
+        item.available = cb.checked; 
+        window.saveGlobalSpecialActivities(specialActivities);
+        renderDetailPane();
+    };
+    tog.append(cb, document.createElement("span"));
+    tog.querySelector("span").className = "slider";
+    el.appendChild(tog);
 
-        // First half
-        flattenedBlocks.push({
-          ...block,
-          label: `${minutesToTimeLabel(block.startMin)} - ${minutesToTimeLabel(
-            midMin
-          )}`,
-          startMin: block.startMin,
-          endMin: midMin,
-          splitPart: 1
-        });
-        // Second half
-        flattenedBlocks.push({
-          ...block,
-          label: `${minutesToTimeLabel(midMin)} - ${minutesToTimeLabel(
-            block.endMin
-          )}`,
-          startMin: midMin,
-          endMin: block.endMin,
-          splitPart: 2
-        });
-      } else {
-        flattenedBlocks.push(block);
-      }
-    });
+    return el;
+}
 
-    // Render rows
-    if (flattenedBlocks.length === 0) {
-      const tr = document.createElement("tr");
-      const td = document.createElement("td");
-      td.colSpan = bunks.length + 1;
-      td.textContent =
-        "No schedule blocks found for this division in the template.";
-      td.className = "grey-cell";
-      tr.appendChild(td);
-      tbody.appendChild(tr);
+function renderDetailPane() {
+    if (!selectedItemId) {
+        detailPaneEl.innerHTML = `<p class="muted">Select a special activity from the left to edit its details.</p>`;
+        return;
     }
 
-    flattenedBlocks.forEach((eventBlock) => {
-      const tr = document.createElement("tr");
+    const [type, name] = selectedItemId.split(/-(.+)/);
+    const item = specialActivities.find(f => f.name === name);
 
-      // Time cell
-      const tdTime = document.createElement("td");
-      tdTime.style.border = "1px solid #ccc";
-      tdTime.style.verticalAlign = "top";
-      tdTime.style.fontWeight = "bold";
-      tdTime.textContent = eventBlock.label;
-      tr.appendChild(tdTime);
-
-      // Activity cells
-      if (
-        eventBlock.event.startsWith("League Game") ||
-        eventBlock.event.startsWith("Specialty League")
-      ) {
-        // LEAGUE / SPECIALTY: merged cell with mirrored games
-        const tdLeague = document.createElement("td");
-        tdLeague.colSpan = bunks.length;
-        tdLeague.style.verticalAlign = "top";
-        tdLeague.style.textAlign = "left";
-        tdLeague.style.padding = "5px 8px";
-        tdLeague.style.background = "#f0f8f0"; // light green
-
-        const firstSlotIndex = findFirstSlotForTime(eventBlock.startMin);
-        let allMatchups = [];
-
-        if (bunks.length > 0) {
-          const firstBunkEntry = getEntry(bunks[0], firstSlotIndex);
-          if (firstBunkEntry && firstBunkEntry._allMatchups) {
-            allMatchups = firstBunkEntry._allMatchups;
-          }
-        }
-
-        let html = "";
-        if (allMatchups.length === 0) {
-          html = `<p class="muted" style="margin:0; padding: 4px;">${eventBlock.event}</p>`;
-        } else {
-          html = `<p style="margin:2px 0 5px 4px; font-weight: bold;">${eventBlock.event}</p>`;
-          html += '<ul style="margin: 0; padding-left: 18px;">';
-          allMatchups.forEach((matchupLabel) => {
-            html += `<li>${matchupLabel}</li>`;
-          });
-          html += "</ul>";
-        }
-        tdLeague.innerHTML = html;
-        tr.appendChild(tdLeague);
-      } else {
-        // REGULAR / DISMISSAL / SNACKS / CUSTOM PINS / GENERATED / SPLIT
-        const rawName = eventBlock.event || "";
-        const nameLc = rawName.toLowerCase();
-
-        const isDismissalBlock = nameLc.includes("dismiss");
-        const isSnackBlock = nameLc.includes("snack");
-
-        // GENERATED vs PIN logic:
-        // 1) If the whole name matches a known generated type (Activity, Swim, etc.)
-        // 2) OR if it's a combo like "Swim / Activity" where ANY part is generated
-        let isGeneratedBlock = uiIsGeneratedEventName(rawName);
-        if (!isGeneratedBlock && rawName.includes("/")) {
-          const parts = rawName.split("/").map((s) => s.trim().toLowerCase());
-          const anyGeneratedPart = parts.some((p) => UI_GENERATED_EVENTS.has(p));
-          if (anyGeneratedPart) {
-            isGeneratedBlock = true;
-          }
-        }
-
-        // PIN = NOT dismissal, NOT snack, NOT generated
-        const isPinBlock =
-          !isGeneratedBlock && !isDismissalBlock && !isSnackBlock;
-
-        bunks.forEach((bunk) => {
-          const tdActivity = document.createElement("td");
-          tdActivity.style.border = "1px solid #ccc";
-          tdActivity.style.verticalAlign = "top";
-
-          const startMin = eventBlock.startMin;
-          const endMin = eventBlock.endMin;
-
-          // This string is what will go into the prompt on click
-          let cellActivityName = "";
-
-          // Dismissal row
-          if (isDismissalBlock) {
-            cellActivityName = "Dismissal";
-            tdActivity.textContent = cellActivityName;
-            tdActivity.style.background = "#ffecec"; // light red/pink
-            tdActivity.style.fontWeight = "bold";
-          }
-          // Snacks row
-          else if (isSnackBlock) {
-            cellActivityName = "Snacks";
-            tdActivity.textContent = cellActivityName;
-            tdActivity.style.background = "#e8f5e9"; // light green-ish
-            tdActivity.style.fontWeight = "bold";
-          }
-          // Any other NON-GENERATED tile = PIN TILE
-          // (Lunch, Regroup, Lineup, Cleanup, etc.)
-          else if (isPinBlock) {
-            cellActivityName = rawName || "Pinned";
-            tdActivity.textContent = cellActivityName;
-            tdActivity.style.background = "#fff8e1"; // light yellow for pins
-            tdActivity.style.fontWeight = "bold";
-          }
-          // GENERATED SLOTS (Activity / Sports / Special Activity / Swim / Split)
-          // -> show whatever the scheduler actually picked
-          else {
-            const slotIndex = findFirstSlotForTime(startMin);
-            const entry = getEntry(bunk, slotIndex);
-
-            if (entry) {
-              cellActivityName = formatEntry(entry);
-              if (entry._h2h) {
-                tdActivity.style.background = "#e8f4ff";
-                tdActivity.style.fontWeight = "bold";
-              } else if (entry._fixed) {
-                tdActivity.style.background = "#fff8e1"; // fixed/pinned
-              }
-            } else {
-              // fallback so prompt isn't empty
-              cellActivityName = rawName;
-            }
-            tdActivity.textContent = cellActivityName;
-          }
-
-          // Apply the click handler to ALL cells (pins + generated)
-          tdActivity.style.cursor = "pointer";
-          tdActivity.title = "Click to edit this activity";
-          tdActivity.onclick = () =>
-            editCell(bunk, startMin, endMin, cellActivityName);
-
-          tr.appendChild(tdActivity);
-        });
-      }
-
-      tbody.appendChild(tr);
+    if (!item) {
+        selectedItemId = null;
+        detailPaneEl.innerHTML = `<p style="color: red;">Error: Could not find item.</p>`;
+        return;
+    }
+    
+    detailPaneEl.innerHTML = ""; 
+    
+    // 1. Header
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid #eee; padding-bottom:10px; margin-bottom:15px;';
+    const title = document.createElement('h3');
+    title.style.margin = '0';
+    title.textContent = item.name;
+    makeEditable(title, newName => {
+        if (!newName.trim()) return;
+        item.name = newName;
+        selectedItemId = `${type}-${newName}`;
+        window.saveGlobalSpecialActivities(specialActivities);
+        renderMasterLists();
     });
+    const deleteBtn = document.createElement('button');
+    deleteBtn.textContent = 'Delete';
+    deleteBtn.style.cssText = 'background:#c0392b; color:white;';
+    deleteBtn.onclick = () => {
+        if (confirm(`Delete "${item.name}"?`)) {
+            const idx = specialActivities.indexOf(item);
+            if (idx > -1) specialActivities.splice(idx, 1);
+            selectedItemId = null;
+            window.saveGlobalSpecialActivities(specialActivities);
+            renderMasterLists();
+            renderDetailPane();
+        }
+    };
+    header.append(title, deleteBtn);
+    detailPaneEl.appendChild(header);
+    
+    // 2. Max Usage Input (NEW)
+    const limitDiv = document.createElement('div');
+    limitDiv.style.cssText = "background:#f0f8ff; padding:10px; border-radius:5px; margin-bottom:15px; border:1px solid #cce5ff;";
+    limitDiv.innerHTML = `<strong>Max Times per Season (0 = Unlimited):</strong><br>`;
+    const limitInput = document.createElement('input');
+    limitInput.type = "number";
+    limitInput.min = "0";
+    limitInput.value = item.maxUsage || 0;
+    limitInput.style.marginTop = "5px";
+    limitInput.style.width = "80px";
+    limitInput.onchange = () => {
+        item.maxUsage = parseInt(limitInput.value) || 0;
+        window.saveGlobalSpecialActivities(specialActivities);
+    };
+    limitDiv.appendChild(limitInput);
+    limitDiv.appendChild(document.createTextNode(" times per bunk"));
+    detailPaneEl.appendChild(limitDiv);
 
-    table.appendChild(tbody);
-    wrapper.appendChild(table);
-  });
-
-  // Save league counters to today's data
-  window.saveCurrentDailyData?.("leagueDayCounters", todayCounters);
+    // 3. Controls
+    const onSave = () => window.saveGlobalSpecialActivities(specialActivities);
+    const onRerender = renderDetailPane;
+    
+    const sharableControls = renderSharableControls(item, onSave, onRerender);
+    sharableControls.style.borderTop = '1px solid #eee';
+    sharableControls.style.paddingTop = '15px';
+    detailPaneEl.appendChild(sharableControls);
+    
+    const limitControls = renderAllowedBunksControls(item, onSave, onRerender);
+    detailPaneEl.appendChild(limitControls);
+    
+    const timeRuleControls = renderTimeRulesUI(item, onSave, onRerender);
+    timeRuleControls.style.cssText = "margin-top:10px; padding-top:10px; border-top:1px solid #eee;";
+    detailPaneEl.appendChild(timeRuleControls);
 }
 
-// ===== Save/Load/Init =====
-
-function saveSchedule() {
-  try {
-    window.saveCurrentDailyData?.(
-      "scheduleAssignments",
-      window.scheduleAssignments
-    );
-    window.saveCurrentDailyData?.(
-      "leagueAssignments",
-      window.leagueAssignments
-    );
-    window.saveCurrentDailyData?.("unifiedTimes", window.unifiedTimes);
-  } catch (e) {
-    // save failed
-  }
+function addSpecial() {
+    const n = addSpecialInput.value.trim();
+    if (!n) return;
+    if (specialActivities.some(s => s.name.toLowerCase() === n.toLowerCase())) {
+        alert("Name already exists."); return;
+    }
+    specialActivities.push({
+        name: n,
+        available: true,
+        sharableWith: { type: 'not_sharable', divisions: [] },
+        limitUsage: { enabled: false, divisions: {} },
+        timeRules: [],
+        maxUsage: 0 
+    });
+    addSpecialInput.value = "";
+    window.saveGlobalSpecialActivities(specialActivities);
+    selectedItemId = `special-${n}`;
+    renderMasterLists();
+    renderDetailPane();
 }
 
-function reconcileOrRenderSaved() {
-  try {
-    const data = window.loadCurrentDailyData?.() || {};
-    window.scheduleAssignments = data.scheduleAssignments || {};
-    window.leagueAssignments = data.leagueAssignments || {};
-
-    const savedTimes = data.unifiedTimes || [];
-    window.unifiedTimes = savedTimes.map((slot) => ({
-      ...slot,
-      start: new Date(slot.start),
-      end: new Date(slot.end)
-    }));
-  } catch (e) {
-    window.scheduleAssignments = {};
-    window.leagueAssignments = {};
-    window.unifiedTimes = [];
-  }
-
-  updateTable();
+// --- Helpers ---
+function parseTimeToMinutes(str) { /* same as before */
+    if (!str || typeof str !== "string") return null;
+    let s = str.trim().toLowerCase(), mer = null;
+    if (s.endsWith("am") || s.endsWith("pm")) { mer = s.endsWith("am") ? "am" : "pm"; s = s.replace(/am|pm/g, "").trim(); }
+    const m = s.match(/^(\d{1,2})\s*:\s*(\d{2})$/);
+    if (!m) return null;
+    let hh = parseInt(m[1], 10), mm = parseInt(m[2], 10);
+    if (Number.isNaN(hh)||Number.isNaN(mm)) return null;
+    if (mer) { if (hh === 12) hh = mer === "am" ? 0 : 12; else if (mer === "pm") hh += 12; }
+    return hh * 60 + mm;
 }
 
-function initScheduleSystem() {
-  try {
-    window.scheduleAssignments = window.scheduleAssignments || {};
-    window.leagueAssignments = window.leagueAssignments || {};
-    reconcileOrRenderSaved();
-  } catch (e) {
-    updateTable();
-  }
+function makeEditable(el, save) {
+    el.ondblclick = e => {
+        e.stopPropagation();
+        const old = el.textContent;
+        const input = document.createElement("input");
+        input.type = "text"; input.value = old;
+        el.replaceWith(input); input.focus();
+        function done() {
+            const val = input.value.trim();
+            if (val && val !== old) save(val);
+            el.textContent = val || old; input.replaceWith(el);
+        }
+        input.onblur = done; input.onkeyup = e => { if (e.key === "Enter") done(); };
+    };
 }
 
-// ===== Exports =====
-window.updateTable = window.updateTable || updateTable;
-window.initScheduleSystem =
-  window.initScheduleSystem || initScheduleSystem;
-window.saveSchedule = window.saveSchedule || saveSchedule;
+function renderTimeRulesUI(item, onSave, onRerender) {
+    // ... (Standard time rule renderer, abbreviated for brevity but assumed present)
+    // Re-using the standard block from previous files for consistency
+    const container = document.createElement("div");
+    container.innerHTML = `<strong>Global Time Rules:</strong>`;
+    if (!item.timeRules) item.timeRules = [];
+    const ruleList = document.createElement("div");
+    if (item.timeRules.length === 0) ruleList.innerHTML = `<p class="muted" style="margin:0;">No specific rules.</p>`;
+    item.timeRules.forEach((rule, index) => {
+        const ruleEl = document.createElement("div");
+        ruleEl.style.cssText = "margin:2px 0; padding:4px; background:#f4f4f4; border-radius:4px;";
+        ruleEl.innerHTML = `<strong style="color:${rule.type==='Available'?'green':'red'}">${rule.type}</strong> ${rule.start}-${rule.end} <button onclick="this.dispatchEvent(new CustomEvent('rem',{bubbles:true}))" style="margin-left:5px;border:none;background:none;cursor:pointer;">✖</button>`;
+        ruleEl.querySelector('button').addEventListener('rem', () => { item.timeRules.splice(index, 1); onSave(); onRerender(); });
+        ruleList.appendChild(ruleEl);
+    });
+    container.appendChild(ruleList);
+    
+    const addDiv = document.createElement("div");
+    addDiv.style.marginTop = "5px";
+    addDiv.innerHTML = `<select id="tr-type"><option value="Available">Available</option><option value="Unavailable">Unavailable</option></select> <input id="tr-start" placeholder="9:00am" style="width:70px;"> to <input id="tr-end" placeholder="10:00am" style="width:70px;"> <button id="tr-add">Add</button>`;
+    addDiv.querySelector('#tr-add').onclick = () => {
+        const type = addDiv.querySelector('#tr-type').value;
+        const start = addDiv.querySelector('#tr-start').value;
+        const end = addDiv.querySelector('#tr-end').value;
+        if(parseTimeToMinutes(start)!=null && parseTimeToMinutes(end)!=null) {
+            item.timeRules.push({type, start, end}); onSave(); onRerender();
+        } else alert("Invalid times");
+    };
+    container.appendChild(addDiv);
+    return container;
+}
+
+function renderSharableControls(item, onSave, onRerender) {
+    const container = document.createElement("div");
+    const rules = item.sharableWith || { type: 'not_sharable' };
+    const isSharable = rules.type !== 'not_sharable';
+    container.innerHTML = `<label class="switch"><input type="checkbox" ${isSharable?'checked':''}><span class="slider"></span></label> <strong>Sharable</strong>`;
+    container.querySelector('input').onchange = (e) => {
+        rules.type = e.target.checked ? 'all' : 'not_sharable';
+        rules.divisions = [];
+        onSave(); onRerender();
+    };
+    if (isSharable) {
+        const sub = document.createElement('div');
+        sub.innerHTML = `<br>Limit to Divisions:`;
+        const box = createChipPicker(window.availableDivisions||[], rules.divisions, () => {
+            rules.type = rules.divisions.length > 0 ? 'custom' : 'all'; onSave(); onRerender();
+        });
+        sub.appendChild(box);
+        container.appendChild(sub);
+    }
+    return container;
+}
+
+function renderAllowedBunksControls(item, onSave, onRerender) {
+    const container = document.createElement("div");
+    container.style.cssText = "margin-top:10px; padding-top:10px; border-top:1px solid #eee;";
+    container.innerHTML = `<strong>Allowed Divisions & Bunks:</strong>`;
+    const rules = item.limitUsage || { enabled: false, divisions: {} };
+    
+    const togDiv = document.createElement('div');
+    togDiv.innerHTML = `<label class="switch"><input type="checkbox" ${rules.enabled?'checked':''}><span class="slider"></span></label> Limit to Specific Bunks`;
+    togDiv.querySelector('input').onchange = (e) => { rules.enabled = e.target.checked; onSave(); onRerender(); };
+    container.appendChild(togDiv);
+
+    if (rules.enabled) {
+        const sub = document.createElement('div');
+        (window.availableDivisions||[]).forEach(div => {
+            const divRow = document.createElement('div');
+            divRow.style.marginTop = '5px';
+            const isDivAllowed = div in rules.divisions;
+            const chip = createLimitChip(div, isDivAllowed, true);
+            chip.onclick = () => {
+                if (isDivAllowed) delete rules.divisions[div];
+                else rules.divisions[div] = [];
+                onSave(); onRerender();
+            };
+            divRow.appendChild(chip);
+            
+            if (isDivAllowed) {
+                const bunks = window.divisions[div]?.bunks || [];
+                const allowedBunks = rules.divisions[div];
+                bunks.forEach(b => {
+                    const bChip = createLimitChip(b, allowedBunks.includes(b), false);
+                    bChip.style.marginLeft = '5px';
+                    bChip.onclick = () => {
+                        const idx = allowedBunks.indexOf(b);
+                        if (idx > -1) allowedBunks.splice(idx, 1); else allowedBunks.push(b);
+                        onSave(); onRerender();
+                    };
+                    divRow.appendChild(bChip);
+                });
+            }
+            sub.appendChild(divRow);
+        });
+        container.appendChild(sub);
+    }
+    return container;
+}
+
+function createChipPicker(items, selected, onToggle) {
+    const d = document.createElement('div'); d.className='chips';
+    items.forEach(i => {
+        const s = document.createElement('span'); s.className='chip'; s.textContent=i;
+        if(selected.includes(i)) { s.style.background='#007BFF'; s.style.color='white'; }
+        s.onclick = () => {
+            const idx = selected.indexOf(i);
+            if(idx>-1) selected.splice(idx,1); else selected.push(i);
+            onToggle();
+        };
+        d.appendChild(s);
+    });
+    return d;
+}
+
+function createLimitChip(name, active, isDiv) {
+    const s = document.createElement('span'); 
+    s.style.padding='2px 6px'; s.style.border='1px solid #ccc'; s.style.borderRadius='10px'; s.style.cursor='pointer'; s.style.display='inline-block';
+    s.textContent = name;
+    if(active) { s.style.background = isDiv ? '#007BFF' : '#17a2b8'; s.style.color='white'; }
+    else { s.style.background='#f9f9f9'; }
+    return s;
+}
+
+window.initSpecialActivitiesTab = initSpecialActivitiesTab;
+
+})();
