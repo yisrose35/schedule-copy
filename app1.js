@@ -484,5 +484,29 @@ window.saveGlobalSpecialActivities = function(updatedActivities) {
     // Call the main saveData() function to persist all app1 data
     saveData();
 }
+    // --- NEW: helper so UI can add a bunk into a division + persist it ---
+window.addDivisionBunk = function (divisionName, bunkName) {
+    if (!divisionName || !bunkName) return;
+    const cleanDiv = String(divisionName).trim();
+    const cleanBunk = String(bunkName).trim();
+    if (!cleanDiv || !cleanBunk) return;
+
+    // Make sure bunks[] contains it
+    if (!bunks.includes(cleanBunk)) {
+        bunks.push(cleanBunk);
+    }
+
+    // Make sure the division exists
+    const div = divisions[cleanDiv];
+    if (div) {
+        if (!div.bunks.includes(cleanBunk)) {
+            div.bunks.push(cleanBunk);
+        }
+    }
+
+    // Persist everything
+    saveData();
+};
+
 
 })();
