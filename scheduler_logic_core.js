@@ -3692,17 +3692,50 @@
 								    const disabledSpecials = dailyOverrides.disabledSpecials || [];
 								
 								    const rotationHistoryRaw = window.loadRotationHistory?.() || {};
-								    const rotationHistory = {
-								        bunks: rotationHistoryRaw.bunks || {},
-								        leagues: rotationHistoryRaw.leagues || {},
-								        leagueTeamSports: rotationHistoryRaw.leagueTeamSports || {}
-								        // leagueTeamLastSport is added lazily in league pass
-								    };
-								
-								    const overrides = {
-								        bunks: dailyOverrides.bunks || [],
-								        leagues: disabledLeagues
-								    };
+    const rotationHistory = {
+        bunks: rotationHistoryRaw.bunks || {},
+        leagues: rotationHistoryRaw.leagues || {},
+        leagueTeamSports: rotationHistoryRaw.leagueTeamSports || {},
+        leagueTeamLastSport: rotationHistoryRaw.leagueTeamLastSport || {}
+    };
+
+    // --- NEW: CALCULATE HISTORICAL COUNTS FOR USAGE LIMITS ---
+    const historicalCounts = {}; 
+    try {
+        const allDaily = window.loadAllDailyData?.() || {};
+        const manualOffsets = globalSettings.manualUsageOffsets || {};
+
+        // 1. Sum from past schedules
+        Object.values(allDaily).forEach(day => {
+            const sched = day.scheduleAssignments || {};
+            Object.keys(sched).forEach(b => {
+                if (!historicalCounts[b]) historicalCounts[b] = {};
+                (sched[b] || []).forEach(e => {
+                    if (e && e._activity && !e.continuation) {
+                        historicalCounts[b][e._activity] = (historicalCounts[b][e._activity] || 0) + 1;
+                    }
+                });
+            });
+        });
+
+        // 2. Apply manual offsets (from Report tab)
+        Object.keys(manualOffsets).forEach(b => {
+            if (!historicalCounts[b]) historicalCounts[b] = {};
+            Object.keys(manualOffsets[b]).forEach(act => {
+                const offset = manualOffsets[b][act] || 0;
+                const current = historicalCounts[b][act] || 0;
+                historicalCounts[b][act] = Math.max(0, current + offset);
+            });
+        });
+    } catch (e) {
+        console.error("Error calculating historical counts:", e);
+    }
+    // ----------------------------------------
+
+    const overrides = {
+        bunks: dailyOverrides.bunks || [],
+        leagues: disabledLeagues
+    };
 								
 								    const availableDivisions = masterAvailableDivs.filter(
 								        divName => !overrides.bunks.includes(divName)
