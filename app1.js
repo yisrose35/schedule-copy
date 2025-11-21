@@ -95,6 +95,32 @@ function parseTimeToMinutes(str) {
 
     return hh * 60 + mm;
 }
+    // Sort helper: put "Bunk 1, Bunk 2, Bunk 10" in numeric order
+function compareBunks(a, b) {
+    const sa = String(a);
+    const sb = String(b);
+
+    const re = /(\d+)/;
+    const ma = sa.match(re);
+    const mb = sb.match(re);
+
+    if (ma && mb) {
+        const na = parseInt(ma[1], 10);
+        const nb = parseInt(mb[1], 10);
+        if (!Number.isNaN(na) && !Number.isNaN(nb) && na !== nb) {
+            return na - nb;
+        }
+    }
+
+    // Fallback: natural string compare
+    return sa.localeCompare(sb, undefined, { numeric: true, sensitivity: "base" });
+}
+
+function sortBunksInPlace(arr) {
+    if (!Array.isArray(arr)) return;
+    arr.sort(compareBunks);
+}
+
 
 // Rename a bunk everywhere (global + all divisions + scheduleAssignments)
 function renameBunkEverywhere(oldName, newName) {
