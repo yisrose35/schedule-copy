@@ -3703,39 +3703,7 @@
         leagueTeamLastSport: rotationHistoryRaw.leagueTeamLastSport || {}
     };
 
-    // --- NEW: CALCULATE HISTORICAL COUNTS FOR USAGE LIMITS ---
-    const historicalCounts = {}; 
-    try {
-        const allDaily = window.loadAllDailyData?.() || {};
-        const manualOffsets = globalSettings.manualUsageOffsets || {};
-
-        // 1. Sum from past schedules
-        Object.values(allDaily).forEach(day => {
-            const sched = day.scheduleAssignments || {};
-            Object.keys(sched).forEach(b => {
-                if (!historicalCounts[b]) historicalCounts[b] = {};
-                (sched[b] || []).forEach(e => {
-                    // Only count PRIMARY usage (not continuations)
-                    if (e && e._activity && !e.continuation && !e._h2h) {
-                        historicalCounts[b][e._activity] = (historicalCounts[b][e._activity] || 0) + 1;
-                    }
-                });
-            });
-        });
-
-        // 2. Apply manual offsets (from Report tab - "Usage Manager")
-        Object.keys(manualOffsets).forEach(b => {
-            if (!historicalCounts[b]) historicalCounts[b] = {};
-            Object.keys(manualOffsets[b]).forEach(act => {
-                const offset = manualOffsets[b][act] || 0;
-                const current = historicalCounts[b][act] || 0;
-                historicalCounts[b][act] = Math.max(0, current + offset);
-            });
-        });
-    } catch (e) {
-        console.error("Error calculating historical counts:", e);
-    }
-
+   
     // --- NEW: CALCULATE HISTORICAL COUNTS FOR USAGE LIMITS ---
     const historicalCounts = {}; 
     try {
