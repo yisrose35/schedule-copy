@@ -491,7 +491,7 @@
                     bunk.className = 'bunk-button';
                     bunk.textContent = name;
                     makeBunkDraggable(bunk);
-                    bunkContainer.appendChild(bunk);
+                    enhanceBunkPill(bunk); makeBunkDraggable(bunk); bunkContainer.appendChild(bunk);
                 });
             }
 
@@ -541,7 +541,7 @@
 
                     if (best && best.bunkContainer) {
                         makeBunkDraggable(bunk);
-                        best.bunkContainer.appendChild(bunk);
+                        best.enhanceBunkPill(bunk); makeBunkDraggable(bunk); bunkContainer.appendChild(bunk);
                     }
                 });
               // After moving, clear the unassigned container so nothing is "floating"
