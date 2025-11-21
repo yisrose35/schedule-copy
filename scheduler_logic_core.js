@@ -3794,8 +3794,4 @@ function loadAndFilterData() {
 }
 
 // END IIFE
-})(); make sure to add in this updates as wel Updated scheduler_logic_core.js
-Updated calculateHistoricalCounts to include Manual Offsets from the global settings. scheduler_logic_core.js
-Added calculateHistoricalCounts function that scans all past schedules.
-Calls this function during runSkeletonOptimizer.
-Passes the historicalCounts object to the filler functions. scheduler_logic_core.js: Update the optimizer to count how many times each bunk has done every activity in the past (by scanning previous schedules).
+})(); 
