@@ -1289,43 +1289,46 @@
 								            pick = { field: "Unassigned League", sport: null, _activity: "Free" };
 								        }
 								        // 1) Specific buckets
-								        else if (block.event === 'Special Activity') {
-								            pick = window.findBestSpecial?.(
-								                block,
-								                allActivities,
-								                fieldUsageBySlot,
-								                yesterdayHistory,
-								                activityProperties,
-								                rotationHistory,
-								                divisions
-								            );
-								        } else if (block.event === 'Sports Slot') {
-								            pick = window.findBestSportActivity?.(
-								                block,
-								                allActivities,
-								                fieldUsageBySlot,
-								                yesterdayHistory,
-								                activityProperties,
-								                rotationHistory,
-								                divisions
-								            );
-								        } else if (block.event === 'Swim') {
-								            pick = { field: "Swim", sport: null, _activity: "Swim" };
-								        }
-								
-								        // 2) Fallback to general
-								        if (!pick) {
-								            pick = window.findBestGeneralActivity?.(
-								                block,
-								                allActivities,
-								                h2hActivities,
-								                fieldUsageBySlot,
-								                yesterdayHistory,
-								                activityProperties,
-								                rotationHistory,
-								                divisions
-								            );
-								        }
+        else if (block.event === 'Special Activity') {
+            pick = window.findBestSpecial?.(
+                block,
+                allActivities,
+                fieldUsageBySlot,
+                yesterdayHistory,
+                activityProperties,
+                rotationHistory,
+                divisions,
+                historicalCounts // <--- ADDED
+            );
+        } else if (block.event === 'Sports Slot') {
+            pick = window.findBestSportActivity?.(
+                block,
+                allActivities,
+                fieldUsageBySlot,
+                yesterdayHistory,
+                activityProperties,
+                rotationHistory,
+                divisions,
+                historicalCounts // <--- ADDED
+            );
+        } else if (block.event === 'Swim') {
+            pick = { field: "Swim", sport: null, _activity: "Swim" };
+        }
+
+        // 2) Fallback to general
+        if (!pick) {
+            pick = window.findBestGeneralActivity?.(
+                block,
+                allActivities,
+                h2hActivities,
+                fieldUsageBySlot,
+                yesterdayHistory,
+                activityProperties,
+                rotationHistory,
+                divisions,
+                historicalCounts // <--- ADDED
+            );
+        }
 								
 								        // 3) Validate the pick
 								        if (pick && !isPickValidForBlock(block, pick, activityProperties, fieldUsageBySlot)) {
