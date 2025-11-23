@@ -1367,7 +1367,7 @@ fillBlock(
     window.saveSchedule?.();
 
     return true;
-};
+)};
 
 // =====================================================================
 // HELPER FUNCTIONS USED BY PASSES
