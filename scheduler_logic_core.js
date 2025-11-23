@@ -1782,8 +1782,7 @@ function fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, isLeagueFill
       fieldUsageBySlot
     );
   }
-}
-// =====================================================================
+}// =====================================================================
 // DATA LOADER / FILTER (Corrected)
 // =====================================================================
 function loadAndFilterData() {
