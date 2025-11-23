@@ -1,17 +1,10 @@
 // ===================================================================
 // leagues.js
 //
-// UPDATED (Import from Daily Schedule):
-// - Imports *all* league game blocks for the selected league from the
-//   current day's schedule (not from standings/history).
-// - Uses the actual "League Game X" labels coming from the daily
-//   schedule text.
-// - Correctly splits each block into separate matchups.
-// - Avoids double-counting by only reading from a single "anchor" team.
-//
-// FIX APPLIED:
-// - Adding/Removing teams no longer refreshes the whole pane (prevents jumping).
-// - Input box automatically refocuses after adding a team.
+// UPDATED FIXES:
+// 1. IMPORT: Now scans ALL teams to find every game (not just anchor team).
+// 2. IMPORT: Deduplicates matchups to prevent "phantom" double games.
+// 3. UI: Adding/Removing teams keeps the config pane open (no jumping).
 // ===================================================================
 
 (function () {
@@ -395,7 +388,6 @@
     detailPaneEl.appendChild(mainContent);
   }
 
-  // --- FIXED RENDER CONFIG (Prevents jumping back to Standings) ---
   function renderConfigSections(league, container) {
     container.innerHTML = '';
 
@@ -462,7 +454,7 @@
         league.teams = league.teams.filter((t) => t !== team);
         delete league.standings[team];
         saveLeaguesData();
-        // FIX 1: Do NOT call renderDetailPane(), only update this section
+        // NO JUMP FIX: Only re-render this section
         renderConfigSections(league, container);
       };
       teamList.appendChild(chip);
@@ -479,11 +471,9 @@
           league.teams.push(t);
           league.standings[t] = { w: 0, l: 0, t: 0 };
           saveLeaguesData();
-          
-          // FIX 2: Do NOT call renderDetailPane(), only update this section
+          // NO JUMP FIX
           renderConfigSections(league, container);
-          
-          // FIX 3: Re-focus the input so you can type the next team
+          // RE-FOCUS FIX
           const newInput = container.querySelector('input');
           if (newInput) newInput.focus();
         }
@@ -705,100 +695,107 @@
   }
 
   // ================================================================
-  // NEW IMPORT FROM DAILY SCHEDULE
+  // IMPROVED IMPORT: SCANS ALL TEAMS + DEDUPLICATES
   // ================================================================
   function importGamesFromSchedule(league, target) {
     target.innerHTML = '';
 
     const daily = window.loadCurrentDailyData?.() || {};
     const assignments = daily.scheduleAssignments || {};
+    const saveButton = target.parentElement.querySelector('[data-role="save-game-results"]');
 
     if (!league.teams || league.teams.length === 0) {
       target.innerHTML = `<p class="muted">Add teams to this league first.</p>`;
       return;
     }
 
-    // We only look at ONE "anchor" team to avoid double counting.
-    const anchorTeam = league.teams[0];
-    const schedule = assignments[anchorTeam] || [];
+    // We use a deduplication Set to prevent "A vs B" appearing twice (once found in A's schedule, once in B's).
+    const uniqueMatchKeys = new Set();
+    const groups = {}; // { "League Game 1": [matchObj, matchObj...] }
 
-    if (!Array.isArray(schedule) || schedule.length === 0) {
-      target.innerHTML = `<p class="muted">No schedule entries found today for ${anchorTeam}.</p>`;
-      return;
-    }
-
-    // Collect game blocks: each has label "League Game X" and a list of matchups
-    const groups = [];
-
-    for (let slotIndex = 0; slotIndex < schedule.length; slotIndex++) {
-      const entry = schedule[slotIndex];
-      if (!entry) continue;
-
-      // We only care about H2H league blocks
-      if (!entry._h2h) continue;
-
-      // The display text that the UI put in the cell.
-      // Try several fields in case the core uses different ones.
-      const rawText =
-        (typeof entry.sport === 'string' && entry.sport) ||
-        (typeof entry.event === 'string' && entry.event) ||
-        (typeof entry._activity === 'string' && entry._activity) ||
-        '';
-
-      if (!rawText.trim()) continue;
-
-      // Split into lines, trim, and drop blanks
-      const lines = rawText
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter((l) => l.length > 0);
-
-      if (!lines.length) continue;
-
-      // Figure out the label (e.g. "League Game 6")
-      let gameLabel =
-        lines.find((l) => /league game/i.test(l)) ||
-        lines[0] ||
-        'League Game';
-
-      // Now parse each matchup line: "1 vs 5 (Baseball) @ Court A"
-      const matches = [];
-
-      lines.forEach((line) => {
-        if (!/ vs /i.test(line)) return;
-        const m = line.match(/^(.*?)\s+vs\s+(.*?)(?:\s*\(|$)/i);
-        if (!m) return;
-        const teamA = m[1].trim();
-        const teamB = m[2].trim();
-
-        // Only keep if both are teams in THIS league
-        if (league.teams.includes(teamA) && league.teams.includes(teamB)) {
-          matches.push({ teamA, teamB });
-        }
-      });
-
-      if (matches.length > 0) {
-        groups.push({ label: gameLabel, matches });
+    // Helper: Normalize the Game Label
+    // If text contains "League Game 5", we want that clean string, not "League Game 5 (Rain)"
+    function getNormalizedLabel(lines) {
+      const explicit = lines.find((l) => /League Game\s*\d+/i.test(l));
+      if (explicit) {
+        const m = explicit.match(/League Game\s*\d+/i);
+        return m ? m[0] : explicit;
       }
+      return lines[0] || 'League Match';
     }
 
-    if (!groups.length) {
-      target.innerHTML = `<p class="muted">No league games found on today's schedule for this league.</p>`;
+    // Iterate *ALL* teams in the league to find their games
+    league.teams.forEach((teamName) => {
+      const schedule = assignments[teamName];
+      if (!Array.isArray(schedule)) return;
+
+      schedule.forEach((entry) => {
+        if (!entry || !entry._h2h) return;
+
+        const rawText =
+          (typeof entry.sport === 'string' && entry.sport) ||
+          (typeof entry.event === 'string' && entry.event) ||
+          (typeof entry._activity === 'string' && entry._activity) ||
+          '';
+
+        if (!rawText.trim()) return;
+
+        const lines = rawText
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter((l) => l.length > 0);
+
+        if (!lines.length) return;
+
+        const label = getNormalizedLabel(lines);
+
+        // Parse lines for "A vs B"
+        lines.forEach((line) => {
+          const m = line.match(/^(.*?)\s+vs\.?\s+(.*?)(?:\s*\(|$)/i);
+          if (!m) return;
+
+          const tA = m[1].trim();
+          const tB = m[2].trim();
+
+          // VALIDATION: Both teams must be in this league
+          if (league.teams.includes(tA) && league.teams.includes(tB)) {
+            // DEDUPLICATION KEY: Sort names so "A vs B" is same as "B vs A"
+            const matchKey = [tA, tB].sort().join('::') + '::' + label;
+
+            if (!uniqueMatchKeys.has(matchKey)) {
+              uniqueMatchKeys.add(matchKey);
+
+              if (!groups[label]) groups[label] = [];
+              groups[label].push({ teamA: tA, teamB: tB });
+            }
+          }
+        });
+      });
+    });
+
+    const labelKeys = Object.keys(groups);
+
+    if (labelKeys.length === 0) {
+      target.innerHTML = `<p class="muted">No scheduled league games found for these teams today.</p>`;
       return;
     }
 
-    const saveButton =
-      target.parentElement.querySelector('[data-role="save-game-results"]') ||
-      null;
+    // Sort labels numerically if possible (Game 1, Game 2...)
+    labelKeys.sort((a, b) => {
+      const nA = (a.match(/\d+/) || [0])[0];
+      const nB = (b.match(/\d+/) || [0])[0];
+      return parseInt(nA, 10) - parseInt(nB, 10) || a.localeCompare(b);
+    });
 
-    groups.forEach((group) => {
+    // Render groups
+    labelKeys.forEach((label) => {
       const header = document.createElement('div');
       header.className = 'group-header';
-      header.textContent = group.label;
+      header.textContent = label;
       target.appendChild(header);
 
-      group.matches.forEach((m) => {
-        addMatchRow(target, m.teamA, m.teamB, '', '', saveButton, group.label);
+      groups[label].forEach((m) => {
+        addMatchRow(target, m.teamA, m.teamB, '', '', saveButton, label);
       });
     });
 
