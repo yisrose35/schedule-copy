@@ -458,8 +458,8 @@
         league.teams = league.teams.filter((t) => t !== team);
         delete league.standings[team];
         saveLeaguesData();
+        // FIX 1: Removed renderDetailPane() here so it doesn't close the menu
         renderConfigSections(league, container);
-        renderDetailPane();
       };
       teamList.appendChild(chip);
     });
@@ -475,15 +475,19 @@
           league.teams.push(t);
           league.standings[t] = { w: 0, l: 0, t: 0 };
           saveLeaguesData();
+          
+          // FIX 2: Only re-render the config section, NOT the whole pane
           renderConfigSections(league, container);
-          renderDetailPane();
+          
+          // FIX 3: Re-focus the new input so you can keep typing
+          const newInput = container.querySelector("input");
+          if(newInput) newInput.focus();
         }
       }
     };
     teamSec.appendChild(teamInput);
     container.appendChild(teamSec);
   }
-
   // ================================================================
   // GAME RESULTS + STANDINGS UI
   // ================================================================
