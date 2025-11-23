@@ -463,9 +463,13 @@ window.runSkeletonOptimizer = function(manualSkeleton) {
         historicalCounts
     } = loadAndFilterData();
 
-    let fieldUsageBySlot = {};
-    window.fieldUsageBySlot = fieldUsageBySlot;
-    window.activityProperties = activityProperties;
+  let fieldUsageBySlot = {};
+window.fieldUsageBySlot = fieldUsageBySlot;
+window.activityProperties = activityProperties;
+
+// 🔄 Reset dynamic field time ranges for this run
+fieldBookedRanges = {};
+window.fieldBookedRanges = fieldBookedRanges;
 
     const timestamp = Date.now();
 
