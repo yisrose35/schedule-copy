@@ -445,7 +445,9 @@ window.runSkeletonOptimizer = function(manualSkeleton) {
     window.scheduleAssignments = {};
     window.leagueAssignments = {};
     window.unifiedTimes = [];
-
+// 🔄 reset per-day field booking ranges
+    fieldBookedRanges = {};
+    window.fieldBookedRanges = fieldBookedRanges;
     if (!manualSkeleton || manualSkeleton.length === 0) {
         return false;
     }
