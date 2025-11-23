@@ -357,7 +357,10 @@
     const skeleton = daily.manualSkeleton || [];
     const prevCounters = prevDaily.leagueDayCounters || {};
     const labelMap = {};
+    
+    // Identify all divisions in skeleton, regardless of restriction
     const divisions = new Set(skeleton.map(s => s.division));
+    
     divisions.forEach(div => {
       let leagueCount = (prevCounters[div] && prevCounters[div].league) || 0;
       const divBlocks = skeleton.filter(s => s.division === div).sort((a, b) => {
@@ -381,6 +384,7 @@
     target.innerHTML = '';
     if (!league.teams || league.teams.length === 0) { target.innerHTML = `<p class="muted">Add teams to this league first.</p>`; return; }
     const saveButton = target.parentElement.querySelector('[data-role="save-game-results"]');
+    
     const labelMap = generateLeagueLabelsMap();
     const groups = {}; 
     const processedLabels = new Set();
