@@ -22,6 +22,9 @@
 // ===== CONFIG =====
 const INCREMENT_MINS = 30;
 window.INCREMENT_MINS = INCREMENT_MINS;
+// Global per-field timeline of actual bookings (in minutes)
+let fieldBookedRanges = {};
+window.fieldBookedRanges = fieldBookedRanges;
 
 // Events that REQUIRE scheduling/generation
 const GENERATED_EVENTS = [
