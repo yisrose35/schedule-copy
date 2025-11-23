@@ -1667,9 +1667,7 @@ function fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, isLeagueFill
                 _allMatchups: pick._allMatchups || null
             };
 
-            // FIX: Call markFieldUsage here! 
-            // Previously, this function had custom logic that skipped certain activities.
-            // Now it forces the system to register usage for everything.
+            // FIX: Call markFieldUsage here to ensure this slot is BLOCKED for others
             if (!isLeagueFill && fieldName) {
                 markFieldUsage(
                     { ...block, slots: [slotIndex], _activity: pick._activity }, 
@@ -1679,8 +1677,7 @@ function fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, isLeagueFill
             }
         }
     });
-}
-								
+}								
 								// =====================================================================
 // DATA LOADER / FILTER (Corrected)
 // =====================================================================
