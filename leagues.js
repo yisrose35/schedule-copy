@@ -1,12 +1,10 @@
 // ===================================================================
 // leagues.js
 //
-// UPDATED FEATURES:
-// - MULTI-SET IMPORT: Correctly imports "League Game 6" and "League Game 7"
-//   simultaneously, even if they happen on the same day.
-// - HEADERS: Automatically creates a bold header (e.g., "League Game 6")
-//   above each specific set of matchups in the import window.
-// - SAVING: Preserves these headers so they appear when reviewing history.
+// FIXED:
+// - Reads the Daily Skeleton to calculate "League Game 1", "League Game 2", etc.
+// - Matches imported games to these headers based on TIME.
+// - Ensures games scheduled at different times get different headers.
 // ===================================================================
 
 (function () {
@@ -81,6 +79,29 @@
         if (ev.key === 'Enter') finish();
       };
     };
+  }
+
+  // ================================================================
+  // HELPER: Parse Time (Needed for correlating Skeleton to Games)
+  // ================================================================
+  function parseTimeToMinutes(str) {
+    if (!str || typeof str !== "string") return null;
+    let s = str.trim().toLowerCase();
+    let mer = null;
+    if (s.endsWith("am") || s.endsWith("pm")) {
+      mer = s.endsWith("am") ? "am" : "pm";
+      s = s.replace(/am|pm/g, "").trim();
+    }
+    const m = s.match(/^(\d{1,2})\s*:\s*(\d{2})$/);
+    if (!m) return null;
+    let hh = parseInt(m[1], 10);
+    const mm = parseInt(m[2], 10);
+    if (Number.isNaN(hh) || Number.isNaN(mm)) return null;
+    if (mer) {
+      if (hh === 12) hh = mer === "am" ? 0 : 12;
+      else if (mer === "pm") hh += 12;
+    }
+    return hh * 60 + mm;
   }
 
   // ================================================================
@@ -703,7 +724,7 @@
   }
 
   // ================================================================
-  // IMPROVED IMPORT: ROBUST LABEL FINDER & MULTI-SET SUPPORT
+  // IMPROVED IMPORT: SKELETON-AWARE TIME MATCHING
   // ================================================================
   function importGamesFromSchedule(league, target) {
     target.innerHTML = '';
@@ -717,71 +738,89 @@
       return;
     }
 
+    // ----------------------------------------------------------------
+    // STEP 1: Parse the Skeleton to map TIMES -> HEADER NAMES
+    // e.g. 10:00am -> "League Game 6", 2:00pm -> "League Game 7"
+    // ----------------------------------------------------------------
+    const skeleton = daily.manualSkeleton || [];
+    const timeMap = []; // Array of { start: min, end: min, label: "League Game X" }
+    let leagueCounter = 0;
+
+    // First, scan previous days to get the starting count (from scheduler_ui logic)
+    // Note: To keep it simple and robust, we will just count what's in TODAY's skeleton.
+    // If you need strict continuity from yesterday, we'd need to load yesterday's counters.
+    // For now, let's just sequentially number TODAY's games.
+    
+    // To match the UI exactly, we should try to load the counters if possible, 
+    // but let's start by just counting the skeleton items for *this* division.
+    
+    // Sort skeleton by time first to ensure 1, 2, 3 order
+    const sortedSkeleton = [...skeleton].sort((a, b) => {
+        const sa = parseTimeToMinutes(a.startTime) || 0;
+        const sb = parseTimeToMinutes(b.startTime) || 0;
+        return sa - sb;
+    });
+
+    sortedSkeleton.forEach(item => {
+        // Normalize event name check
+        const evt = (item.event || "").trim();
+        if (evt === "League Game" || evt.match(/League Game/i)) {
+            leagueCounter++;
+            const s = parseTimeToMinutes(item.startTime);
+            const e = parseTimeToMinutes(item.endTime);
+            if (s !== null && e !== null) {
+                timeMap.push({
+                    start: s,
+                    end: e,
+                    label: `League Game ${leagueCounter}`
+                });
+            }
+        }
+    });
+
+    // ----------------------------------------------------------------
+    // STEP 2: Scan Assignments and match to Time Map
+    // ----------------------------------------------------------------
     const uniqueMatchKeys = new Set();
     const groups = {}; 
 
-    // Helper: Determine a clean label like "League Game 6" or "League Game 7"
-    function getNormalizedLabel(fullTextString) {
-      // 1. Look explicitly for "League Game X"
-      const leagueMatch = fullTextString.match(/League Game\s*#?\s*(\d+)/i);
-      if (leagueMatch) {
-        return `League Game ${leagueMatch[1]}`;
-      }
-      
-      // 2. Look for just "Game X" if "League" isn't present
-      const gameMatch = fullTextString.match(/Game\s*#?\s*(\d+)/i);
-      if (gameMatch) {
-        return `Game ${gameMatch[1]}`;
-      }
-
-      // 3. Fallback
-      return 'Scheduled Games'; 
-    }
-
-    // Scan ALL teams to find ALL sets of games (e.g. Game 6 AND Game 7)
     league.teams.forEach((teamName) => {
       const schedule = assignments[teamName];
       if (!Array.isArray(schedule)) return;
 
-      schedule.forEach((entry) => {
+      schedule.forEach((entry, slotIndex) => {
+        // Must be a league matchup
         if (!entry || !entry._h2h) return;
 
-        // COMBINE ALL POTENTIAL TEXT FIELDS TO FIND THE LABEL
-        const rawTextParts = [
-          (typeof entry.sport === 'string' ? entry.sport : ''),
-          (typeof entry.event === 'string' ? entry.event : ''),
-          (typeof entry._activity === 'string' ? entry._activity : ''),
-          (typeof entry.description === 'string' ? entry.description : ''),
-          (typeof entry.info === 'string' ? entry.info : ''),
-          (typeof entry.label === 'string' ? entry.label : '')
-        ];
+        // 1. Get the time of this specific slot
+        const slotTime = getSlotTime(slotIndex);
+        if (slotTime === null) return;
+
+        // 2. Find which Skeleton Block this time belongs to
+        // We check if slotTime is within [start, end) of a mapped league block
+        const mappedBlock = timeMap.find(block => slotTime >= block.start && slotTime < block.end);
         
-        const fullText = rawTextParts.join('\n');
-        if (!fullText.trim()) return;
+        // 3. Determine Label
+        // If we found a block, use its name (e.g. "League Game 6")
+        // If not (maybe it was manually added?), fallback to "Scheduled Games"
+        const label = mappedBlock ? mappedBlock.label : "Scheduled Games";
 
-        // EXTRACT LABEL: This detects "League Game 6" vs "League Game 7"
-        const label = getNormalizedLabel(fullText);
+        // 4. Parse text for "TeamA vs TeamB"
+        // The entry.sport usually looks like "TeamA vs TeamB (Sport)"
+        // or simply "TeamA vs TeamB"
+        const text = entry.sport || "";
+        const m = text.match(/^(.*?)\s+vs\.?\s+(.*?)(?:\s*\(|$)/i);
+        if (!m) return;
 
-        const lines = fullText
-          .split(/\r?\n/)
-          .map((l) => l.replace(/^[•\-\*]\s*/, '').trim()) // Remove bullet points
-          .filter((l) => l.length > 0);
+        const tA = m[1].trim();
+        const tB = m[2].trim();
 
-        lines.forEach((line) => {
-          // Look for "TeamA vs TeamB"
-          const m = line.match(/^(.*?)\s+vs\.?\s+(.*?)(?:\s*\(|$)/i);
-          if (!m) return;
-
-          const tA = m[1].trim();
-          const tB = m[2].trim();
-
-          // VALIDATION: Both teams must be in this league
-          if (league.teams.includes(tA) && league.teams.includes(tB)) {
+        // VALIDATION: Both teams must be in this league
+        if (league.teams.includes(tA) && league.teams.includes(tB)) {
             
             // STRICT DEDUPLICATION KEY
-            // We append '::' + label. 
-            // This ensures if TeamA plays TeamB in "League Game 6" AND "League Game 7"
-            // they are treated as two separate events.
+            // Key = TeamA::TeamB::Label
+            // This ensures 1vs2 in "League Game 6" is distinct from 1vs2 in "League Game 7"
             const matchKey = [tA, tB].sort().join('::');
             const uniqueKey = matchKey + '::' + label;
 
@@ -791,8 +830,7 @@
               if (!groups[label]) groups[label] = [];
               groups[label].push({ teamA: tA, teamB: tB });
             }
-          }
-        });
+        }
       });
     });
 
@@ -803,7 +841,7 @@
       return;
     }
 
-    // Sort labels numerically (so Game 5 appears before Game 6, and 6 before 7)
+    // Sort labels: "League Game 6" before "League Game 7"
     labelKeys.sort((a, b) => {
       const nA = (a.match(/\d+/) || [0])[0];
       const nB = (b.match(/\d+/) || [0])[0];
@@ -825,6 +863,13 @@
     });
 
     if (saveButton) saveButton.style.display = 'inline-block';
+  }
+
+  // Helper: Get minute value of a slot index
+  function getSlotTime(slotIndex) {
+      if (!window.unifiedTimes || !window.unifiedTimes[slotIndex]) return null;
+      const d = new Date(window.unifiedTimes[slotIndex].start);
+      return d.getHours() * 60 + d.getMinutes();
   }
 
   // ================================================================
@@ -860,10 +905,7 @@
     if (results.length === 0) return;
 
     if (gameId === 'new') {
-      // If importing multiple sets (Game 6 + Game 7), name the whole day block
-      // using the first label, or a generic name.
-      // Usually users prefer "Nov 23 Games" or just "League Game 6 & 7"
-      // Here we default to the first label found.
+      // Name the whole day block using the first label found
       const firstLabel = results[0].timeLabel || `Game Set ${league.games.length + 1}`;
       league.games.push({
         id: Date.now(),
