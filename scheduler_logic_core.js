@@ -1534,6 +1534,27 @@ function getBlockTimeRange(block) {
 
     return { blockStartMin, blockEndMin };
 }
+// Check if this block's time overlaps an existing booking on the same field
+function isFieldFreeForBlockRange(block, fieldName, activityProperties) {
+    if (!fieldName) return false;
+    const props = activityProperties[fieldName];
+    if (!props) return true;
+
+    // If you still want truly sharable fields, skip the hard overlap rule for them
+    if (props.sharable) return true;
+
+    const { blockStartMin, blockEndMin } = getBlockTimeRange(block);
+    if (blockStartMin == null || blockEndMin == null) return false;
+
+    const ranges = fieldBookedRanges[fieldName] || [];
+    for (const r of ranges) {
+        // Standard interval overlap test
+        if (blockStartMin < r.endMin && blockEndMin > r.startMin) {
+            return false; // overlap -> field NOT free
+        }
+    }
+    return true;
+}
 
 /**
  * canBlockFit
@@ -1548,6 +1569,10 @@ function canBlockFit(block, fieldName, activityProperties, fieldUsageBySlot, pro
         return false;
     }
     const limit = (props && props.sharable) ? 2 : 1;
+// 🔒 HARD: no overlapping bookings on this field (timeline-based)
+if (!isFieldFreeForBlockRange(block, fieldName, activityProperties)) {
+    return false;
+}
 
     // --- NEW: Preference Exclusivity Check ---
     if (props.preferences && props.preferences.enabled && props.preferences.exclusive) {
