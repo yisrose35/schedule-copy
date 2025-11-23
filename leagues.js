@@ -875,60 +875,73 @@
         if(saveButton) saveButton.style.display = "inline-block";
     }
 
-    function importGamesFromSchedule(league, target, saveButton) {
+    function importGamesFromSchedule(league, target) {
     target.innerHTML = "";
+
     const daily = window.loadCurrentDailyData?.() || {};
     const assignments = daily.scheduleAssignments || {};
 
-    const foundMatches = new Set(); 
+    const foundMatches = new Set();      // to avoid duplicate pairings
+    const groupedMatches = {};           // { gameLabel: [ {t1,t2}, ... ] }
 
-    // --- 1. Determine Previous Game Count (for rare fallback use) ---
-    let maxLeagueGameNum = 0;
-    (league.games || []).forEach(g => {
-        if (g.name) {
-            const n = parseInt(g.name.replace(/\D/g, ''));
-            if (!isNaN(n) && n > maxLeagueGameNum) maxLeagueGameNum = n;
+    // Try to locate the green "Save Game Results" button (same trick as before)
+    const saveButton =
+        target.parentElement.querySelector("button[style*='background: #28a745']") ||
+        target.parentElement.querySelector("button[style*='background: rgb(40, 167, 69)']") ||
+        target.parentElement.lastElementChild;
+
+    // Helper: pull out "League Game X" if it exists in a string
+    function extractLeagueLabelFrom(str) {
+        if (!str) return null;
+        const s = String(str);
+
+        // Direct: "League Game 6"
+        let m = s.match(/League Game\s*\d+/i);
+        if (m) return m[0].trim();
+
+        // Inside parentheses: "Something (League Game 6)"
+        const paren = s.match(/\((.*?)\)/);
+        if (paren) {
+            const inner = paren[1];
+            m = inner.match(/League Game\s*\d+/i);
+            if (m) return m[0].trim();
         }
-    });
 
-    // --- 2. Gather Matches from Schedule ---
-    const groupedMatches = {};
+        return null;
+    }
 
-    league.teams.forEach(team => {
-        const schedule = assignments[team] || [];
-        schedule.forEach((entry, slotIndex) => {
+    // ==============================
+    // 1. Scan TODAY'S schedule only
+    // ==============================
+    Object.keys(assignments).forEach(key => {
+        const schedule = assignments[key] || [];
+
+        schedule.forEach((entry) => {
             if (!entry || entry.continuation) return;
 
-            // Detect head-to-head rows:
-            //  - Preferred: _h2h flag from core
-            //  - Fallback: sport string contains "vs"
             const sportStr = typeof entry.sport === "string" ? entry.sport : "";
-            const isH2H = entry._h2h || sportStr.toLowerCase().includes(" vs ");
+
+            // Treat as head-to-head if:
+            //  - core marked it as _h2h
+            //  - OR the sport string clearly has "Team A vs Team B"
+            const isH2H =
+                entry._h2h ||
+                / vs /i.test(sportStr);
 
             if (!isH2H) return;
 
-            // Try to extract teams from string: "Team A vs Team B (Sport)..."
-            const label = sportStr;
-            const match = label.match(/^(.*?)\s+vs\s+(.*?)\s*\(/i);
+            // Parse "Team A vs Team B (Something…"
+            const match = sportStr.match(/^(.*?)\s+vs\s+(.*?)\s*\(/i);
             if (!match) return;
 
             const t1 = match[1].trim();
             const t2 = match[2].trim();
 
-            // Ensure these teams belong to THIS league
+            // Only keep pairings where both teams belong to THIS league
             if (!league.teams.includes(t1) || !league.teams.includes(t2)) return;
 
-            const uniqueKey = [t1, t2].sort().join(" vs ") + "::" + slotIndex;
-            if (foundMatches.has(uniqueKey)) return;
-            foundMatches.add(uniqueKey);
-
-            if (!groupedMatches[slotIndex]) {
-                groupedMatches[slotIndex] = { matches: [], label: null };
-            }
-            groupedMatches[slotIndex].matches.push({ t1, t2 });
-
-            // --------- LABEL PRIORITY (for "League Game X") ---------
-            // Look across multiple fields in case core stored it differently.
+            // Figure out the label from the schedule (NOT standings)
+            // We scan several properties, in priority order:
             const rawLabelCandidate =
                 (typeof entry._activity === "string" && entry._activity) ||
                 (typeof entry.event === "string"    && entry.event)    ||
@@ -936,60 +949,60 @@
                 sportStr ||
                 "";
 
-            // First: any direct "League Game X" phrase
-            const leagueGameMatch = rawLabelCandidate.match(/League Game\s*\d+/i);
-            if (leagueGameMatch) {
-                groupedMatches[slotIndex].label = leagueGameMatch[0].trim();
-                return;
+            let gameLabel = extractLeagueLabelFrom(rawLabelCandidate);
+
+            // If we *still* don't see "League Game X", fall back to a generic label.
+            // We do NOT try to guess a number from standings/history anymore.
+            if (!gameLabel) {
+                gameLabel = "League Game";  // no number, pure schedule-based import
             }
 
-            // Second: look inside parentheses "(League Game 6)" etc
-            const parenMatch = rawLabelCandidate.match(/\((.*?)\)/);
-            if (parenMatch) {
-                const inner = parenMatch[1];
-                const innerLeagueMatch = inner.match(/League Game\s*\d+/i);
-                if (innerLeagueMatch) {
-                    groupedMatches[slotIndex].label = innerLeagueMatch[0].trim();
-                    return;
-                }
-            }
+            const groupKey = gameLabel;
+            if (!groupedMatches[groupKey]) groupedMatches[groupKey] = [];
 
-            // If we didn't find anything, we leave label as null for now;
-            // we'll fallback later to sequential numbering *only* if needed.
+            const uniqueKey = [t1, t2].sort().join(" vs ") + "::" + groupKey;
+            if (foundMatches.has(uniqueKey)) return;
+            foundMatches.add(uniqueKey);
+
+            groupedMatches[groupKey].push({ t1, t2 });
         });
     });
 
-    // Sort slots by time
-    const sortedSlots = Object.keys(groupedMatches).sort((a,b) => parseInt(a) - parseInt(b));
-    
-    if (sortedSlots.length === 0) {
+    const gameLabels = Object.keys(groupedMatches);
+    if (gameLabels.length === 0) {
         target.innerHTML = "<p class='muted' style='font-size:0.8rem;'>No scheduled games found for today.</p>";
         return;
     }
 
-    // --- 3. Render Groups ---
-    sortedSlots.forEach((slotIdx, displayIndex) => {
-        const group = groupedMatches[slotIdx];
+    // Sort labels by game number when possible ("League Game 6" < "League Game 7")
+    function gameNum(label) {
+        const m = label.match(/(\d+)/);
+        return m ? parseInt(m[1], 10) : Number.POSITIVE_INFINITY;
+    }
+    gameLabels.sort((a, b) => {
+        const na = gameNum(a);
+        const nb = gameNum(b);
+        if (na !== nb) return na - nb;
+        return a.localeCompare(b);
+    });
 
-        let gameLabel = group.label;
-
-        // Fallback ONLY if we never detected "League Game X" anywhere
-        if (!gameLabel) {
-            const gameNumber = maxLeagueGameNum + displayIndex + 1;
-            gameLabel = `League Game ${gameNumber}`;
-        }
-
+    // ==============================
+    // 2. Render everything we found
+    // ==============================
+    gameLabels.forEach(label => {
         const header = document.createElement("div");
         header.className = "group-header";
-        header.textContent = gameLabel;
+        header.textContent = label;  // e.g. "League Game 6"
         target.appendChild(header);
 
-        group.matches.forEach(m => {
-            addMatchRow(target, m.t1, m.t2, "", "", saveButton, gameLabel);
+        groupedMatches[label].forEach(m => {
+            addMatchRow(target, m.t1, m.t2, "", "", saveButton, label);
         });
     });
-    
-    if (saveButton) saveButton.style.display = "inline-block";
+
+    if (saveButton) {
+        saveButton.style.display = "inline-block";
+    }
 }
 
     function saveGameResults(league, gameId, container) {
