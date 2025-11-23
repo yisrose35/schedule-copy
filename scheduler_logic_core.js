@@ -658,6 +658,14 @@ window.runSkeletonOptimizer = function(manualSkeleton) {
                 });
             });
         }
+                // NEW: If this pinned item is actually a real field (e.g. "Sushi"),
+    // block that field for the overlapping time range so the optimizer
+    // will NOT schedule sports there.
+    if (window.allSchedulableNames &&
+        window.allSchedulableNames.includes(item.event)) {
+        blockFieldForRange(item.event, startMin, endMin, item.division, fieldUsageBySlot);
+    }
+
 
         // -------------------------------------------------------------
         // 2. SPLIT BLOCK — FULLY GENERATED GA + PINNED SWIM
@@ -1336,6 +1344,40 @@ function markFieldUsage(block, fieldName, fieldUsageBySlot) {
         }
         fieldUsageBySlot[slotIndex][fieldName] = usage;
     }
+}
+function blockFieldForRange(fieldName, startMin, endMin, divName, fieldUsageBySlot) {
+    if (!fieldName ||
+        !window.allSchedulableNames ||
+        !window.allSchedulableNames.includes(fieldName) ||
+        !window.unifiedTimes ||
+        startMin == null || endMin == null
+    ) {
+        return;
+    }
+
+    const overlapSlots = [];
+    for (let i = 0; i < window.unifiedTimes.length; i++) {
+        const slot = window.unifiedTimes[i];
+        const slotStart = new Date(slot.start).getHours() * 60 +
+                          new Date(slot.start).getMinutes();
+        const slotEnd   = slotStart + INCREMENT_MINS;
+
+        // TRUE OVERLAP: [slotStart, slotEnd) overlaps [startMin, endMin)
+        if (slotStart < endMin && slotEnd > startMin) {
+            overlapSlots.push(i);
+        }
+    }
+
+    if (overlapSlots.length === 0) return;
+
+    const block = {
+        slots: overlapSlots,
+        divName: divName || null,
+        bunk: "__PINNED__",
+        _activity: fieldName
+    };
+
+    markFieldUsage(block, fieldName, fieldUsageBySlot);
 }
 
 function isTimeAvailable(slotIndex, fieldProps) {
