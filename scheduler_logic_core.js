@@ -1300,11 +1300,17 @@ window.runSkeletonOptimizer = function(manualSkeleton) {
 function findSlotsForRange(startMin, endMin) {
     const slots = [];
     if (!window.unifiedTimes || startMin == null || endMin == null) return slots;
+
     for (let i = 0; i < window.unifiedTimes.length; i++) {
         const slot = window.unifiedTimes[i];
+
         const slotStart = new Date(slot.start).getHours() * 60 +
                           new Date(slot.start).getMinutes();
-        if (slotStart >= startMin && slotStart < endMin) {
+        const slotEnd   = slotStart + INCREMENT_MINS;
+
+        // NEW LOGIC: add slot if time ranges OVERLAP at all
+        // [slotStart, slotEnd) overlaps [startMin, endMin)
+        if (slotStart < endMin && slotEnd > startMin) {
             slots.push(i);
         }
     }
