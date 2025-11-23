@@ -652,9 +652,8 @@ window.fieldBookedRanges = fieldBookedRanges;
         // -------------------------------------------------------------
         // 1. PURE PINNED — Lunch, Cleanup, Dismissal, Snacks, Custom
         // -------------------------------------------------------------
-        if (item.type === 'pinned' || !isGeneratedEvent) {
+       if (item.type === 'pinned' || !isGeneratedEvent) {
     allBunks.forEach(bunk => {
-        // 1) Write the pinned tiles into the schedule
         allSlots.forEach((slotIndex, idx) => {
             if (!window.scheduleAssignments[bunk][slotIndex]) {
                 window.scheduleAssignments[bunk][slotIndex] = {
@@ -665,24 +664,28 @@ window.fieldBookedRanges = fieldBookedRanges;
                     _h2h: false,
                     vs: null,
                     _activity: item.event,
-                    _endTime: endMin
+                    _endTime: endMin 
                 };
+
+                // 🔒 If this pinned thing is actually a FIELD (e.g., Sushi),
+                //     record it in the timeline so it blocks overlaps
+                if (activityProperties[item.event]) {
+                    markFieldUsage(
+                        {
+                            slots: [slotIndex],
+                            divName: item.division,
+                            bunk,
+                            startTime: startMin,
+                            endTime: endMin,
+                            _activity: item.event,
+                            event: item.event
+                        },
+                        item.event,
+                        fieldUsageBySlot
+                    );
+                }
             }
         });
-
-        // 2) NEW: Tell the engine this field/time is TAKEN
-        //    - If item.event is not an actual field name, markFieldUsage
-        //      will no-op because it's not in window.allSchedulableNames.
-        markFieldUsage(
-            {
-                divName: item.division,
-                bunk: bunk,
-                slots: allSlots,
-                _activity: item.event
-            },
-            item.event,
-            fieldUsageBySlot
-        );
     });
 }
 
