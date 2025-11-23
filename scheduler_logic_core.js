@@ -1368,6 +1368,21 @@ function markFieldUsage(block, fieldName, fieldUsageBySlot) {
     if (!fieldName || fieldName === "No Field" || !window.allSchedulableNames.includes(fieldName)) {
         return;
     }
+
+    // 🔢 1) Record the TRUE time range in minutes for this field booking
+    const { blockStartMin, blockEndMin } = getBlockTimeRange(block);
+    if (blockStartMin != null && blockEndMin != null) {
+        fieldBookedRanges[fieldName] = fieldBookedRanges[fieldName] || [];
+        const list = fieldBookedRanges[fieldName];
+
+        // Avoid duplicate identical ranges
+        const exists = list.some(r => r.startMin === blockStartMin && r.endMin === blockEndMin);
+        if (!exists) {
+            list.push({ startMin: blockStartMin, endMin: blockEndMin });
+        }
+    }
+
+    // 🧱 2) Existing per-slot usage (unchanged)
     for (const slotIndex of block.slots || []) {
         if (slotIndex === undefined) continue;
         fieldUsageBySlot[slotIndex] = fieldUsageBySlot[slotIndex] || {};
