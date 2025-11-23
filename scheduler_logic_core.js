@@ -1422,25 +1422,28 @@
 								/**
 								 * --- MODIFIED: 'usage' object now includes 'bunks' ---
 								 */
-								function markFieldUsage(block, fieldName, fieldUsageBySlot) {
-								    if (!fieldName || fieldName === "No Field" || !window.allSchedulableNames.includes(fieldName)) {
-								        return;
-								    }
-								    for (const slotIndex of block.slots || []) {
-								        if (slotIndex === undefined) continue;
-								        fieldUsageBySlot[slotIndex] = fieldUsageBySlot[slotIndex] || {};
-								        const usage = fieldUsageBySlot[slotIndex][fieldName] || { count: 0, divisions: [], bunks: {} };
-								        usage.count++;
-								        if (!usage.divisions.includes(block.divName)) {
-								            usage.divisions.push(block.divName);
-								        }
-								        const blockActivity = block._activity || block.sport || (block.event === 'League Game' ? 'League' : block.event);
-								        if (block.bunk && blockActivity) {
-								            usage.bunks[block.bunk] = blockActivity;
-								        }
-								        fieldUsageBySlot[slotIndex][fieldName] = usage;
-								    }
-								}
+								// --- REPLACE THIS FUNCTION IN scheduler_logic_core.js ---
+
+function markFieldUsage(block, fieldName, fieldUsageBySlot) {
+    // FIX: Removed "!window.allSchedulableNames.includes(fieldName)"
+    // This ensures manual/pinned events marked as "Busy" even if they have custom names.
+    if (!fieldName || fieldName === "No Field" || fieldName === "Free") return;
+    
+    for (const slotIndex of block.slots || []) {
+        if (slotIndex === undefined) continue;
+        fieldUsageBySlot[slotIndex] = fieldUsageBySlot[slotIndex] || {};
+        const usage = fieldUsageBySlot[slotIndex][fieldName] || { count: 0, divisions: [], bunks: {} };
+        usage.count++;
+        if (!usage.divisions.includes(block.divName)) {
+            usage.divisions.push(block.divName);
+        }
+        const blockActivity = block._activity || block.sport || (block.event === 'League Game' ? 'League' : block.event);
+        if (block.bunk && blockActivity) {
+            usage.bunks[block.bunk] = blockActivity;
+        }
+        fieldUsageBySlot[slotIndex][fieldName] = usage;
+    }
+}
 								
 								function isTimeAvailable(slotIndex, fieldProps) {
 								    if (!window.unifiedTimes || !window.unifiedTimes[slotIndex]) return false;
