@@ -85,9 +85,6 @@ function fmtTime(d) {
 
 // Global-ish state for this file (per day), but saved to daily data
 let coreLeagueRoundState = (window.coreLeagueRoundState || {});
-// Track true time ranges (in minutes) for each field across the day
-let fieldBookedRanges = {};
-window.fieldBookedRanges = fieldBookedRanges;
 
 // Load round state from today's daily data (if present)
 (function initCoreLeagueRoundState() {
