@@ -1303,14 +1303,12 @@ function findSlotsForRange(startMin, endMin) {
 
     for (let i = 0; i < window.unifiedTimes.length; i++) {
         const slot = window.unifiedTimes[i];
-
         const slotStart = new Date(slot.start).getHours() * 60 +
                           new Date(slot.start).getMinutes();
-        const slotEnd   = slotStart + INCREMENT_MINS;
 
-        // NEW LOGIC: add slot if time ranges OVERLAP at all
-        // [slotStart, slotEnd) overlaps [startMin, endMin)
-        if (slotStart < endMin && slotEnd > startMin) {
+        // ORIGINAL BEHAVIOR:
+        // Only take slots whose START is in [startMin, endMin)
+        if (slotStart >= startMin && slotStart < endMin) {
             slots.push(i);
         }
     }
