@@ -1,14 +1,13 @@
 /**
  * =============================================================
  * LEAGUE SCHEDULING CORE (league_scheduling.js)
- * (UPDATED to use calendar.js save/load)
+ * (UPDATED: Added getMatchupsForRound for Import feature)
  * =============================================================
  */
 
 (function () {
   'use strict';
 
-  // const LEAGUE_STATE_KEY = "camp_league_round_state"; // No longer used
   let leagueRoundState = {}; // { "League Name": { currentRound: 0 } }
 
   /**
@@ -16,14 +15,11 @@
    */
   function loadRoundState() {
     try {
-      // UPDATED: Load from the globally scoped daily object
       if (window.currentDailyData && window.currentDailyData.leagueRoundState) {
         leagueRoundState = window.currentDailyData.leagueRoundState;
       } else if (window.loadCurrentDailyData) {
-        // If it's the first load, loadCurrentDailyData will run and populate it
         leagueRoundState = window.loadCurrentDailyData().leagueRoundState || {};
-      }
-      else {
+      } else {
         leagueRoundState = {};
       }
     } catch (e) {
@@ -37,7 +33,6 @@
    */
   function saveRoundState() {
     try {
-      // UPDATED: Save to the globally scoped daily object
       window.saveCurrentDailyData?.("leagueRoundState", leagueRoundState);
     } catch (e) {
       console.error("Failed to save league state:", e);
@@ -91,6 +86,7 @@
 
   /**
    * Public function to get the *next* set of matchups for a league.
+   * (Used by the Scheduler to generate the day)
    */
   function getLeagueMatchups(leagueName, teams) {
     if (!leagueName || !teams || teams.length < 2) {
@@ -116,11 +112,23 @@
     return todayMatchups;
   }
 
+  /**
+   * NEW: Get matchups for a specific round index without modifying state.
+   * (Used by Leagues.js to import results based on "League Game X")
+   */
+  function getMatchupsForRound(teams, roundIndex) {
+    if (!teams || teams.length < 2) return [];
+    const fullSchedule = generateRoundRobin(teams);
+    if (fullSchedule.length === 0) return [];
+    
+    // Handle wrapping if the number is higher than total rounds
+    const normalizedIndex = roundIndex % fullSchedule.length;
+    return fullSchedule[normalizedIndex] || [];
+  }
+
   // --- Global Exposure and Initialization ---
   window.getLeagueMatchups = getLeagueMatchups;
+  window.getMatchupsForRound = getMatchupsForRound; // Exposed for leagues.js
   
-  // IMPORTANT: Load state on script execution
-  // It will load the state for the current date set by calendar.js
   loadRoundState(); 
-  
 })();
