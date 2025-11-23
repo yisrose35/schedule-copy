@@ -2434,19 +2434,20 @@
 								    }
 								
 								    const {
-								        divisions,
-								        availableDivisions,
-								        activityProperties,
-								        allActivities,
-								        h2hActivities,
-								        fieldsBySport,
-								        masterLeagues,
-								        masterSpecialtyLeagues,
-								        yesterdayHistory,
-								        rotationHistory,
-								        disabledLeagues,
-								        disabledSpecialtyLeagues
-								    } = loadAndFilterData();
+        divisions,
+        availableDivisions,
+        activityProperties,
+        allActivities,
+        h2hActivities,
+        fieldsBySport,
+        masterLeagues,
+        masterSpecialtyLeagues,
+        yesterdayHistory,
+        rotationHistory,
+        disabledLeagues,
+        disabledSpecialtyLeagues,
+        historicalCounts // <--- ADD THIS LINE
+    } = loadAndFilterData();
 								
 								    let fieldUsageBySlot = {};
 								    window.fieldUsageBySlot = fieldUsageBySlot;
