@@ -1,10 +1,12 @@
 // ===================================================================
 // leagues.js
 //
-// UPDATED FIXES:
-// 1. IMPORT: Now scans ALL teams to find every game (not just anchor team).
-// 2. IMPORT: Deduplicates matchups to prevent "phantom" double games.
-// 3. UI: Adding/Removing teams keeps the config pane open (no jumping).
+// FIXED:
+// 1. Strict Deduplication: Ignores text differences. If Team A vs Team B
+//    exists, it will not import them again, preventing phantom rows.
+// 2. Headers: If "League Game X" isn't explicitly written in the schedule,
+//    it groups everything under "Scheduled Games" instead of creating
+//    weird headers like "1 vs 8".
 // ===================================================================
 
 (function () {
@@ -454,7 +456,6 @@
         league.teams = league.teams.filter((t) => t !== team);
         delete league.standings[team];
         saveLeaguesData();
-        // NO JUMP FIX: Only re-render this section
         renderConfigSections(league, container);
       };
       teamList.appendChild(chip);
@@ -471,9 +472,7 @@
           league.teams.push(t);
           league.standings[t] = { w: 0, l: 0, t: 0 };
           saveLeaguesData();
-          // NO JUMP FIX
           renderConfigSections(league, container);
-          // RE-FOCUS FIX
           const newInput = container.querySelector('input');
           if (newInput) newInput.focus();
         }
@@ -695,7 +694,7 @@
   }
 
   // ================================================================
-  // IMPROVED IMPORT: SCANS ALL TEAMS + DEDUPLICATES
+  // IMPROVED IMPORT: STRICT DEDUPE + SMART LABELING
   // ================================================================
   function importGamesFromSchedule(league, target) {
     target.innerHTML = '';
@@ -709,22 +708,35 @@
       return;
     }
 
-    // We use a deduplication Set to prevent "A vs B" appearing twice (once found in A's schedule, once in B's).
+    // Set used to ensure we never add the same matchup twice (phantom rows)
+    // Key format: "TeamA::TeamB" (alphabetically sorted)
     const uniqueMatchKeys = new Set();
-    const groups = {}; // { "League Game 1": [matchObj, matchObj...] }
+    
+    // Groups for display: "Scheduled Games": [match, match]
+    const groups = {}; 
 
-    // Helper: Normalize the Game Label
-    // If text contains "League Game 5", we want that clean string, not "League Game 5 (Rain)"
+    // Helper: Determine a clean label
     function getNormalizedLabel(lines) {
+      // 1. Look for explicit "League Game X"
       const explicit = lines.find((l) => /League Game\s*\d+/i.test(l));
       if (explicit) {
         const m = explicit.match(/League Game\s*\d+/i);
         return m ? m[0] : explicit;
       }
-      return lines[0] || 'League Match';
+      
+      // 2. Look for "Game X"
+      const gameX = lines.find((l) => /Game\s*\d+/i.test(l));
+      if (gameX) {
+         const m = gameX.match(/Game\s*\d+/i);
+         return m ? m[0] : gameX;
+      }
+
+      // 3. Fallback: If the text is just "1 vs 8" or "Basketball", do NOT use it as a header.
+      // Return a generic label so they group together.
+      return 'Scheduled Games'; 
     }
 
-    // Iterate *ALL* teams in the league to find their games
+    // Scan ALL teams to capture every game
     league.teams.forEach((teamName) => {
       const schedule = assignments[teamName];
       if (!Array.isArray(schedule)) return;
@@ -759,8 +771,8 @@
 
           // VALIDATION: Both teams must be in this league
           if (league.teams.includes(tA) && league.teams.includes(tB)) {
-            // DEDUPLICATION KEY: Sort names so "A vs B" is same as "B vs A"
-            const matchKey = [tA, tB].sort().join('::') + '::' + label;
+            // STRICT DEDUPLICATION: Use only teams as key, ignore label/location
+            const matchKey = [tA, tB].sort().join('::');
 
             if (!uniqueMatchKeys.has(matchKey)) {
               uniqueMatchKeys.add(matchKey);
@@ -780,14 +792,13 @@
       return;
     }
 
-    // Sort labels numerically if possible (Game 1, Game 2...)
+    // Sort labels (Game 1, Game 2...)
     labelKeys.sort((a, b) => {
       const nA = (a.match(/\d+/) || [0])[0];
       const nB = (b.match(/\d+/) || [0])[0];
       return parseInt(nA, 10) - parseInt(nB, 10) || a.localeCompare(b);
     });
 
-    // Render groups
     labelKeys.forEach((label) => {
       const header = document.createElement('div');
       header.className = 'group-header';
