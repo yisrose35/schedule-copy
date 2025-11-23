@@ -8,7 +8,9 @@
 //   `divisions` object in `addDivision` and `loadData`.
 // - **MODIFIED** `setupDivisionButtons` to:
 //   - Render division chips on the left (as before).
-//   - ALSO drive a new right-side "Division Details" pane.
+//   - Make the ENTIRE division card clickable (like fields.js).
+//   - Add a hover "lift" animation on division cards.
+//   - Highlight the selected division card.
 // - NEW: `renderDivisionDetailPane`:
 //   - Card-style layout (similar to fields.js):
 //     • Division Times card
@@ -232,8 +234,10 @@ function addDivision() {
 }
 
 /**
- * LEFT SIDE: Division chips list
- * Also drives which division is "selected" for the right-side detail pane.
+ * LEFT SIDE: Division cards list
+ * - Entire card clickable (like fields.js).
+ * - Hover lift animation.
+ * - Selected card highlighted.
  */
 function setupDivisionButtons() {
     const cont = document.getElementById("divisionButtons"); 
@@ -254,6 +258,37 @@ function setupDivisionButtons() {
         // Main wrapper for the division's settings
         const wrap = document.createElement("div"); 
         wrap.className = "divisionWrapper";
+        // Hover lift animation like fields
+        wrap.style.transition = "transform 0.08s ease, box-shadow 0.12s ease, border-color 0.12s ease";
+        wrap.onmouseenter = () => {
+            wrap.style.transform = "translateY(-1px)";
+            wrap.style.boxShadow = "0 8px 18px rgba(15, 23, 42, 0.12)";
+        };
+        wrap.onmouseleave = () => {
+            wrap.style.transform = "";
+            // Slight reset; selected card will re-override boxShadow below
+            wrap.style.boxShadow = "0 6px 14px rgba(15, 23, 42, 0.06)";
+        };
+
+        // Click anywhere on the card to select this division
+        wrap.onclick = () => {
+            selectedDivision = name;
+
+            // Clear previous selection
+            cont.querySelectorAll(".divisionWrapper").forEach(el => {
+                el.classList.remove("division-selected");
+                el.style.borderColor = "#e5e7eb";
+            });
+            cont.querySelectorAll('span.bunk-button').forEach(el => el.classList.remove("selected"));
+
+            // Mark this card + chip as selected
+            wrap.classList.add("division-selected");
+            wrap.style.borderColor = "#2563eb";
+            if (span) span.classList.add("selected");
+
+            saveData();
+            renderDivisionDetailPane();
+        };
         
         // --- 1. Top row: Name, Color ---
         const topRow = document.createElement("div");
@@ -266,15 +301,7 @@ function setupDivisionButtons() {
         span.className = "bunk-button";
         span.style.backgroundColor = colorEnabled ? obj.color : "transparent";
         span.style.color = colorEnabled ? "#fff" : "inherit";
-        span.onclick = () => {
-            selectedDivision = name;
-            cont.querySelectorAll('span.bunk-button').forEach(el => el.classList.remove("selected"));
-            span.classList.add("selected");
-            saveData(); // Save selectedDivision
-            renderDivisionDetailPane();
-        };
-        if (selectedDivision === name) span.classList.add("selected");
-
+        // prevent this from swallowing the card click logic for editing name
         makeEditable(span, newName => {
             divisions[newName] = divisions[name];
             delete divisions[name];
@@ -296,9 +323,14 @@ function setupDivisionButtons() {
         col.type = "color";
         col.value = obj.color; 
         col.className = "colorPicker";
+        // don't let clicking the color picker trigger card selection
+        col.onclick = (e) => e.stopPropagation();
         col.oninput = e => {
             obj.color = e.target.value;
-            if (colorEnabled) { span.style.backgroundColor = e.target.value; span.style.color = "#fff"; }
+            if (colorEnabled) { 
+                span.style.backgroundColor = e.target.value; 
+                span.style.color = "#fff"; 
+            }
             saveData();
             renderDivisionDetailPane();
             window.updateTable?.();
@@ -315,6 +347,13 @@ function setupDivisionButtons() {
         const hasTimes = obj.startTime && obj.endTime;
         infoRow.textContent = `${bunkCount} bunk${bunkCount === 1 ? "" : "s"}${hasTimes ? ` • ${obj.startTime} - ${obj.endTime}` : ""}`;
         wrap.appendChild(infoRow);
+
+        // Selected styling on initial render
+        if (selectedDivision === name) {
+            wrap.classList.add("division-selected");
+            wrap.style.borderColor = "#2563eb";
+            span.classList.add("selected");
+        }
 
         cont.appendChild(wrap);
     });
