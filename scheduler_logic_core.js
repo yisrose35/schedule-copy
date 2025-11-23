@@ -1365,7 +1365,8 @@ fillBlock(
     // =================================================================
     // PASS 6 — Persist unifiedTimes + update UI
     // =================================================================
-    window.saveCurrentDailyData?.("unifiedTimes", window.unifiedTimes);
+  window.saveCurrentDailyData && window.saveCurrentDailyData("unifiedTimes", window.unifiedTimes);
+
     window.updateTable?.();
     window.saveSchedule?.();
 
