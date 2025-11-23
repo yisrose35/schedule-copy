@@ -7,16 +7,18 @@
 // - **ADDED** `startTime` and `endTime` (defaulting to "") to the
 //   `divisions` object in `addDivision` and `loadData`.
 // - **MODIFIED** `setupDivisionButtons` to:
-//   - Render division chips on the left (as before).
+//   - Render division chips on the left.
 //   - Make the ENTIRE division card clickable (like fields.js).
 //   - Add a hover "lift" animation on division cards.
 //   - Highlight the selected division card.
-// - NEW: `renderDivisionDetailPane`:
-//   - Card-style layout (similar to fields.js):
+// - **NEW** `renderDivisionDetailPane`:
+//   - Card-style layout:
 //     • Division Times card
 //     • Bunks in This Division card
 //   - Time validation uses `parseTimeToMinutes`.
 //   - Removing a bunk from the division is a one-click action in the card.
+//   - **NEW**: Per-division bunk add input so you can add bunks by grade
+//     directly from the division detail (no drag/drop).
 // - `specialActivities` logic from last update is still present.
 // =================================================================
 
@@ -42,7 +44,6 @@ const defaultSports = [
 // NEW: Skeleton template management
 let savedSkeletons = {};
 let skeletonAssignments = {}; // { "Monday": "templateName", "Default": "templateName" }
-
 
 const defaultColors = ['#4CAF50','#2196F3','#E91E63','#FF9800','#9C27B0','#00BCD4','#FFC107','#F44336','#8BC34A','#3F51B5'];
 let colorIndex = 0;
@@ -176,7 +177,7 @@ function updateUnassigned() {
             }
         };
 
-        // Editable name via double-click (keep existing behavior)
+        // Editable name via double-click
         makeEditable(span, newName => {
             if (!newName.trim()) return;
             const idx = bunks.indexOf(b);
@@ -367,7 +368,7 @@ function setupDivisionButtons() {
  * Shows:
  * - Division header
  * - Card 1: Division Times
- * - Card 2: Bunks in this Division
+ * - Card 2: Bunks in this Division (with its own add input)
  */
 function renderDivisionDetailPane() {
     const pane = document.getElementById("division-detail-pane");
@@ -378,7 +379,7 @@ function renderDivisionDetailPane() {
             <p class="muted">
                 Select a division on the left to edit its details:
                 <br>• Set division <strong>start / end time</strong>
-                <br>• See which <strong>bunks</strong> are assigned
+                <br>• Add and manage <strong>bunks</strong>
             </p>
         `;
         return;
@@ -549,7 +550,7 @@ function renderDivisionDetailPane() {
             Bunks in This Division
         </span>
         <span style="font-size:0.7rem; padding:2px 8px; border-radius:999px; background:#dcfce7; color:#166534; font-weight:500;">
-            Drag via Unassigned list
+            Add per division
         </span>
     `;
     bunksCard.appendChild(bunksHeader);
@@ -559,9 +560,8 @@ function renderDivisionDetailPane() {
     bunksHelp.style.fontSize = "0.78rem";
     bunksHelp.style.color = "#6b7280";
     bunksHelp.innerHTML = `
-        These bunks currently belong to <strong>${selectedDivision}</strong>.<br>
-        Click a bunk here to <strong>remove it</strong> from this division. 
-        To move a bunk into this division, use the <strong>Unassigned Bunks</strong> section.
+        Add bunks directly to <strong>${selectedDivision}</strong> using the input below,
+        or remove existing bunks with a click.
     `;
     bunksCard.appendChild(bunksHelp);
 
@@ -600,8 +600,49 @@ function renderDivisionDetailPane() {
 
             bunkWrap.appendChild(pill);
         });
-        bunksCard.appendChild(bunkWrap);
     }
+
+    bunksCard.appendChild(bunkWrap);
+
+    // --- NEW: Per-division "Add Bunk" input ---
+    const addRow = document.createElement("div");
+    addRow.style.display = "flex";
+    addRow.style.flexWrap = "wrap";
+    addRow.style.gap = "6px";
+    addRow.style.alignItems = "center";
+    addRow.style.marginTop = "10px";
+    addRow.style.paddingTop = "8px";
+    addRow.style.borderTop = "1px dashed #e5e7eb";
+
+    const bunkInput = document.createElement("input");
+    bunkInput.type = "text";
+    bunkInput.placeholder = "Add bunk to this division (e.g., 5A)";
+    bunkInput.style.flex = "1 1 160px";
+
+    const bunkAddBtn = document.createElement("button");
+    bunkAddBtn.textContent = "Add";
+    bunkAddBtn.style.padding = "4px 10px";
+
+    const handleAddBunkToDivision = () => {
+        const val = bunkInput.value.trim();
+        if (!val) return;
+        window.addDivisionBunk?.(selectedDivision, val);
+        bunkInput.value = "";
+        updateUnassigned();
+        renderDivisionDetailPane();
+        window.updateTable?.();
+    };
+
+    bunkAddBtn.onclick = handleAddBunkToDivision;
+    bunkInput.addEventListener("keyup", (e) => {
+        if (e.key === "Enter") {
+            handleAddBunkToDivision();
+        }
+    });
+
+    addRow.appendChild(bunkInput);
+    addRow.appendChild(bunkAddBtn);
+    bunksCard.appendChild(addRow);
 
     grid.appendChild(bunksCard);
 }
@@ -754,25 +795,12 @@ window.saveSkeletonAssignments = function(assignments) {
     saveData();
 }
 
-// --- NEWLY ADDED: FUNCTIONS FOR special_activities.js ---
-
-/**
- * Returns a reference to the master special activities array.
- * This is called by special_activities.js.
- */
+// --- FUNCTIONS FOR special_activities.js ---
 window.getGlobalSpecialActivities = function() {
-    // `specialActivities` is loaded in loadData()
     return specialActivities;
 }
-
-/**
- * Saves the master special activities array.
- * This is called by special_activities.js.
- */
 window.saveGlobalSpecialActivities = function(updatedActivities) {
-    // Update the internal reference
     specialActivities = updatedActivities;
-    // Call the main saveData() function to persist all app1 data
     saveData();
 }
 
