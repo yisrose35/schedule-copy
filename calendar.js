@@ -362,9 +362,9 @@
     }
 
     function startAutoSaveTimer() {
-        // Trigger every 10 minutes (600,000 ms), silent mode
-        setInterval(() => performAutoSave(true), 600000); 
-        console.log("Auto-save timer started (10 min interval).");
+        // Trigger every 5 minutes (300,000 ms), silent mode
+        setInterval(() => performAutoSave(true), 300000); 
+        console.log("Auto-save timer started (5 min interval).");
         // Perform initial save 5s after load
         setTimeout(() => performAutoSave(true), 5000); 
     }
