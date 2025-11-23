@@ -641,23 +641,39 @@ window.runSkeletonOptimizer = function(manualSkeleton) {
         // 1. PURE PINNED — Lunch, Cleanup, Dismissal, Snacks, Custom
         // -------------------------------------------------------------
         if (item.type === 'pinned' || !isGeneratedEvent) {
-            allBunks.forEach(bunk => {
-                allSlots.forEach((slotIndex, idx) => {
-                    if (!window.scheduleAssignments[bunk][slotIndex]) {
-                        window.scheduleAssignments[bunk][slotIndex] = {
-                            field: { name: item.event },
-                            sport: null,
-                            continuation: (idx > 0),
-                            _fixed: true,
-                            _h2h: false,
-                            vs: null,
-                            _activity: item.event,
-                            _endTime: endMin 
-                        };
-                    }
-                });
-            });
-        }
+    allBunks.forEach(bunk => {
+        // 1) Write the pinned tiles into the schedule
+        allSlots.forEach((slotIndex, idx) => {
+            if (!window.scheduleAssignments[bunk][slotIndex]) {
+                window.scheduleAssignments[bunk][slotIndex] = {
+                    field: { name: item.event },
+                    sport: null,
+                    continuation: (idx > 0),
+                    _fixed: true,
+                    _h2h: false,
+                    vs: null,
+                    _activity: item.event,
+                    _endTime: endMin
+                };
+            }
+        });
+
+        // 2) NEW: Tell the engine this field/time is TAKEN
+        //    - If item.event is not an actual field name, markFieldUsage
+        //      will no-op because it's not in window.allSchedulableNames.
+        markFieldUsage(
+            {
+                divName: item.division,
+                bunk: bunk,
+                slots: allSlots,
+                _activity: item.event
+            },
+            item.event,
+            fieldUsageBySlot
+        );
+    });
+}
+
                 // NEW: If this pinned item is actually a real field (e.g. "Sushi"),
     // block that field for the overlapping time range so the optimizer
     // will NOT schedule sports there.
