@@ -1,11 +1,12 @@
 // ===================================================================
 // leagues.js
 //
-// FIXED:
-// - Reads "League Game X" headers correctly even if they are bulleted.
-// - Scans multiple data fields (event, description, info) to ensure
-//   it finds the header.
-// - Separates Game 5 and Game 6 into distinct blocks.
+// UPDATED FEATURES:
+// - MULTI-SET IMPORT: Correctly imports "League Game 6" and "League Game 7"
+//   simultaneously, even if they happen on the same day.
+// - HEADERS: Automatically creates a bold header (e.g., "League Game 6")
+//   above each specific set of matchups in the import window.
+// - SAVING: Preserves these headers so they appear when reviewing history.
 // ===================================================================
 
 (function () {
@@ -192,16 +193,19 @@
         .league-standings-table th:first-child {
           text-align: left;
         }
+        /* Header for League Game Sets */
         .group-header {
-          background: #e9efff;
-          padding: 7px 10px;
-          font-weight: 600;
-          font-size: 0.9rem;
-          color: #1f2937;
+          background: #dbeafe; /* Light blue background */
+          padding: 8px 12px;
+          font-weight: 700;
+          font-size: 0.95rem;
+          color: #1e40af; /* Dark blue text */
           border-radius: 6px;
-          margin-top: 14px;
-          margin-bottom: 6px;
-          border-left: 4px solid #2563eb;
+          margin-top: 15px;
+          margin-bottom: 8px;
+          border-left: 5px solid #2563eb;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
         }
       </style>
     `;
@@ -649,9 +653,14 @@
         groupedMatches[label].push(m);
       });
 
-      Object.keys(groupedMatches)
-        .sort()
-        .forEach((label) => {
+      // Sort labels so Game 5 comes before Game 6
+      const labels = Object.keys(groupedMatches).sort((a, b) => {
+         const nA = (a.match(/\d+/) || [0])[0];
+         const nB = (b.match(/\d+/) || [0])[0];
+         return parseInt(nA, 10) - parseInt(nB, 10) || a.localeCompare(b);
+      });
+
+      labels.forEach((label) => {
           const header = document.createElement('div');
           header.className = 'group-header';
           header.textContent = label;
@@ -686,6 +695,7 @@
 
     row.dataset.teamA = teamA;
     row.dataset.teamB = teamB;
+    // CRITICAL: We attach the specific Label (e.g. "League Game 6") to the row dataset
     if (timeLabel) row.dataset.timeLabel = timeLabel;
 
     target.appendChild(row);
@@ -693,7 +703,7 @@
   }
 
   // ================================================================
-  // IMPROVED IMPORT: ROBUST LABEL FINDER
+  // IMPROVED IMPORT: ROBUST LABEL FINDER & MULTI-SET SUPPORT
   // ================================================================
   function importGamesFromSchedule(league, target) {
     target.innerHTML = '';
@@ -710,15 +720,15 @@
     const uniqueMatchKeys = new Set();
     const groups = {}; 
 
-    // Helper: Determine a clean label
+    // Helper: Determine a clean label like "League Game 6" or "League Game 7"
     function getNormalizedLabel(fullTextString) {
-      // 1. Look for explicit "League Game X" or "League Game #X"
+      // 1. Look explicitly for "League Game X"
       const leagueMatch = fullTextString.match(/League Game\s*#?\s*(\d+)/i);
       if (leagueMatch) {
         return `League Game ${leagueMatch[1]}`;
       }
       
-      // 2. Look for "Game X"
+      // 2. Look for just "Game X" if "League" isn't present
       const gameMatch = fullTextString.match(/Game\s*#?\s*(\d+)/i);
       if (gameMatch) {
         return `Game ${gameMatch[1]}`;
@@ -728,7 +738,7 @@
       return 'Scheduled Games'; 
     }
 
-    // Scan ALL teams
+    // Scan ALL teams to find ALL sets of games (e.g. Game 6 AND Game 7)
     league.teams.forEach((teamName) => {
       const schedule = assignments[teamName];
       if (!Array.isArray(schedule)) return;
@@ -746,16 +756,12 @@
           (typeof entry.label === 'string' ? entry.label : '')
         ];
         
-        // Join them so we can regex the whole block
         const fullText = rawTextParts.join('\n');
-        
         if (!fullText.trim()) return;
 
-        // EXTRACT LABEL from combined text
+        // EXTRACT LABEL: This detects "League Game 6" vs "League Game 7"
         const label = getNormalizedLabel(fullText);
 
-        // Parse lines for "A vs B"
-        // We split by newline, and we also clean up bullet points "•"
         const lines = fullText
           .split(/\r?\n/)
           .map((l) => l.replace(/^[•\-\*]\s*/, '').trim()) // Remove bullet points
@@ -771,14 +777,12 @@
 
           // VALIDATION: Both teams must be in this league
           if (league.teams.includes(tA) && league.teams.includes(tB)) {
-            // STRICT DEDUPLICATION: Key = TeamA::TeamB
-            const matchKey = [tA, tB].sort().join('::');
-
-            // We only add if this specific pair hasn't been added yet.
-            // But we must be careful: if the same teams play TWICE in one day (Game 5 and Game 6),
-            // the KEY needs to include the Label to differentiate them.
             
-            // UPDATE: Include Label in dedupe key so 1vs2 in Game 5 is distinct from 1vs2 in Game 6
+            // STRICT DEDUPLICATION KEY
+            // We append '::' + label. 
+            // This ensures if TeamA plays TeamB in "League Game 6" AND "League Game 7"
+            // they are treated as two separate events.
+            const matchKey = [tA, tB].sort().join('::');
             const uniqueKey = matchKey + '::' + label;
 
             if (!uniqueMatchKeys.has(uniqueKey)) {
@@ -799,19 +803,22 @@
       return;
     }
 
-    // Sort labels (Game 5 before Game 6)
+    // Sort labels numerically (so Game 5 appears before Game 6, and 6 before 7)
     labelKeys.sort((a, b) => {
       const nA = (a.match(/\d+/) || [0])[0];
       const nB = (b.match(/\d+/) || [0])[0];
       return parseInt(nA, 10) - parseInt(nB, 10) || a.localeCompare(b);
     });
 
+    // Render Headers and Matchups
     labelKeys.forEach((label) => {
+      // 1. CREATE HEADER
       const header = document.createElement('div');
-      header.className = 'group-header';
-      header.textContent = label;
+      header.className = 'group-header'; // Styles defined in init CSS
+      header.textContent = label; // "League Game 6", etc.
       target.appendChild(header);
 
+      // 2. CREATE MATCHUPS
       groups[label].forEach((m) => {
         addMatchRow(target, m.teamA, m.teamB, '', '', saveButton, label);
       });
@@ -830,6 +837,7 @@
     rows.forEach((row) => {
       const tA = row.dataset.teamA;
       const tB = row.dataset.teamB;
+      // We retrieve the label (e.g. "League Game 6") from the row
       const tLabel = row.dataset.timeLabel || '';
       const sA = parseInt(row.querySelector('.score-a').value, 10) || 0;
       const sB = parseInt(row.querySelector('.score-b').value, 10) || 0;
@@ -845,18 +853,22 @@
         scoreA: sA,
         scoreB: sB,
         winner: winner,
-        timeLabel: tLabel
+        timeLabel: tLabel // Saved here so it persists
       });
     });
 
     if (results.length === 0) return;
 
     if (gameId === 'new') {
+      // If importing multiple sets (Game 6 + Game 7), name the whole day block
+      // using the first label, or a generic name.
+      // Usually users prefer "Nov 23 Games" or just "League Game 6 & 7"
+      // Here we default to the first label found.
       const firstLabel = results[0].timeLabel || `Game Set ${league.games.length + 1}`;
       league.games.push({
         id: Date.now(),
         date: window.currentScheduleDate || new Date().toLocaleDateString(),
-        name: firstLabel,
+        name: firstLabel, 
         matches: results
       });
     } else {
