@@ -1424,12 +1424,13 @@ function canBlockFit(block, fieldName, activityProperties, fieldUsageBySlot, pro
     }
     const limit = (props && props.sharable) ? 2 : 1;
 
-    // Preference Exclusivity Check
+    // --- NEW: Preference Exclusivity Check ---
     if (props.preferences && props.preferences.enabled && props.preferences.exclusive) {
         if (!props.preferences.list.includes(block.divName)) {
             return false; 
         }
     }
+    // ----------------------------------------
 
     // Division filter
     if (
@@ -1496,6 +1497,14 @@ function canBlockFit(block, fieldName, activityProperties, fieldUsageBySlot, pro
         for (const slotIndex of block.slots || []) {
             if (slotIndex === undefined) return false;
             const usage = fieldUsageBySlot[slotIndex]?.[fieldName] || { count: 0, divisions: [], bunks: {} };
+
+            // 🔴 NEW HARD RULE:
+            // If a league is already using this field in this slot,
+            // NO OTHER ACTIVITY (even sharable) may use it.
+            if (usage.bunks && Object.prototype.hasOwnProperty.call(usage.bunks, 'league')) {
+                return false;
+            }
+
             if (usage.count >= limit) return false;
 
             // Sharing rules
@@ -1522,6 +1531,12 @@ function canBlockFit(block, fieldName, activityProperties, fieldUsageBySlot, pro
         for (const slotIndex of block.slots || []) {
             if (slotIndex === undefined) return false;
             const usage = fieldUsageBySlot[slotIndex]?.[fieldName] || { count: 0, divisions: [], bunks: {} };
+
+            // 🔴 Same hard rule for fields without timeRules
+            if (usage.bunks && Object.prototype.hasOwnProperty.call(usage.bunks, 'league')) {
+                return false;
+            }
+
             if (usage.count >= limit) return false;
 
             if (usage.count > 0) {
