@@ -1367,39 +1367,60 @@ function findSlotsForRange(startMin, endMin) {
 }
 
 /**
- * --- MODIFIED: 'usage' object now includes 'bunks' ---
+ * --- MODIFIED: also record continuous time ranges per field ---
  */
 function markFieldUsage(block, fieldName, fieldUsageBySlot) {
     if (!fieldName || fieldName === "No Field" || !window.allSchedulableNames.includes(fieldName)) {
         return;
     }
 
-    // 🔢 1) Record the TRUE time range in minutes for this field booking
+    // What activity is actually happening on this field for this block?
+    const blockActivity =
+        block._activity ||
+        block.sport ||
+        (block.event === 'League Game' ? 'League' : block.event) ||
+        null;
+
+    // 1) Record the TRUE time range in minutes for this field booking
     const { blockStartMin, blockEndMin } = getBlockTimeRange(block);
     if (blockStartMin != null && blockEndMin != null) {
         fieldBookedRanges[fieldName] = fieldBookedRanges[fieldName] || [];
         const list = fieldBookedRanges[fieldName];
 
         // Avoid duplicate identical ranges
-        const exists = list.some(r => r.startMin === blockStartMin && r.endMin === blockEndMin);
+        const exists = list.some(r =>
+            r.startMin === blockStartMin &&
+            r.endMin === blockEndMin &&
+            r.activity === blockActivity
+        );
         if (!exists) {
-            list.push({ startMin: blockStartMin, endMin: blockEndMin });
+            list.push({
+                startMin: blockStartMin,
+                endMin: blockEndMin,
+                activity: blockActivity
+            });
         }
     }
 
-    // 🧱 2) Existing per-slot usage (unchanged)
+    // 2) Keep existing per-slot usage (for sharable / division rules)
     for (const slotIndex of block.slots || []) {
         if (slotIndex === undefined) continue;
+
         fieldUsageBySlot[slotIndex] = fieldUsageBySlot[slotIndex] || {};
-        const usage = fieldUsageBySlot[slotIndex][fieldName] || { count: 0, divisions: [], bunks: {} };
+        const usage = fieldUsageBySlot[slotIndex][fieldName] || {
+            count: 0,
+            divisions: [],
+            bunks: {}
+        };
+
         usage.count++;
         if (!usage.divisions.includes(block.divName)) {
             usage.divisions.push(block.divName);
         }
-        const blockActivity = block._activity || block.sport || (block.event === 'League Game' ? 'League' : block.event);
         if (block.bunk && blockActivity) {
             usage.bunks[block.bunk] = blockActivity;
         }
+
         fieldUsageBySlot[slotIndex][fieldName] = usage;
     }
 }
