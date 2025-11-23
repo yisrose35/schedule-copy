@@ -2,10 +2,10 @@
 // leagues.js
 //
 // FIXED:
-// - Reads "League Game X" headers correctly even if they are bulleted.
-// - Scans multiple data fields (event, description, info) to ensure
-//   it finds the header.
-// - Separates Game 5 and Game 6 into distinct blocks.
+// - Calculates "League Game X" labels (matching the UI).
+// - Uses window.getMatchupsForRound (from league_scheduling.js) to
+//   get the official matchups for that game number.
+// - No longer relies on parsing schedule text (e.g. "1 vs 8").
 // ===================================================================
 
 (function () {
@@ -80,6 +80,26 @@
         if (ev.key === 'Enter') finish();
       };
     };
+  }
+
+  // Helper: Parse time string to minutes
+  function parseTimeToMinutes(str) {
+    if (!str || typeof str !== 'string') return null;
+    let s = str.trim().toLowerCase();
+    let mer = null;
+    if (s.endsWith('am') || s.endsWith('pm')) {
+      mer = s.endsWith('am') ? 'am' : 'pm';
+      s = s.replace(/am|pm/g, '').trim();
+    }
+    const m = s.match(/^(\d{1,2})\s*:\s*(\d{2})$/);
+    if (!m) return null;
+    let hh = parseInt(m[1], 10);
+    const mm = parseInt(m[2], 10);
+    if (mer) {
+      if (hh === 12) hh = mer === 'am' ? 0 : 12;
+      else if (mer === 'pm') hh += 12;
+    }
+    return hh * 60 + mm;
   }
 
   // ================================================================
@@ -693,113 +713,92 @@
   }
 
   // ================================================================
-  // IMPROVED IMPORT: ROBUST LABEL FINDER
+  // IMPROVED IMPORT: CALLS LEAGUE_SCHEDULING.JS FOR MATCHUPS
   // ================================================================
+  
+  function generateLeagueLabelsMap() {
+    const daily = window.loadCurrentDailyData?.() || {};
+    const prevDaily = window.loadPreviousDailyData?.() || {};
+    const skeleton = daily.manualSkeleton || [];
+    const prevCounters = prevDaily.leagueDayCounters || {}; 
+    
+    const labelMap = {}; // "League Game 5" -> { division, count }
+    const divisions = new Set(skeleton.map(s => s.division));
+    
+    divisions.forEach(div => {
+        let leagueCount = (prevCounters[div] && prevCounters[div].league) || 0;
+        
+        const divBlocks = skeleton.filter(s => s.division === div).sort((a, b) => {
+            const tA = parseTimeToMinutes(a.startTime) || 0;
+            const tB = parseTimeToMinutes(b.startTime) || 0;
+            return tA - tB;
+        });
+        
+        divBlocks.forEach(block => {
+            if (block.event === "League Game") {
+                leagueCount++;
+                // We just need a list of all League Games for this division today
+                const label = `League Game ${leagueCount}`;
+                if (!labelMap[div]) labelMap[div] = [];
+                labelMap[div].push({ label, count: leagueCount });
+            }
+        });
+    });
+    return labelMap;
+  }
+
   function importGamesFromSchedule(league, target) {
     target.innerHTML = '';
-
-    const daily = window.loadCurrentDailyData?.() || {};
-    const assignments = daily.scheduleAssignments || {};
-    const saveButton = target.parentElement.querySelector('[data-role="save-game-results"]');
 
     if (!league.teams || league.teams.length === 0) {
       target.innerHTML = `<p class="muted">Add teams to this league first.</p>`;
       return;
     }
 
-    const uniqueMatchKeys = new Set();
+    const saveButton = target.parentElement.querySelector('[data-role="save-game-results"]');
+    const labelMap = generateLeagueLabelsMap();
     const groups = {}; 
 
-    // Helper: Determine a clean label
-    function getNormalizedLabel(fullTextString) {
-      // 1. Look for explicit "League Game X" or "League Game #X"
-      const leagueMatch = fullTextString.match(/League Game\s*#?\s*(\d+)/i);
-      if (leagueMatch) {
-        return `League Game ${leagueMatch[1]}`;
-      }
-      
-      // 2. Look for "Game X"
-      const gameMatch = fullTextString.match(/Game\s*#?\s*(\d+)/i);
-      if (gameMatch) {
-        return `Game ${gameMatch[1]}`;
-      }
-
-      // 3. Fallback
-      return 'Scheduled Games'; 
+    // Find which divisions this league covers
+    // (Assumes league.divisions contains the relevant divisions)
+    const relevantDivisions = league.divisions || [];
+    
+    if (relevantDivisions.length === 0) {
+         // Fallback: check all divisions
+         Object.keys(labelMap).forEach(div => relevantDivisions.push(div));
     }
 
-    // Scan ALL teams
-    league.teams.forEach((teamName) => {
-      const schedule = assignments[teamName];
-      if (!Array.isArray(schedule)) return;
+    const processedLabels = new Set();
 
-      schedule.forEach((entry) => {
-        if (!entry || !entry._h2h) return;
-
-        // COMBINE ALL POTENTIAL TEXT FIELDS TO FIND THE LABEL
-        const rawTextParts = [
-          (typeof entry.sport === 'string' ? entry.sport : ''),
-          (typeof entry.event === 'string' ? entry.event : ''),
-          (typeof entry._activity === 'string' ? entry._activity : ''),
-          (typeof entry.description === 'string' ? entry.description : ''),
-          (typeof entry.info === 'string' ? entry.info : ''),
-          (typeof entry.label === 'string' ? entry.label : '')
-        ];
-        
-        // Join them so we can regex the whole block
-        const fullText = rawTextParts.join('\n');
-        
-        if (!fullText.trim()) return;
-
-        // EXTRACT LABEL from combined text
-        const label = getNormalizedLabel(fullText);
-
-        // Parse lines for "A vs B"
-        // We split by newline, and we also clean up bullet points "•"
-        const lines = fullText
-          .split(/\r?\n/)
-          .map((l) => l.replace(/^[•\-\*]\s*/, '').trim()) // Remove bullet points
-          .filter((l) => l.length > 0);
-
-        lines.forEach((line) => {
-          // Look for "TeamA vs TeamB"
-          const m = line.match(/^(.*?)\s+vs\.?\s+(.*?)(?:\s*\(|$)/i);
-          if (!m) return;
-
-          const tA = m[1].trim();
-          const tB = m[2].trim();
-
-          // VALIDATION: Both teams must be in this league
-          if (league.teams.includes(tA) && league.teams.includes(tB)) {
-            // STRICT DEDUPLICATION: Key = TeamA::TeamB
-            const matchKey = [tA, tB].sort().join('::');
-
-            // We only add if this specific pair hasn't been added yet.
-            // But we must be careful: if the same teams play TWICE in one day (Game 5 and Game 6),
-            // the KEY needs to include the Label to differentiate them.
+    relevantDivisions.forEach(div => {
+        const gameBlocks = labelMap[div] || [];
+        gameBlocks.forEach(block => {
+            const label = block.label; // e.g. "League Game 5"
             
-            // UPDATE: Include Label in dedupe key so 1vs2 in Game 5 is distinct from 1vs2 in Game 6
-            const uniqueKey = matchKey + '::' + label;
+            if (processedLabels.has(label)) return; // Avoid dupes if multiple divs share game
+            processedLabels.add(label);
 
-            if (!uniqueMatchKeys.has(uniqueKey)) {
-              uniqueMatchKeys.add(uniqueKey);
+            // "League Game N" corresponds to Round Index N-1
+            const roundIndex = block.count - 1;
 
-              if (!groups[label]) groups[label] = [];
-              groups[label].push({ teamA: tA, teamB: tB });
+            // ASK CORE SCHEDULER FOR MATCHUPS
+            const matchups = window.getMatchupsForRound 
+                             ? window.getMatchupsForRound(league.teams, roundIndex)
+                             : [];
+
+            if (matchups.length > 0) {
+                groups[label] = matchups.map(m => ({ teamA: m[0], teamB: m[1] }));
             }
-          }
         });
-      });
     });
 
     const labelKeys = Object.keys(groups);
 
     if (labelKeys.length === 0) {
-      target.innerHTML = `<p class="muted">No scheduled league games found for these teams today.</p>`;
+      target.innerHTML = `<p class="muted">No league games scheduled for today.</p>`;
       return;
     }
 
-    // Sort labels (Game 5 before Game 6)
     labelKeys.sort((a, b) => {
       const nA = (a.match(/\d+/) || [0])[0];
       const nB = (b.match(/\d+/) || [0])[0];
