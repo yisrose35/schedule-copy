@@ -1849,38 +1849,39 @@ function isPickValidForBlock(block, pick, activityProperties, fieldUsageBySlot) 
  *   for later (lower-priority) blocks (GA, etc.).
  */
 function fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, isLeagueFill = false) {
-  const fieldName = fieldLabel(pick.field);
-  const sport = pick.sport;
-  const activity = pick._activity || sport || fieldName;
+    const fieldName = fieldLabel(pick.field);
+    const sport     = pick.sport;
 
-  // First: write to schedule
-  (block.slots || []).forEach((slotIndex, idx) => {
-    if (slotIndex === undefined || slotIndex >= (window.unifiedTimes || []).length) return;
-    if (!window.scheduleAssignments[block.bunk]) return;
+    (block.slots || []).forEach((slotIndex, idx) => {
+        // Safety checks
+        if (slotIndex === undefined || slotIndex >= (window.unifiedTimes || []).length) return;
+        if (!window.scheduleAssignments[block.bunk]) return;
+        
+        // Only fill if empty
+        if (!window.scheduleAssignments[block.bunk][slotIndex]) {
+            window.scheduleAssignments[block.bunk][slotIndex] = {
+                field: fieldName,
+                sport: sport,
+                continuation: (idx > 0),
+                _fixed: !!pick._fixed,
+                _h2h: pick._h2h || false,
+                vs: pick.vs || null,
+                _activity: pick._activity || null,
+                _allMatchups: pick._allMatchups || null
+            };
 
-    if (!window.scheduleAssignments[block.bunk][slotIndex]) {
-      window.scheduleAssignments[block.bunk][slotIndex] = {
-        field: fieldName,
-        sport: sport,
-        continuation: (idx > 0),
-        _fixed: !!pick._fixed,
-        _h2h: pick._h2h || false,
-        vs: pick.vs || null,
-        _activity: activity,
-        _allMatchups: pick._allMatchups || null
-      };
-    }
-  });
-
-  // CRITICAL FIX: Mark usage on ALL slots this block occupies
-  // (Only skip for league games (they use different logic)
-  if (!isLeagueFill && fieldName && window.allSchedulableNames?.includes(fieldName)) {
-    markFieldUsage(
-      { ...block, _activity: activity },
-      fieldName,
-      fieldUsageBySlot
-    );
-  }
+            // 🔒 ALWAYS mark usage in the timeline so this field/time is blocked,
+            //     for both leagues and normal activities.
+            if (fieldName) {
+                markFieldUsage(
+                    { ...block, slots: [slotIndex], _activity: pick._activity },
+                    fieldName,
+                    fieldUsageBySlot
+                );
+            }
+        }
+    });
+}
 }// =====================================================================
 // DATA LOADER / FILTER (Corrected)
 // =====================================================================
