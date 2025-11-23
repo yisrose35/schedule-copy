@@ -1192,36 +1192,54 @@ window.fieldBookedRanges = fieldBookedRanges;
                 (divisions[div].bunks || []).includes(bunkB)
             ) || baseDivName;
 
-            fillBlock(
-                { slots, bunk: bunkA, divName: bunkADiv, startTime: group.startTime, endTime: group.endTime + INCREMENT_MINS * slots.length },
-                pick,
-                fieldUsageBySlot,
-                yesterdayHistory,
-                true // isLeagueFill = true
-            );
-            fillBlock(
-                { slots, bunk: bunkB, divName: bunkBDiv, startTime: group.startTime, endTime: group.endTime + INCREMENT_MINS * slots.length },
-                pick,
-                fieldUsageBySlot,
-                yesterdayHistory,
-                true // isLeagueFill = true
-            );
-        });
+           fillBlock(
+    { 
+        slots, 
+        bunk: bunkA, 
+        divName: bunkADiv, 
+        startTime: group.startTime, 
+        endTime: group.endTime 
+    },
+    pick,
+    fieldUsageBySlot,
+    yesterdayHistory,
+    true // isLeagueFill = true
+);
+fillBlock(
+    { 
+        slots, 
+        bunk: bunkB, 
+        divName: bunkBDiv, 
+        startTime: group.startTime, 
+        endTime: group.endTime 
+    },
+    pick,
+    fieldUsageBySlot,
+    yesterdayHistory,
+    true // isLeagueFill = true
+);
+
 
         while (bunkPtr < allBunksInGroup.length) {
             const leftoverBunk = allBunksInGroup[bunkPtr++];
             const bunkDivName = Object.keys(divisions).find(div =>
                 (divisions[div].bunks || []).includes(leftoverBunk)
             ) || baseDivName;
+fillBlock(
+    { 
+        slots, 
+        bunk: leftoverBunk, 
+        divName: bunkDivName, 
+        startTime: group.startTime, 
+        endTime: group.endTime 
+    },
+    noGamePick,
+    fieldUsageBySlot,
+    yesterdayHistory,
+    true // isLeagueFill = true
+);
 
-            fillBlock(
-                { slots, bunk: leftoverBunk, divName: bunkDivName, startTime: group.startTime, endTime: group.endTime + INCREMENT_MINS * slots.length },
-                noGamePick,
-                fieldUsageBySlot,
-                yesterdayHistory,
-                true // isLeagueFill = true
-            );
-        }
+             }
     });
 
     // =================================================================
