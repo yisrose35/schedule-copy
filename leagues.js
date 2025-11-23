@@ -876,99 +876,121 @@
     }
 
     function importGamesFromSchedule(league, target, saveButton) {
-        target.innerHTML = "";
-        const daily = window.loadCurrentDailyData?.() || {};
-        const assignments = daily.scheduleAssignments || {};
+    target.innerHTML = "";
+    const daily = window.loadCurrentDailyData?.() || {};
+    const assignments = daily.scheduleAssignments || {};
 
-        const foundMatches = new Set(); 
+    const foundMatches = new Set(); 
 
-        // --- 1. Determine Previous Game Count ---
-        let maxLeagueGameNum = 0;
-        (league.games || []).forEach(g => {
-            if (g.name) {
-                const n = parseInt(g.name.replace(/\D/g, ''));
-                if (!isNaN(n) && n > maxLeagueGameNum) maxLeagueGameNum = n;
+    // --- 1. Determine Previous Game Count (for rare fallback use) ---
+    let maxLeagueGameNum = 0;
+    (league.games || []).forEach(g => {
+        if (g.name) {
+            const n = parseInt(g.name.replace(/\D/g, ''));
+            if (!isNaN(n) && n > maxLeagueGameNum) maxLeagueGameNum = n;
+        }
+    });
+
+    // --- 2. Gather Matches from Schedule ---
+    const groupedMatches = {};
+
+    league.teams.forEach(team => {
+        const schedule = assignments[team] || [];
+        schedule.forEach((entry, slotIndex) => {
+            if (!entry || entry.continuation) return;
+
+            // Detect head-to-head rows:
+            //  - Preferred: _h2h flag from core
+            //  - Fallback: sport string contains "vs"
+            const sportStr = typeof entry.sport === "string" ? entry.sport : "";
+            const isH2H = entry._h2h || sportStr.toLowerCase().includes(" vs ");
+
+            if (!isH2H) return;
+
+            // Try to extract teams from string: "Team A vs Team B (Sport)..."
+            const label = sportStr;
+            const match = label.match(/^(.*?)\s+vs\s+(.*?)\s*\(/i);
+            if (!match) return;
+
+            const t1 = match[1].trim();
+            const t2 = match[2].trim();
+
+            // Ensure these teams belong to THIS league
+            if (!league.teams.includes(t1) || !league.teams.includes(t2)) return;
+
+            const uniqueKey = [t1, t2].sort().join(" vs ") + "::" + slotIndex;
+            if (foundMatches.has(uniqueKey)) return;
+            foundMatches.add(uniqueKey);
+
+            if (!groupedMatches[slotIndex]) {
+                groupedMatches[slotIndex] = { matches: [], label: null };
             }
-        });
+            groupedMatches[slotIndex].matches.push({ t1, t2 });
 
-        // --- 2. Gather Matches from Schedule ---
-        const groupedMatches = {};
+            // --------- LABEL PRIORITY (for "League Game X") ---------
+            // Look across multiple fields in case core stored it differently.
+            const rawLabelCandidate =
+                (typeof entry._activity === "string" && entry._activity) ||
+                (typeof entry.event === "string"    && entry.event)    ||
+                (typeof entry.field === "string"    && entry.field)    ||
+                sportStr ||
+                "";
 
-        league.teams.forEach(team => {
-            const schedule = assignments[team] || [];
-            schedule.forEach((entry, slotIndex) => {
-                // IGNORE CONTINUATIONS
-                if (entry && entry._h2h && !entry.continuation) {
-                    const label = entry.sport || ""; 
-                    
-                    // Attempt to extract teams from string: "Team A vs Team B (Sport)"
-                    const match = label.match(/^(.*?) vs (.*?) \(/);
+            // First: any direct "League Game X" phrase
+            const leagueGameMatch = rawLabelCandidate.match(/League Game\s*\d+/i);
+            if (leagueGameMatch) {
+                groupedMatches[slotIndex].label = leagueGameMatch[0].trim();
+                return;
+            }
 
-                    if (match) {
-                        const t1 = match[1].trim();
-                        const t2 = match[2].trim();
-
-                        if (league.teams.includes(t1) && league.teams.includes(t2)) {
-                            const uniqueKey = [t1, t2].sort().join(" vs ") + "::" + slotIndex;
-                            
-                            if (!foundMatches.has(uniqueKey)) {
-                                foundMatches.add(uniqueKey);
-                                
-                                if(!groupedMatches[slotIndex]) groupedMatches[slotIndex] = { matches: [], label: null };
-                                groupedMatches[slotIndex].matches.push({ t1, t2 });
-
-                                // PRIORITY: explicit "League Game X" title (field or _activity)
-                                const explicitName = (entry.field && typeof entry.field === 'string') ? entry.field : entry._activity;
-                                if (explicitName && explicitName.match(/League Game \d+/i)) {
-                                    groupedMatches[slotIndex].label = explicitName;
-                                } else {
-                                    const parenMatch = label.match(/\((.*?)\)$/);
-                                    if (parenMatch) {
-                                        const textInParens = parenMatch[1];
-                                        if (textInParens.match(/Game \d+/i)) {
-                                            groupedMatches[slotIndex].label = textInParens; 
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+            // Second: look inside parentheses "(League Game 6)" etc
+            const parenMatch = rawLabelCandidate.match(/\((.*?)\)/);
+            if (parenMatch) {
+                const inner = parenMatch[1];
+                const innerLeagueMatch = inner.match(/League Game\s*\d+/i);
+                if (innerLeagueMatch) {
+                    groupedMatches[slotIndex].label = innerLeagueMatch[0].trim();
+                    return;
                 }
-            });
-        });
+            }
 
-        // Sort slots by time
-        const sortedSlots = Object.keys(groupedMatches).sort((a,b) => parseInt(a) - parseInt(b));
-        
-        if (sortedSlots.length === 0) {
-            target.innerHTML = "<p class='muted' style='font-size:0.8rem;'>No scheduled games found for today.</p>";
-            return;
+            // If we didn't find anything, we leave label as null for now;
+            // we'll fallback later to sequential numbering *only* if needed.
+        });
+    });
+
+    // Sort slots by time
+    const sortedSlots = Object.keys(groupedMatches).sort((a,b) => parseInt(a) - parseInt(b));
+    
+    if (sortedSlots.length === 0) {
+        target.innerHTML = "<p class='muted' style='font-size:0.8rem;'>No scheduled games found for today.</p>";
+        return;
+    }
+
+    // --- 3. Render Groups ---
+    sortedSlots.forEach((slotIdx, displayIndex) => {
+        const group = groupedMatches[slotIdx];
+
+        let gameLabel = group.label;
+
+        // Fallback ONLY if we never detected "League Game X" anywhere
+        if (!gameLabel) {
+            const gameNumber = maxLeagueGameNum + displayIndex + 1;
+            gameLabel = `League Game ${gameNumber}`;
         }
 
-        // --- 3. Render Groups ---
-        sortedSlots.forEach((slotIdx, displayIndex) => {
-            const group = groupedMatches[slotIdx];
-            let gameLabel = "";
+        const header = document.createElement("div");
+        header.className = "group-header";
+        header.textContent = gameLabel;
+        target.appendChild(header);
 
-            if (group.label) {
-                gameLabel = group.label;
-            } else {
-                const gameNumber = maxLeagueGameNum + displayIndex + 1;
-                gameLabel = `League Game ${gameNumber}`;
-            }
-
-            const header = document.createElement("div");
-            header.className = "group-header";
-            header.textContent = gameLabel;
-            target.appendChild(header);
-
-            group.matches.forEach(m => {
-                addMatchRow(target, m.t1, m.t2, "", "", saveButton, gameLabel);
-            });
+        group.matches.forEach(m => {
+            addMatchRow(target, m.t1, m.t2, "", "", saveButton, gameLabel);
         });
-        
-        if(saveButton) saveButton.style.display = "inline-block";
-    }
+    });
+    
+    if (saveButton) saveButton.style.display = "inline-block";
+}
 
     function saveGameResults(league, gameId, container) {
         const rows = container.querySelectorAll(".match-row");
