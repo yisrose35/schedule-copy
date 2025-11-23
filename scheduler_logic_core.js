@@ -3648,40 +3648,43 @@ function markFieldUsage(block, fieldName, fieldUsageBySlot) {
 								/**
 								 * --- MODIFIED: 'usage' object now includes 'bunks' ---
 								 */
-								function fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, isLeagueFill = false) {
-								    const fieldName = fieldLabel(pick.field);
-								    const sport     = pick.sport;
-								
-								    (block.slots || []).forEach((slotIndex, idx) => {
-								        if (slotIndex === undefined || slotIndex >= (window.unifiedTimes || []).length) return;
-								        if (!window.scheduleAssignments[block.bunk]) return;
-								        if (!window.scheduleAssignments[block.bunk][slotIndex]) {
-								            window.scheduleAssignments[block.bunk][slotIndex] = {
-								                field: fieldName,
-								                sport: sport,
-								                continuation: (idx > 0),
-								                _fixed: !!pick._fixed,
-								                _h2h: pick._h2h || false,
-								                vs: pick.vs || null,
-								                _activity: pick._activity || null,
-								                _allMatchups: pick._allMatchups || null
-								            };
-								
-								            if (!isLeagueFill && fieldName && window.allSchedulableNames.includes(fieldName)) {
-								                fieldUsageBySlot[slotIndex] = fieldUsageBySlot[slotIndex] || {};
-								                const usage = fieldUsageBySlot[slotIndex][fieldName] || { count: 0, divisions: [], bunks: {} };
-								                usage.count++;
-								                if (!usage.divisions.includes(block.divName)) {
-								                    usage.divisions.push(block.divName);
-								                }
-								                if (block.bunk && pick._activity) {
-								                    usage.bunks[block.bunk] = pick._activity;
-								                }
-								                fieldUsageBySlot[slotIndex][fieldName] = usage;
-								            }
-								        }
-								    });
-								}
+								// --- REPLACE THIS FUNCTION IN scheduler_logic_core.js ---
+
+function fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, isLeagueFill = false) {
+    const fieldName = fieldLabel(pick.field);
+    const sport     = pick.sport;
+
+    (block.slots || []).forEach((slotIndex, idx) => {
+        // Safety checks
+        if (slotIndex === undefined || slotIndex >= (window.unifiedTimes || []).length) return;
+        if (!window.scheduleAssignments[block.bunk]) return;
+        
+        // Only fill if empty
+        if (!window.scheduleAssignments[block.bunk][slotIndex]) {
+            window.scheduleAssignments[block.bunk][slotIndex] = {
+                field: fieldName,
+                sport: sport,
+                continuation: (idx > 0),
+                _fixed: !!pick._fixed,
+                _h2h: pick._h2h || false,
+                vs: pick.vs || null,
+                _activity: pick._activity || null,
+                _allMatchups: pick._allMatchups || null
+            };
+
+            // FIX: Call markFieldUsage here! 
+            // Previously, this function had custom logic that skipped certain activities.
+            // Now it forces the system to register usage for everything.
+            if (!isLeagueFill && fieldName) {
+                markFieldUsage(
+                    { ...block, slots: [slotIndex], _activity: pick._activity }, 
+                    fieldName, 
+                    fieldUsageBySlot
+                );
+            }
+        }
+    });
+}
 								
 								// =====================================================================
 // DATA LOADER / FILTER (Corrected)
