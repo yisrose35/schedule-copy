@@ -2,9 +2,9 @@
 // leagues.js
 //
 // FIXED:
-// - Import now scans ALL divisions for "League Game X" blocks.
-// - Ignores division restrictions during import to ensure games are found.
-// - Uses getMatchupsForRound to populate "Who Plays Whom".
+// - Restored missing variable declarations (listEl, etc.) to fix ReferenceError.
+// - Import scans ALL divisions for "League Game X".
+// - Uses getMatchupsForRound to populate games.
 // ===================================================================
 
 (function () {
@@ -12,7 +12,13 @@
 
   let leaguesByName = {};
   window.leaguesByName = leaguesByName;
+  
   let leagueRoundState = {};
+
+  // --- UI State Persistence (RESTORED) ---
+  let selectedLeagueName = null;
+  let listEl = null;
+  let detailPaneEl = null;
 
   // --- Helpers ---
   function getPlaceSuffix(n) {
