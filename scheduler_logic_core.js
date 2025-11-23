@@ -3674,28 +3674,28 @@
 								}
 								
 								// =====================================================================
-								// DATA LOADER / FILTER
-								// =====================================================================
-								function loadAndFilterData() {
-								    const globalSettings = window.loadGlobalSettings?.() || {};
-								    const app1Data = globalSettings.app1 || {};
-								    const masterFields = app1Data.fields || [];
-								    const masterDivisions = app1Data.divisions || {};
-								    const masterAvailableDivs = app1Data.availableDivisions || [];
-								    const masterSpecials = app1Data.specialActivities || [];
-								    const masterLeagues = globalSettings.leaguesByName || {};
-								    const masterSpecialtyLeagues = globalSettings.specialtyLeagues || {};
-								
-								    const dailyData = window.loadCurrentDailyData?.() || {};
-								    const dailyFieldAvailability = dailyData.dailyFieldAvailability || {};
-								    const dailyOverrides = dailyData.overrides || {};
-								    const disabledLeagues = dailyOverrides.leagues || [];
-								    const disabledSpecialtyLeagues = dailyData.disabledSpecialtyLeagues || [];
-								    const dailyDisabledSportsByField = dailyData.dailyDisabledSportsByField || {};
-								    const disabledFields = dailyOverrides.disabledFields || [];
-								    const disabledSpecials = dailyOverrides.disabledSpecials || [];
-								
-								   const rotationHistoryRaw = window.loadRotationHistory?.() || {};
+// DATA LOADER / FILTER (Corrected)
+// =====================================================================
+function loadAndFilterData() {
+    const globalSettings = window.loadGlobalSettings?.() || {};
+    const app1Data = globalSettings.app1 || {};
+    const masterFields = app1Data.fields || [];
+    const masterDivisions = app1Data.divisions || {};
+    const masterAvailableDivs = app1Data.availableDivisions || [];
+    const masterSpecials = app1Data.specialActivities || [];
+    const masterLeagues = globalSettings.leaguesByName || {};
+    const masterSpecialtyLeagues = globalSettings.specialtyLeagues || {};
+
+    const dailyData = window.loadCurrentDailyData?.() || {};
+    const dailyFieldAvailability = dailyData.dailyFieldAvailability || {};
+    const dailyOverrides = dailyData.overrides || {};
+    const disabledLeagues = dailyOverrides.leagues || [];
+    const disabledSpecialtyLeagues = dailyData.disabledSpecialtyLeagues || [];
+    const dailyDisabledSportsByField = dailyData.dailyDisabledSportsByField || {};
+    const disabledFields = dailyOverrides.disabledFields || [];
+    const disabledSpecials = dailyOverrides.disabledSpecials || [];
+
+    const rotationHistoryRaw = window.loadRotationHistory?.() || {};
     const rotationHistory = {
         bunks: rotationHistoryRaw.bunks || {},
         leagues: rotationHistoryRaw.leagues || {},
@@ -3703,130 +3703,164 @@
         leagueTeamLastSport: rotationHistoryRaw.leagueTeamLastSport || {}
     };
 
-   
-    
+    // --- CALCULATE HISTORICAL COUNTS FOR USAGE LIMITS ---
+    // (This block must exist exactly ONCE in this function)
+    const historicalCounts = {}; 
+    try {
+        const allDaily = window.loadAllDailyData?.() || {};
+        const manualOffsets = globalSettings.manualUsageOffsets || {};
+
+        // 1. Sum from past schedules
+        Object.values(allDaily).forEach(day => {
+            const sched = day.scheduleAssignments || {};
+            Object.keys(sched).forEach(b => {
+                if (!historicalCounts[b]) historicalCounts[b] = {};
+                (sched[b] || []).forEach(e => {
+                    // Only count PRIMARY usage (not continuations/leagues)
+                    if (e && e._activity && !e.continuation && !e._h2h) {
+                        historicalCounts[b][e._activity] = (historicalCounts[b][e._activity] || 0) + 1;
+                    }
+                });
+            });
+        });
+
+        // 2. Apply manual offsets (from Report tab)
+        Object.keys(manualOffsets).forEach(b => {
+            if (!historicalCounts[b]) historicalCounts[b] = {};
+            Object.keys(manualOffsets[b]).forEach(act => {
+                const offset = manualOffsets[b][act] || 0;
+                const current = historicalCounts[b][act] || 0;
+                historicalCounts[b][act] = Math.max(0, current + offset);
+            });
+        });
+    } catch (e) {
+        console.error("Error calculating historical counts:", e);
+    }
+    // ----------------------------------------------------
+
     const overrides = {
         bunks: dailyOverrides.bunks || [],
         leagues: disabledLeagues
     };
-								
-								    const availableDivisions = masterAvailableDivs.filter(
-								        divName => !overrides.bunks.includes(divName)
-								    );
-								
-								    const divisions = {};
-								    for (const divName of availableDivisions) {
-								        if (!masterDivisions[divName]) continue;
-								        divisions[divName] = JSON.parse(JSON.stringify(masterDivisions[divName]));
-								        divisions[divName].bunks = (divisions[divName].bunks || []).filter(
-								            bunkName => !overrides.bunks.includes(bunkName)
-								        );
-								    }
-								
-								    function parseTimeRule(rule) {
-								        if (!rule || !rule.type) return null;
-								
-								        if (typeof rule.startMin === "number" && typeof rule.endMin === "number") {
-								            return {
-								                type: rule.type,
-								                startMin: rule.startMin,
-								                endMin: rule.endMin
-								            };
-								        }
-								
-								        const startMin = parseTimeToMinutes(rule.start);
-								        const endMin   = parseTimeToMinutes(rule.end);
-								        if (startMin == null || endMin == null) return null;
-								
-								        return {
-								            type: rule.type,
-								            startMin,
-								            endMin,
-								            start: rule.start,
-								            end: rule.end
-								        };
-								    }
-								
-								    const activityProperties = {};
-								    const allMasterActivities = [
-								        ...masterFields.filter(f => !disabledFields.includes(f.name)),
-								        ...masterSpecials.filter(s => !disabledSpecials.includes(s.name))
-								    ];
-								
-								    const availableActivityNames = [];
-								    allMasterActivities.forEach(f => {
-								        let finalRules;
-								        const dailyRules = dailyFieldAvailability[f.name];
-								        if (dailyRules && dailyRules.length > 0) {
-								            finalRules = dailyRules.map(parseTimeRule).filter(Boolean);
-								        } else {
-								            finalRules = (f.timeRules || []).map(parseTimeRule).filter(Boolean);
-								        }
-								
-								        const isMasterAvailable = f.available !== false;
-								
-								        const hasCustomDivList =
-								            Array.isArray(f.sharableWith?.divisions) &&
-								            f.sharableWith.divisions.length > 0;
-								
-								        activityProperties[f.name] = {
-								            available: isMasterAvailable,
-								            sharable:
-								                f.sharableWith?.type === 'all' ||
-								                f.sharableWith?.type === 'custom',
-								            allowedDivisions: hasCustomDivList
-								                ? f.sharableWith.divisions.slice()
-								                : null,
-								            limitUsage: f.limitUsage || { enabled: false, divisions: {} },
-								            preferences: f.preferences || { enabled: false, exclusive: false, list: [] }, // --- NEW: Load Preferences
-								            timeRules: finalRules
-								        };
-								
-								        if (isMasterAvailable) {
-								            availableActivityNames.push(f.name);
-								        }
-								    });
-								
-								    window.allSchedulableNames = availableActivityNames;
-								
-								    const availFields = masterFields.filter(f => availableActivityNames.includes(f.name));
-								    const availSpecials = masterSpecials.filter(s => availableActivityNames.includes(s.name));
-								
-								    const fieldsBySport = {};
-								    availFields.forEach(f => {
-								        if (Array.isArray(f.activities)) {
-								            f.activities.forEach(sport => {
-								                const isDisabledToday = dailyDisabledSportsByField[f.name]?.includes(sport);
-								                if (!isDisabledToday) {
-								                    fieldsBySport[sport] = fieldsBySport[sport] || [];
-								                    fieldsBySport[sport].push(f.name);
-								                }
-								            });
-								        }
-								    });
-								
-								    const allActivities = [
-								        ...availFields
-								            .flatMap(f =>
-								                (f.activities || []).map(act => ({
-								                    type: "field",
-								                    field: f.name,
-								                    sport: act
-								                }))
-								            )
-								            .filter(a => !a.field || !a.sport || !dailyDisabledSportsByField[a.field]?.includes(a.sport)),
-								        ...availSpecials.map(sa => ({ type: "special", field: sa.name, sport: null }))
-								    ];
-								
-								    const h2hActivities = allActivities.filter(a => a.type === "field" && a.sport);
-								
-								    const yesterdayData = window.loadPreviousDailyData?.() || {};
-								    const yesterdayHistory = {
-								        schedule: yesterdayData.scheduleAssignments || {},
-								        leagues: yesterdayData.leagueAssignments || {}
-								    };
-								
-								   return {
+
+    const availableDivisions = masterAvailableDivs.filter(
+        divName => !overrides.bunks.includes(divName)
+    );
+
+    const divisions = {};
+    for (const divName of availableDivisions) {
+        if (!masterDivisions[divName]) continue;
+        divisions[divName] = JSON.parse(JSON.stringify(masterDivisions[divName]));
+        divisions[divName].bunks = (divisions[divName].bunks || []).filter(
+            bunkName => !overrides.bunks.includes(bunkName)
+        );
+    }
+
+    function parseTimeRule(rule) {
+        if (!rule || !rule.type) return null;
+
+        if (typeof rule.startMin === "number" && typeof rule.endMin === "number") {
+            return {
+                type: rule.type,
+                startMin: rule.startMin,
+                endMin: rule.endMin
+            };
+        }
+
+        const startMin = parseTimeToMinutes(rule.start);
+        const endMin   = parseTimeToMinutes(rule.end);
+        if (startMin == null || endMin == null) return null;
+
+        return {
+            type: rule.type,
+            startMin,
+            endMin,
+            start: rule.start,
+            end: rule.end
+        };
+    }
+
+    const activityProperties = {};
+    const allMasterActivities = [
+        ...masterFields.filter(f => !disabledFields.includes(f.name)),
+        ...masterSpecials.filter(s => !disabledSpecials.includes(s.name))
+    ];
+
+    const availableActivityNames = [];
+    allMasterActivities.forEach(f => {
+        let finalRules;
+        const dailyRules = dailyFieldAvailability[f.name];
+        if (dailyRules && dailyRules.length > 0) {
+            finalRules = dailyRules.map(parseTimeRule).filter(Boolean);
+        } else {
+            finalRules = (f.timeRules || []).map(parseTimeRule).filter(Boolean);
+        }
+
+        const isMasterAvailable = f.available !== false;
+
+        const hasCustomDivList =
+            Array.isArray(f.sharableWith?.divisions) &&
+            f.sharableWith.divisions.length > 0;
+
+        activityProperties[f.name] = {
+            available: isMasterAvailable,
+            sharable:
+                f.sharableWith?.type === 'all' ||
+                f.sharableWith?.type === 'custom',
+            allowedDivisions: hasCustomDivList
+                ? f.sharableWith.divisions.slice()
+                : null,
+            limitUsage: f.limitUsage || { enabled: false, divisions: {} },
+            preferences: f.preferences || { enabled: false, exclusive: false, list: [] },
+            maxUsage: f.maxUsage || 0, // Ensure this is included
+            timeRules: finalRules
+        };
+
+        if (isMasterAvailable) {
+            availableActivityNames.push(f.name);
+        }
+    });
+
+    window.allSchedulableNames = availableActivityNames;
+
+    const availFields = masterFields.filter(f => availableActivityNames.includes(f.name));
+    const availSpecials = masterSpecials.filter(s => availableActivityNames.includes(s.name));
+
+    const fieldsBySport = {};
+    availFields.forEach(f => {
+        if (Array.isArray(f.activities)) {
+            f.activities.forEach(sport => {
+                const isDisabledToday = dailyDisabledSportsByField[f.name]?.includes(sport);
+                if (!isDisabledToday) {
+                    fieldsBySport[sport] = fieldsBySport[sport] || [];
+                    fieldsBySport[sport].push(f.name);
+                }
+            });
+        }
+    });
+
+    const allActivities = [
+        ...availFields
+            .flatMap(f =>
+                (f.activities || []).map(act => ({
+                    type: "field",
+                    field: f.name,
+                    sport: act
+                }))
+            )
+            .filter(a => !a.field || !a.sport || !dailyDisabledSportsByField[a.field]?.includes(a.sport)),
+        ...availSpecials.map(sa => ({ type: "special", field: sa.name, sport: null }))
+    ];
+
+    const h2hActivities = allActivities.filter(a => a.type === "field" && a.sport);
+
+    const yesterdayData = window.loadPreviousDailyData?.() || {};
+    const yesterdayHistory = {
+        schedule: yesterdayData.scheduleAssignments || {},
+        leagues: yesterdayData.leagueAssignments || {}
+    };
+
+    return {
         divisions,
         availableDivisions,
         activityProperties,
@@ -3839,9 +3873,8 @@
         rotationHistory,
         disabledLeagues,
         disabledSpecialtyLeagues,
-        historicalCounts // <--- ADDED THIS
+        historicalCounts // Successfully defined and returned
     };
-}
-								
+}								
 								// END IIFE
 								})();
