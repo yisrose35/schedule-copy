@@ -1189,32 +1189,34 @@ window.fieldBookedRanges = fieldBookedRanges;
                 (divisions[div].bunks || []).includes(bunkB)
             ) || baseDivName;
 
-           fillBlock(
+          fillBlock(
     { 
         slots, 
         bunk: bunkA, 
-        divName: bunkADiv, 
-        startTime: group.startTime, 
-        endTime: group.endTime 
+        divName: bunkADiv,
+        startTime: group.startTime,
+        endTime: group.endTime
     },
     pick,
     fieldUsageBySlot,
     yesterdayHistory,
-    true // isLeagueFill = true
+    true
 );
+
 fillBlock(
     { 
         slots, 
         bunk: bunkB, 
-        divName: bunkBDiv, 
-        startTime: group.startTime, 
-        endTime: group.endTime 
+        divName: bunkBDiv,
+        startTime: group.startTime,
+        endTime: group.endTime
     },
     pick,
     fieldUsageBySlot,
     yesterdayHistory,
-    true // isLeagueFill = true
+    true
 );
+
 
 
         while (bunkPtr < allBunksInGroup.length) {
@@ -1226,15 +1228,16 @@ fillBlock(
     { 
         slots, 
         bunk: leftoverBunk, 
-        divName: bunkDivName, 
-        startTime: group.startTime, 
-        endTime: group.endTime 
+        divName: bunkDivName,
+        startTime: group.startTime,
+        endTime: group.endTime
     },
     noGamePick,
     fieldUsageBySlot,
     yesterdayHistory,
-    true // isLeagueFill = true
+    true
 );
+
 
              }
     });
@@ -1367,7 +1370,7 @@ fillBlock(
     window.saveSchedule?.();
 
     return true;
-)};
+};
 
 // =====================================================================
 // HELPER FUNCTIONS USED BY PASSES
