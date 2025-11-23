@@ -4,10 +4,14 @@
 // RESTORED: Original UI layout (Header, Status Box, Chip Pickers).
 // FIXED: Uncaught ReferenceError by correctly accessing window.availableDivisions.
 // ENHANCED: Merged Priority and Restriction UIs into one clean, organized panel.
-// UPDATED: Visual design to match modern Setup/Config theme
-//          - card-style master list
-//          - sticky detail pane
-//          - softer borders, shadows, and pill-like chips.
+// UPDATED (UI REWORK):
+// - Field detail pane split into clear "cards":
+//     • Activities
+//     • Sharing Rules
+//     • Who Can Use This Field (Restrictions & Priority)
+//     • Time Rules
+// - Added helper text in each card to make it obvious what to do.
+// - Styling aligned with modern Setup/Config theme.
 // =================================================================
 
 (function() {
@@ -37,9 +41,9 @@ function initFieldsTab() {
                     <div class="setup-card-text">
                         <h3>Manage Fields &amp; Activities</h3>
                         <p>
-                            Add your physical locations (courts, fields, gyms), then choose
-                            which <strong>sports/activities</strong> can be played on each,
-                            and configure <strong>sharing</strong> &amp; <strong>time rules</strong>.
+                            Add your courts, fields, and facilities. Then choose
+                            which <strong>sports</strong> they host, who can use them,
+                            and any <strong>time rules</strong> they follow.
                         </p>
                     </div>
                 </div>
@@ -49,8 +53,8 @@ function initFieldsTab() {
                     <div style="flex:1; min-width:260px;">
                         <div class="setup-subtitle">All Fields</div>
                         <p style="font-size:0.8rem; color:#6b7280; margin-top:4px;">
-                            Click a field to edit its details. Toggle availability or update the name
-                            inline. All changes save automatically.
+                            Click a field to open its settings. Toggle availability or rename
+                            directly from this list. Everything saves automatically.
                         </p>
 
                         <div class="setup-field-row" style="margin-top:10px;">
@@ -71,9 +75,9 @@ function initFieldsTab() {
                             <p class="muted">
                                 Select a field from the left to edit its details:
                                 <br>• Toggle if it’s <strong>available</strong> for scheduling
-                                <br>• Assign which <strong>sports/activities</strong> can use it
-                                <br>• Configure <strong>sharing rules</strong> between divisions
-                                <br>• Add <strong>time rules</strong> (e.g. only mornings)
+                                <br>• Assign which <strong>sports</strong> can use it
+                                <br>• Control <strong>sharing &amp; restrictions</strong> by division
+                                <br>• Add <strong>time rules</strong> (e.g. mornings only)
                             </p>
                         </div>
                     </div>
@@ -135,6 +139,47 @@ function initFieldsTab() {
                 background: #ffffff;
                 min-height: 400px;
                 box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+            }
+
+            /* Field detail layout */
+            .field-detail-grid {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 12px;
+                margin-top: 12px;
+            }
+            .field-section-card {
+                flex: 1 1 260px;
+                border-radius: 12px;
+                border: 1px solid #e5e7eb;
+                background: #f9fafb;
+                padding: 10px 12px;
+            }
+            .field-section-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                margin-bottom: 6px;
+                font-size: 0.78rem;
+                text-transform: uppercase;
+                letter-spacing: 0.06em;
+                color: #6b7280;
+            }
+            .field-section-title {
+                font-weight: 600;
+            }
+            .field-section-tag {
+                font-size: 0.7rem;
+                padding: 2px 8px;
+                border-radius: 999px;
+                background: #e0f2fe;
+                color: #0369a1;
+                font-weight: 500;
+            }
+            .field-section-help {
+                margin: 0 0 8px;
+                font-size: 0.78rem;
+                color: #6b7280;
             }
 
             /* Priority list row styling */
@@ -268,14 +313,14 @@ function renderDetailPane() {
 
     detailPaneEl.innerHTML = ""; 
     
-    // --- 1. Name & Delete ---
+    // --- TOP: Name & Delete ---
     const header = document.createElement('div');
     header.style.display = 'flex';
     header.style.justifyContent = 'space-between';
     header.style.alignItems = 'center';
     header.style.borderBottom = '2px solid #f3f4f6';
     header.style.paddingBottom = '10px';
-    header.style.marginBottom = '15px';
+    header.style.marginBottom = '10px';
     
     const title = document.createElement('h3');
     title.style.margin = '0';
@@ -308,22 +353,49 @@ function renderDetailPane() {
     header.appendChild(deleteBtn);
     detailPaneEl.appendChild(header);
     
-    // --- 2. Master Toggle (Restored) ---
+    // --- GLOBAL AVAILABILITY STRIP ---
     const masterToggle = document.createElement('div');
     masterToggle.style.background = item.available ? '#e8f5e9' : '#fbe9e7';
-    masterToggle.style.padding = '10px';
+    masterToggle.style.padding = '8px 10px';
     masterToggle.style.borderRadius = '8px';
-    masterToggle.style.marginBottom = '15px';
-    masterToggle.style.fontSize = '0.85rem';
-    masterToggle.textContent = `This item is globally ${item.available ? 'AVAILABLE' : 'UNAVAILABLE'}. (Toggle in list view)`;
+    masterToggle.style.marginBottom = '12px';
+    masterToggle.style.fontSize = '0.8rem';
+    masterToggle.style.display = 'flex';
+    masterToggle.style.justifyContent = 'space-between';
+    masterToggle.style.alignItems = 'center';
+    masterToggle.innerHTML = `
+        <span>
+            This field is currently 
+            <strong>${item.available ? 'AVAILABLE' : 'UNAVAILABLE'}</strong>
+            to the scheduler.
+        </span>
+        <span style="opacity:0.75;">(Toggle in the list on the left)</span>
+    `;
     detailPaneEl.appendChild(masterToggle);
 
-    // --- 3. Activities ---
-    const actSection = document.createElement('div');
-    actSection.innerHTML = `<strong>Activities on this field:</strong>`;
-    
+    // --- MAIN DETAIL GRID (cards) ---
+    const detailGrid = document.createElement("div");
+    detailGrid.className = "field-detail-grid";
+    detailPaneEl.appendChild(detailGrid);
+
+    // ========== CARD 1: ACTIVITIES ==========
+    const actCard = document.createElement("div");
+    actCard.className = "field-section-card";
+    const actHeader = document.createElement("div");
+    actHeader.className = "field-section-header";
+    actHeader.innerHTML = `
+        <span class="field-section-title">Activities</span>
+        <span class="field-section-tag">What plays here?</span>
+    `;
+    actCard.appendChild(actHeader);
+
+    const actHelp = document.createElement("p");
+    actHelp.className = "field-section-help";
+    actHelp.textContent = "Click a sport to toggle it ON/OFF for this field. Type a new sport and press Enter to add it globally.";
+    actCard.appendChild(actHelp);
+
     const bw = document.createElement("div"); 
-    bw.style.marginTop = "8px";
+    bw.style.marginTop = "4px";
     bw.style.display = 'flex';
     bw.style.flexWrap = 'wrap';
     bw.style.gap = '5px';
@@ -347,9 +419,9 @@ function renderDetailPane() {
     });
     
     const other = document.createElement("input");
-    other.placeholder = "Add new sport type";
+    other.placeholder = "Add new sport (Enter to save)";
     other.style.marginTop = '6px';
-    other.style.width = '220px';
+    other.style.width = '100%';
     other.onkeyup = e => {
         if (e.key === "Enter" && other.value.trim()) {
             const newSport = other.value.trim();
@@ -363,27 +435,72 @@ function renderDetailPane() {
         }
     };
     
-    actSection.appendChild(bw);
-    actSection.appendChild(other);
-    detailPaneEl.appendChild(actSection);
+    actCard.appendChild(bw);
+    actCard.appendChild(other);
+    detailGrid.appendChild(actCard);
 
-    // --- 4. Sharable ---
+    // ========== CARD 2: SHARING RULES ==========
+    const sharingCard = document.createElement("div");
+    sharingCard.className = "field-section-card";
+    const sharingHeader = document.createElement("div");
+    sharingHeader.className = "field-section-header";
+    sharingHeader.innerHTML = `
+        <span class="field-section-title">Sharing Rules</span>
+        <span class="field-section-tag">Multiple divisions</span>
+    `;
+    sharingCard.appendChild(sharingHeader);
+
+    const sharingHelp = document.createElement("p");
+    sharingHelp.className = "field-section-help";
+    sharingHelp.textContent = "Decide whether this field can host more than one division at the same time (shared fields).";
+    sharingCard.appendChild(sharingHelp);
+
     const sharableControls = renderSharableControls(item, saveData, renderDetailPane);
-    sharableControls.style.borderTop = '1px solid #f3f4f6';
-    sharableControls.style.paddingTop = '15px';
-    sharableControls.style.marginTop = '15px';
-    detailPaneEl.appendChild(sharableControls);
-    
-    // --- 5. Allowed Divisions/Bunks + Priority/Exclusive (COMBINED) ---
+    sharableControls.style.marginTop = "4px";
+    sharingCard.appendChild(sharableControls);
+    detailGrid.appendChild(sharingCard);
+
+    // ========== CARD 3: WHO CAN USE THIS FIELD? ==========
+    const restrictCard = document.createElement("div");
+    restrictCard.className = "field-section-card";
+    const restrictHeader = document.createElement("div");
+    restrictHeader.className = "field-section-header";
+    restrictHeader.innerHTML = `
+        <span class="field-section-title">Who Can Use This Field?</span>
+        <span class="field-section-tag">Restrictions &amp; priority</span>
+    `;
+    restrictCard.appendChild(restrictHeader);
+
+    const restrictHelp = document.createElement("p");
+    restrictHelp.className = "field-section-help";
+    restrictHelp.textContent = "Choose which divisions (and specific bunks) are allowed here, and set a priority order if some should get this field first.";
+    restrictCard.appendChild(restrictHelp);
+
     const limitControls = renderAllowedBunksControls(item, saveData, renderDetailPane);
-    detailPaneEl.appendChild(limitControls);
-    
-    // --- 6. Time Rules ---
+    limitControls.style.marginTop = "4px";
+    restrictCard.appendChild(limitControls);
+    detailGrid.appendChild(restrictCard);
+
+    // ========== CARD 4: TIME RULES ==========
+    const timeCard = document.createElement("div");
+    timeCard.className = "field-section-card";
+    const timeHeader = document.createElement("div");
+    timeHeader.className = "field-section-header";
+    timeHeader.innerHTML = `
+        <span class="field-section-title">Time Rules</span>
+        <span class="field-section-tag">When is it open?</span>
+    `;
+    timeCard.appendChild(timeHeader);
+
+    const timeHelp = document.createElement("p");
+    timeHelp.className = "field-section-help";
+    timeHelp.textContent = "Add optional windows when this field is specifically AVAILABLE or UNAVAILABLE (e.g., mornings only).";
+    timeCard.appendChild(timeHelp);
+
     const timeRuleControls = renderTimeRulesUI(item, saveData, renderDetailPane);
-    timeRuleControls.style.marginTop = "10px";
-    timeRuleControls.style.paddingTop = "10px";
-    timeRuleControls.style.borderTop = "1px solid #f3f4f6";
-    detailPaneEl.appendChild(timeRuleControls);
+    timeRuleControls.style.marginTop = "4px";
+    timeCard.appendChild(timeRuleControls);
+    detailGrid.appendChild(timeCard);
 }
 
 // --- Add Field Function ---
@@ -460,16 +577,20 @@ function renderTimeRulesUI(item, onSave, onRerender) {
 
     const ruleList = document.createElement("div");
     if (item.timeRules.length === 0) {
-        ruleList.innerHTML = `<p class="muted" style="margin: 0;">No specific time rules. (Available all day)</p>`;
+        ruleList.innerHTML = `<p class="muted" style="margin: 4px 0 0;">No specific time rules. (Available all day)</p>`;
     }
 
     item.timeRules.forEach((rule, index) => {
         const ruleEl = document.createElement("div");
-        ruleEl.style.margin = "2px 0";
-        ruleEl.style.padding = "4px";
+        ruleEl.style.margin = "4px 0";
+        ruleEl.style.padding = "4px 6px";
         ruleEl.style.background = "#f4f4f4";
-        ruleEl.style.borderRadius = "4px";
+        ruleEl.style.borderRadius = "6px";
+        ruleEl.style.display = "flex";
+        ruleEl.style.alignItems = "center";
+        ruleEl.style.justifyContent = "space-between";
         
+        const left = document.createElement("span");
         const ruleType = document.createElement("strong");
         ruleType.textContent = rule.type;
         ruleType.style.color = rule.type === 'Available' ? 'green' : 'red';
@@ -477,7 +598,9 @@ function renderTimeRulesUI(item, onSave, onRerender) {
         
         const ruleText = document.createElement("span");
         ruleText.textContent = ` from ${rule.start} to ${rule.end}`;
-        
+        left.appendChild(ruleType);
+        left.appendChild(ruleText);
+
         const removeBtn = document.createElement("button");
         removeBtn.textContent = "✖";
         removeBtn.style.marginLeft = "8px";
@@ -490,8 +613,7 @@ function renderTimeRulesUI(item, onSave, onRerender) {
             onRerender();
         };
         
-        ruleEl.appendChild(ruleType);
-        ruleEl.appendChild(ruleText);
+        ruleEl.appendChild(left);
         ruleEl.appendChild(removeBtn);
         ruleList.appendChild(ruleEl);
     });
@@ -588,10 +710,12 @@ function renderSharableControls(item, onSave, onRerender) {
 
     if (isSharable) {
         const customPanel = document.createElement("div");
-        customPanel.style.paddingLeft = "20px";
-        customPanel.style.marginTop = "10px";
+        customPanel.style.paddingLeft = "12px";
+        customPanel.style.marginTop = "8px";
         const divLabel = document.createElement("div");
-        divLabel.textContent = "Limit to Divisions (if none selected, sharable with all):";
+        divLabel.textContent = "Optionally limit sharing to specific divisions:";
+        divLabel.style.fontSize = "0.78rem";
+        divLabel.style.color = "#4b5563";
         customPanel.appendChild(divLabel);
         const onDivToggle = () => {
             rules.type = (rules.divisions.length > 0) ? 'custom' : 'all';
@@ -635,10 +759,7 @@ function createChipPicker(allItems, selectedItems, onToggle) {
 
 function renderAllowedBunksControls(item, onSave, onRerender) {
     const container = document.createElement("div");
-    container.style.marginTop = "10px";
-    container.style.paddingTop = "10px";
-    container.style.borderTop = "1px solid #f3f4f6";
-    container.innerHTML = `<strong>Division Restrictions & Priority:</strong>`;
+    container.style.marginTop = "4px";
 
     if (!item.limitUsage) { item.limitUsage = { enabled: false, divisions: {} }; }
     if (!item.preferences) { item.preferences = { enabled: false, exclusive: false, list: [] }; }
@@ -647,13 +768,15 @@ function renderAllowedBunksControls(item, onSave, onRerender) {
     const prefs = item.preferences;
     prefs.enabled = !!rules.enabled;
 
+    container.innerHTML = `<strong>Division Restrictions & Priority:</strong>`;
+
     // --- 1. Master Toggle (All vs Specific) ---
     const modeLabel = document.createElement("label");
     modeLabel.style.display = "flex";
     modeLabel.style.alignItems = "center";
     modeLabel.style.gap = "10px";
     modeLabel.style.cursor = "pointer";
-    modeLabel.style.marginTop = '5px';
+    modeLabel.style.marginTop = '6px';
 
     const textAll = document.createElement("span");
     textAll.textContent = "All Divisions (No Restrictions)";
@@ -690,12 +813,12 @@ function renderAllowedBunksControls(item, onSave, onRerender) {
 
     if (rules.enabled) {
         const customPanel = document.createElement("div");
-        customPanel.style.padding = "15px 0";
+        customPanel.style.padding = "12px 0 0";
         customPanel.style.borderTop = "1px solid #f0f0f0";
         
         // --- 2. Priority and Exclusive Toggle ---
         const prioritySettings = document.createElement("div");
-        prioritySettings.style.cssText = "background:#f9fafb; padding:10px; border-radius:8px; border:1px solid #e5e7eb; margin-bottom:15px;";
+        prioritySettings.style.cssText = "background:#f9fafb; padding:10px; border-radius:8px; border:1px solid #e5e7eb; margin-bottom:12px;";
         
         // Exclusive Mode
         const exclDiv = document.createElement("div");
@@ -713,10 +836,10 @@ function renderAllowedBunksControls(item, onSave, onRerender) {
 
         // --- Priority List (Visible when enabled) ---
         const listHeader = document.createElement("div");
-        listHeader.textContent = "Division Priority List (top = highest priority):";
-        listHeader.style.marginTop = "10px";
+        listHeader.textContent = "Division Priority Order (top = first choice):";
+        listHeader.style.marginTop = "8px";
         listHeader.style.fontWeight = "600";
-        listHeader.style.fontSize = "0.8rem";
+        listHeader.style.fontSize = "0.78rem";
         prioritySettings.appendChild(listHeader);
 
         const priorityListContainer = document.createElement("ul");
@@ -765,7 +888,7 @@ function renderAllowedBunksControls(item, onSave, onRerender) {
 
         // --- Add to Priority Dropdown ---
         const priorityAddRow = document.createElement("div");
-        priorityAddRow.style.cssText = "margin-top:10px; padding-top:8px; border-top:1px dashed #e5e7eb; display:flex; gap:6px;";
+        priorityAddRow.style.cssText = "margin-top:8px; padding-top:6px; border-top:1px dashed #e5e7eb; display:flex; gap:6px;";
         
         const select = document.createElement("select");
         select.innerHTML = `<option value="">-- Add Division to Priority --</option>`;
@@ -792,7 +915,7 @@ function renderAllowedBunksControls(item, onSave, onRerender) {
 
         // --- 3. Allowed Divisions/Bunks Chips ---
         const allowedHeader = document.createElement("div");
-        allowedHeader.style.cssText = "margin-top:15px; font-weight:600; border-top:1px solid #eee; padding-top:10px; font-size:0.85rem;";
+        allowedHeader.style.cssText = "margin-top:10px; font-weight:600; font-size:0.8rem;";
         allowedHeader.textContent = "Select Allowed Divisions & Per-Bunk Restrictions:";
         customPanel.appendChild(allowedHeader);
         
