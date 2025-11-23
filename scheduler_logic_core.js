@@ -710,21 +710,36 @@ window.runSkeletonOptimizer = function(manualSkeleton) {
             const slotsSecond = allSlots.slice(slotMid);
 
             // ---- PIN SWIM ----
-            function pinSwim(bunks, slots) {
-                bunks.forEach(bunk => {
-                    slots.forEach((slotIndex, idx) => {
-                        window.scheduleAssignments[bunk][slotIndex] = {
-                            field: { name: swimLabel },
-                            sport: null,
-                            continuation: (idx > 0),
-                            _fixed: true,
-                            _h2h: false,
-                            vs: null,
-                            _activity: swimLabel
-                        };
-                    });
-                });
-            }
+           function pinSwim(bunks, slots) {
+    bunks.forEach(bunk => {
+        // 1) Write Swim into the schedule
+        slots.forEach((slotIndex, idx) => {
+            window.scheduleAssignments[bunk][slotIndex] = {
+                field: { name: swimLabel },
+                sport: null,
+                continuation: (idx > 0),
+                _fixed: true,
+                _h2h: false,
+                vs: null,
+                _activity: swimLabel
+            };
+        });
+
+        // 2) NEW: Mark Swim usage so other generated activities
+        //    respect the fact that this field/time is busy (if Swim
+        //    is modeled as a real field in allSchedulableNames).
+        markFieldUsage(
+            {
+                divName: item.division,
+                bunk: bunk,
+                slots: slots,
+                _activity: swimLabel
+            },
+            swimLabel,
+            fieldUsageBySlot
+        );
+    });
+}
 
             // ---- GA GENERATED ----
             function pushGA(bunks, slots) {
