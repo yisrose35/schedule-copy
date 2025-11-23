@@ -1024,7 +1024,13 @@ window.fieldBookedRanges = fieldBookedRanges;
         }
         if (!baseDivName) return;
 
-        const blockBase = { slots, divName: baseDivName, endTime: group.endTime };
+        const blockBase = { 
+    slots, 
+    divName: baseDivName, 
+    startTime: group.startTime,
+    endTime: group.endTime 
+};
+
 
         const sports = (league.sports || []).filter(s => fieldsBySport[s]);
         if (sports.length === 0) return;
