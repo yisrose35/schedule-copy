@@ -1710,6 +1710,15 @@ function canLeagueGameFit(block, fieldName, fieldUsageBySlot, activityProperties
             endMin: parseTimeToMinutes(r.end)
         };
     });
+    // 🚫 NEW: "Do not start during another booking" rule for this field (leagues)
+if (blockStartMin != null && fieldBookedRanges[fieldName] && fieldBookedRanges[fieldName].length > 0) {
+    for (const r of fieldBookedRanges[fieldName]) {
+        if (blockStartMin >= r.startMin && blockStartMin < r.endMin) {
+            return false;
+        }
+    }
+}
+
 
     if (rules.length > 0) {
         if (!props.available) return false;
