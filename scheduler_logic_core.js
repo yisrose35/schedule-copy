@@ -1561,6 +1561,16 @@ function canBlockFit(block, fieldName, activityProperties, fieldUsageBySlot, pro
             endMin: parseTimeToMinutes(r.end)
         };
     });
+    // 🚫 NEW: "Do not start during another booking" rule for this field
+if (blockStartMin != null && fieldBookedRanges[fieldName] && fieldBookedRanges[fieldName].length > 0) {
+    for (const r of fieldBookedRanges[fieldName]) {
+        // If this block's START falls inside an existing booking, reject
+        if (blockStartMin >= r.startMin && blockStartMin < r.endMin) {
+            return false;
+        }
+    }
+}
+
 
     if (rules.length > 0) {
         if (!props.available) return false;
