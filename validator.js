@@ -1,13 +1,10 @@
-
 // =================================================================
 // validator.js
 //
 // Scans the schedule for conflicts.
 // UPDATED:
-// - ONLY checks for Double Bookings (Capacity Violations).
-// - Removes all "High Exertion" and "Missing Lunch" warnings.
+// - Now checks BOTH Fields and Special Activities for overlaps.
 // - Respects "Sharable" (limit 2) vs "Normal" (limit 1).
-// - Checks all activity types including Leagues.
 // =================================================================
 
 (function() {
@@ -17,59 +14,69 @@ function validateSchedule() {
     const assignments = window.scheduleAssignments || {};
     const unifiedTimes = window.unifiedTimes || [];
     
-    // 1. Load Field Definitions to determine limits
+    // 1. Load Definitions (Fields AND Special Activities)
     const app1 = window.loadGlobalSettings?.().app1 || {};
     const fieldsList = app1.fields || [];
+    const specialsList = app1.specialActivities || [];
     
-    // Map field names to their specific rules
-    const fieldRules = {};
-    fieldsList.forEach(f => {
-        fieldRules[f.name] = {
+    // Map resource names to their specific rules
+    const resourceRules = {};
+
+    // Helper to process items
+    const processItem = (item) => {
+        resourceRules[item.name] = {
             // If sharable type is 'all' or 'custom', allow 2. Otherwise 1.
-            limit: (f.sharableWith?.type === 'all' || f.sharableWith?.type === 'custom') ? 2 : 1
+            limit: (item.sharableWith?.type === 'all' || item.sharableWith?.type === 'custom') ? 2 : 1
         };
-    });
+    };
+
+    fieldsList.forEach(processItem);
+    specialsList.forEach(processItem);
 
     const errors = [];
-    const usageMap = {}; // slotIndex -> fieldName -> count
+    const usageMap = {}; // slotIndex -> resourceName -> count
 
-    // 2. Scan Schedule for Field Usage
-    // This iterates over every bunk's schedule. If they are assigned a field,
-    // it counts towards that field's usage for that time slot.
+    // 2. Scan Schedule for Resource Usage
     Object.keys(assignments).forEach(bunk => {
         const schedule = assignments[bunk];
         if (!schedule) return;
 
         schedule.forEach((entry, slotIdx) => {
-            // Only check if there is an activity assigned
-            // We filter out "Free", "No Field", etc. as they don't consume a resource.
+            // Filter out "Free", "No Field", etc.
             if (entry && entry.field && !["Free", "No Field", "No Game", "Unassigned League"].includes(entry.field)) {
                 
-                const fName = (typeof entry.field === 'string') ? entry.field : entry.field.name;
+                // Handle both object and string formats for field name
+                let rName = (typeof entry.field === 'string') ? entry.field : entry.field.name;
+                
+                // Sometimes special activities are stored in _activity if field is generic, 
+                // but usually the 'field' property holds the main resource name. 
+                // If it's a generated special slot, check the activity name.
+                if (entry._activity && resourceRules.hasOwnProperty(entry._activity)) {
+                    rName = entry._activity;
+                }
 
-                // Only validate capacity if it's a REAL field defined in Setup.
-                // Virtual events like "Lunch" or "Swim" are ignored unless they are defined as fields.
-                if (fieldRules.hasOwnProperty(fName)) {
+                // Only validate if it's a REAL resource defined in Setup/Specials
+                if (resourceRules.hasOwnProperty(rName)) {
                     if (!usageMap[slotIdx]) usageMap[slotIdx] = {};
-                    if (!usageMap[slotIdx][fName]) usageMap[slotIdx][fName] = 0;
+                    if (!usageMap[slotIdx][rName]) usageMap[slotIdx][rName] = 0;
                     
-                    usageMap[slotIdx][fName]++;
+                    usageMap[slotIdx][rName]++;
                 }
             }
         });
     });
 
-    // 3. Check Field Capacities against Limits
+    // 3. Check Capacities against Limits
     Object.keys(usageMap).forEach(slotIdx => {
         const slotUsage = usageMap[slotIdx];
         const timeLabel = unifiedTimes[slotIdx]?.label || `Slot ${slotIdx}`;
 
-        Object.keys(slotUsage).forEach(fName => {
-            const count = slotUsage[fName];
-            const limit = fieldRules[fName].limit; 
+        Object.keys(slotUsage).forEach(rName => {
+            const count = slotUsage[rName];
+            const limit = resourceRules[rName].limit; 
 
             if (count > limit) {
-                errors.push(`<strong>Double Booking:</strong> <u>${fName}</u> is used by <strong>${count}</strong> bunks at ${timeLabel} (Limit: ${limit}).`);
+                errors.push(`<strong>Double Booking:</strong> <u>${rName}</u> is used by <strong>${count}</strong> bunks at ${timeLabel} (Limit: ${limit}).`);
             }
         });
     });
@@ -79,7 +86,6 @@ function validateSchedule() {
 }
 
 function showValidationModal(errors) {
-    // Remove existing modal if open
     const existing = document.getElementById('validator-overlay');
     if (existing) existing.remove();
 
@@ -129,14 +135,12 @@ function showValidationModal(errors) {
     overlay.innerHTML = content;
     document.body.appendChild(overlay);
 
-    // Close handlers
     const close = () => overlay.remove();
     document.getElementById('val-close-btn').onclick = close;
     document.getElementById('val-close-x').onclick = close;
     overlay.onclick = (e) => { if(e.target === overlay) close(); };
 }
 
-// Add animation style if not already present
 if (!document.getElementById('validator-style')) {
     const style = document.createElement('style');
     style.id = 'validator-style';
