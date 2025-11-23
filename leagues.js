@@ -2,11 +2,10 @@
 // leagues.js
 //
 // FIXED:
-// 1. Strict Deduplication: Ignores text differences. If Team A vs Team B
-//    exists, it will not import them again, preventing phantom rows.
-// 2. Headers: If "League Game X" isn't explicitly written in the schedule,
-//    it groups everything under "Scheduled Games" instead of creating
-//    weird headers like "1 vs 8".
+// - Reads "League Game X" headers correctly even if they are bulleted.
+// - Scans multiple data fields (event, description, info) to ensure
+//   it finds the header.
+// - Separates Game 5 and Game 6 into distinct blocks.
 // ===================================================================
 
 (function () {
@@ -694,7 +693,7 @@
   }
 
   // ================================================================
-  // IMPROVED IMPORT: STRICT DEDUPE + SMART LABELING
+  // IMPROVED IMPORT: ROBUST LABEL FINDER
   // ================================================================
   function importGamesFromSchedule(league, target) {
     target.innerHTML = '';
@@ -708,35 +707,28 @@
       return;
     }
 
-    // Set used to ensure we never add the same matchup twice (phantom rows)
-    // Key format: "TeamA::TeamB" (alphabetically sorted)
     const uniqueMatchKeys = new Set();
-    
-    // Groups for display: "Scheduled Games": [match, match]
     const groups = {}; 
 
     // Helper: Determine a clean label
-    function getNormalizedLabel(lines) {
-      // 1. Look for explicit "League Game X"
-      const explicit = lines.find((l) => /League Game\s*\d+/i.test(l));
-      if (explicit) {
-        const m = explicit.match(/League Game\s*\d+/i);
-        return m ? m[0] : explicit;
+    function getNormalizedLabel(fullTextString) {
+      // 1. Look for explicit "League Game X" or "League Game #X"
+      const leagueMatch = fullTextString.match(/League Game\s*#?\s*(\d+)/i);
+      if (leagueMatch) {
+        return `League Game ${leagueMatch[1]}`;
       }
       
       // 2. Look for "Game X"
-      const gameX = lines.find((l) => /Game\s*\d+/i.test(l));
-      if (gameX) {
-         const m = gameX.match(/Game\s*\d+/i);
-         return m ? m[0] : gameX;
+      const gameMatch = fullTextString.match(/Game\s*#?\s*(\d+)/i);
+      if (gameMatch) {
+        return `Game ${gameMatch[1]}`;
       }
 
-      // 3. Fallback: If the text is just "1 vs 8" or "Basketball", do NOT use it as a header.
-      // Return a generic label so they group together.
+      // 3. Fallback
       return 'Scheduled Games'; 
     }
 
-    // Scan ALL teams to capture every game
+    // Scan ALL teams
     league.teams.forEach((teamName) => {
       const schedule = assignments[teamName];
       if (!Array.isArray(schedule)) return;
@@ -744,25 +736,33 @@
       schedule.forEach((entry) => {
         if (!entry || !entry._h2h) return;
 
-        const rawText =
-          (typeof entry.sport === 'string' && entry.sport) ||
-          (typeof entry.event === 'string' && entry.event) ||
-          (typeof entry._activity === 'string' && entry._activity) ||
-          '';
+        // COMBINE ALL POTENTIAL TEXT FIELDS TO FIND THE LABEL
+        const rawTextParts = [
+          (typeof entry.sport === 'string' ? entry.sport : ''),
+          (typeof entry.event === 'string' ? entry.event : ''),
+          (typeof entry._activity === 'string' ? entry._activity : ''),
+          (typeof entry.description === 'string' ? entry.description : ''),
+          (typeof entry.info === 'string' ? entry.info : ''),
+          (typeof entry.label === 'string' ? entry.label : '')
+        ];
+        
+        // Join them so we can regex the whole block
+        const fullText = rawTextParts.join('\n');
+        
+        if (!fullText.trim()) return;
 
-        if (!rawText.trim()) return;
-
-        const lines = rawText
-          .split(/\r?\n/)
-          .map((l) => l.trim())
-          .filter((l) => l.length > 0);
-
-        if (!lines.length) return;
-
-        const label = getNormalizedLabel(lines);
+        // EXTRACT LABEL from combined text
+        const label = getNormalizedLabel(fullText);
 
         // Parse lines for "A vs B"
+        // We split by newline, and we also clean up bullet points "•"
+        const lines = fullText
+          .split(/\r?\n/)
+          .map((l) => l.replace(/^[•\-\*]\s*/, '').trim()) // Remove bullet points
+          .filter((l) => l.length > 0);
+
         lines.forEach((line) => {
+          // Look for "TeamA vs TeamB"
           const m = line.match(/^(.*?)\s+vs\.?\s+(.*?)(?:\s*\(|$)/i);
           if (!m) return;
 
@@ -771,11 +771,18 @@
 
           // VALIDATION: Both teams must be in this league
           if (league.teams.includes(tA) && league.teams.includes(tB)) {
-            // STRICT DEDUPLICATION: Use only teams as key, ignore label/location
+            // STRICT DEDUPLICATION: Key = TeamA::TeamB
             const matchKey = [tA, tB].sort().join('::');
 
-            if (!uniqueMatchKeys.has(matchKey)) {
-              uniqueMatchKeys.add(matchKey);
+            // We only add if this specific pair hasn't been added yet.
+            // But we must be careful: if the same teams play TWICE in one day (Game 5 and Game 6),
+            // the KEY needs to include the Label to differentiate them.
+            
+            // UPDATE: Include Label in dedupe key so 1vs2 in Game 5 is distinct from 1vs2 in Game 6
+            const uniqueKey = matchKey + '::' + label;
+
+            if (!uniqueMatchKeys.has(uniqueKey)) {
+              uniqueMatchKeys.add(uniqueKey);
 
               if (!groups[label]) groups[label] = [];
               groups[label].push({ teamA: tA, teamB: tB });
@@ -792,7 +799,7 @@
       return;
     }
 
-    // Sort labels (Game 1, Game 2...)
+    // Sort labels (Game 5 before Game 6)
     labelKeys.sort((a, b) => {
       const nA = (a.match(/\d+/) || [0])[0];
       const nB = (b.match(/\d+/) || [0])[0];
