@@ -1728,6 +1728,10 @@ function canLeagueGameFit(block, fieldName, fieldUsageBySlot, activityProperties
         return false;
     }
     const limit = 1; // leagues never sharable
+// 🔒 HARD: no overlapping bookings on this field (timeline-based)
+if (!isFieldFreeForBlockRange(block, fieldName, activityProperties)) {
+    return false;
+}
 
     // Preference Exclusivity Check
     if (props.preferences && props.preferences.enabled && props.preferences.exclusive) {
