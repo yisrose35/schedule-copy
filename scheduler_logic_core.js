@@ -1400,18 +1400,24 @@
 								// HELPER FUNCTIONS USED BY PASSES
 								// =====================================================================
 								function findSlotsForRange(startMin, endMin) {
-								    const slots = [];
-								    if (!window.unifiedTimes || startMin == null || endMin == null) return slots;
-								    for (let i = 0; i < window.unifiedTimes.length; i++) {
-								        const slot = window.unifiedTimes[i];
-								        const slotStart = new Date(slot.start).getHours() * 60 +
-								                          new Date(slot.start).getMinutes();
-								        if (slotStart >= startMin && slotStart < endMin) {
-								            slots.push(i);
-								        }
-								    }
-								    return slots;
-								}
+    const slots = [];
+    if (!window.unifiedTimes || startMin == null || endMin == null) return slots;
+    
+    for (let i = 0; i < window.unifiedTimes.length; i++) {
+        const slot = window.unifiedTimes[i];
+        
+        // Calculate start and end of the grid slot
+        const slotStart = new Date(slot.start).getHours() * 60 + new Date(slot.start).getMinutes();
+        // Use the global increment or derive from slot end
+        const slotEnd = new Date(slot.end).getHours() * 60 + new Date(slot.end).getMinutes();
+
+        // Check for ANY overlap: (StartA < EndB) and (EndA > StartB)
+        if (startMin < slotEnd && endMin > slotStart) {
+            slots.push(i);
+        }
+    }
+    return slots;
+}
 								
 								/**
 								 * --- MODIFIED: 'usage' object now includes 'bunks' ---
