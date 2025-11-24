@@ -1404,6 +1404,7 @@
       }
       fieldUsageBySlotLocal[slotIndex][fieldName] = usage;
     }
+  } // <--- ADD THIS LINE
 
     
 
