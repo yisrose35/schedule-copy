@@ -91,7 +91,7 @@
       coreLeagueRoundState = {};
     }
     window.coreLeagueRoundState = coreLeagueRoundState;
-  
+  })();
 
   function saveCoreLeagueRoundState() {
     try {
