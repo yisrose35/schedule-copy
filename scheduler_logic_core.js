@@ -1643,20 +1643,8 @@
       }
     }
 
-    // === NEW: Timeline overlap check using fieldBookedRanges ===
-    if (blockStartMin != null && blockEndMin != null) {
-      const ranges = fieldBookedRanges[fieldName] || [];
-      for (const r of ranges) {
-        if (rangesOverlap(blockStartMin, blockEndMin, r.startMin, r.endMin)) {
-          // If sharable, allow ONLY when activity matches exactly
-          if (props.sharable && proposedActivity && r.activity === proposedActivity) {
-            continue;
-          }
-          return false;
-        }
-      }
-    }
-
+        // NOTE: We rely on per-slot usage + sharable rules for conflict control.
+    // Timeline-level guarding was too strict and caused lots of unnecessary "Free".
     return true;
   }
 
