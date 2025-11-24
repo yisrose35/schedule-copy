@@ -1740,18 +1740,11 @@
       }
     }
 
-    // === NEW: Timeline overlap guard for leagues ===
-    if (blockStartMin != null && blockEndMin != null) {
-      const ranges = fieldBookedRanges[fieldName] || [];
-      for (const r of ranges) {
-        if (rangesOverlap(blockStartMin, blockEndMin, r.startMin, r.endMin)) {
-          return false;
-        }
-      }
-    }
-
+       // NOTE: We rely on per-slot usage (no sharing for leagues) for conflicts.
+    // Timeline guard was over-restrictive and led to unnecessary "Free".
     return true;
   }
+
 
   function isPickValidForBlock(block, pick, activityProperties, fieldUsageBySlotLocal) {
     if (!pick) return false;
