@@ -1,11 +1,10 @@
 // =================================================================
 // scheduler_logic_fillers.js
 //
-// UPDATED (Smart Join / Opportunity Sniping):
-// - Aggressively scans for half-full fields to join before picking empty ones.
-// - Forces activity alignment (e.g., if Bunk A is playing Soccer, Bunk B
-//   will adopt Soccer to share the field).
-// - Drastically reduces "Free" slots by maximizing density.
+// UPDATED (Human-Level Intelligence):
+// - Implements a "Weighted Scoring Engine" to mimic human decision making.
+// - Factors: Efficiency (Joining), Boredom (No back-to-back), 
+//   Fairness (Weekly counts), and Scarcity (Hard-to-get fields).
 // =================================================================
 
 (function() {
@@ -17,9 +16,59 @@
 
 function fieldLabel(f) { return (f && typeof f==='object' && f.name) ? f.name : f; }
 
-// --- NEW: Opportunity Sniping ---
-// Scans active reservations to find a perfect "Joinable" slot.
-// Returns a list of picks that match exactly what is already happening on a field.
+function getBlockTimeRange(block) {
+    let blockStartMin = typeof block.startTime === 'number' ? block.startTime : null;
+    let blockEndMin = typeof block.endTime === 'number' ? block.endTime : null;
+
+    if ((blockStartMin == null || blockEndMin == null) && window.unifiedTimes && Array.isArray(block.slots) && block.slots.length > 0) {
+      const minIndex = Math.min(...block.slots);
+      const maxIndex = Math.max(...block.slots);
+      const firstSlot = window.unifiedTimes[minIndex];
+      const lastSlot = window.unifiedTimes[maxIndex];
+
+      if (firstSlot && lastSlot) {
+        const firstStart = new Date(firstSlot.start);
+        const lastStart = new Date(lastSlot.start);
+        blockStartMin = firstStart.getHours() * 60 + firstStart.getMinutes();
+        blockEndMin = lastStart.getHours() * 60 + lastStart.getMinutes() + (window.INCREMENT_MINS || 30);
+      }
+    }
+    return { blockStartMin, blockEndMin };
+}
+
+// --- NEW: Peek at the PREVIOUS slot to prevent boredom ---
+function getPreviousActivity(bunk, currentSlots) {
+    if (!window.scheduleAssignments || !window.scheduleAssignments[bunk]) return null;
+    
+    // Find the slot immediately preceding this block
+    const firstSlot = Math.min(...currentSlots);
+    if (firstSlot <= 0) return null; // Start of day
+
+    const prevSlotIdx = firstSlot - 1;
+    const prevEntry = window.scheduleAssignments[bunk][prevSlotIdx];
+    
+    // If it was a continuation, trace back to the source (optional, but usually prevEntry._activity is enough)
+    if (prevEntry && prevEntry._activity) {
+        return prevEntry._activity;
+    }
+    return null;
+}
+
+// --- NEW: Calculate Field Scarcity ---
+// A human prioritizes "Art Room" (1 room) over "Soccer" (5 fields).
+function getScarcityScore(activityName, activityProperties) {
+    // Simple heuristic: If it's a "Special" (usually unique), boost it.
+    // If it's a field with many sub-sports, lower priority.
+    const props = activityProperties[activityName];
+    if (!props) return 0;
+    
+    // If it is NOT sharable, it's scarcer (harder to fit later)
+    if (!props.sharable) return 100;
+
+    return 0; 
+}
+
+// --- NEW: Opportunity Sniping (Bin Packing) ---
 function findJoinableOpportunities(block, activityProperties) {
     if (!window.GlobalAvailabilityManager || !window.GlobalAvailabilityManager.getReservationsForField) return [];
     if (!window.allSchedulableNames) return [];
@@ -31,73 +80,103 @@ function findJoinableOpportunities(block, activityProperties) {
 
     window.allSchedulableNames.forEach(fieldName => {
         const props = activityProperties[fieldName];
-        if (!props || !props.sharable) return; // Cannot join if not sharable
-
-        // Strict Division Check (if enabled in props)
+        if (!props || !props.sharable) return; 
         if (props.allowedDivisions && !props.allowedDivisions.includes(block.divName)) return;
 
-        // Get what's happening NOW
         const reservations = window.GlobalAvailabilityManager.getReservationsForField(fieldName);
         const overlaps = reservations.filter(r => r.start < blockEndMin && r.end > blockStartMin);
 
-        // We are looking for fields with EXACTLY 1 bunk (Capacity is usually 2)
+        // Found a half-full bucket?
         if (overlaps.length === 1) {
             const match = overlaps[0];
-
-            // 1. Must be SAME Division
-            if (match.div !== block.divName) return;
-
-            // 2. Must NOT be a League (Leagues are exclusive)
-            if (match.isLeague) return;
-
-            // 3. Create a pick that clones the existing activity
-            // This forces the filler to say "I'll do what they are doing"
-            joinablePicks.push({
-                field: fieldName,
-                sport: match.activity, // Adopt their sport
-                _activity: match.activity,
-                _isJoinOpportunity: true, // Marker for sorting
-                _scoreBoost: 99999 // Infinite priority
-            });
+            if (match.div === block.divName && !match.isLeague) {
+                joinablePicks.push({
+                    field: fieldName,
+                    sport: match.activity,
+                    _activity: match.activity,
+                    _isJoinOpportunity: true
+                });
+            }
         }
     });
-
     return joinablePicks;
 }
 
-function calculatePreferenceScore(fieldProps, divName) {
-    if (!fieldProps?.preferences?.enabled) return 0;
-    const index = (fieldProps.preferences.list || []).indexOf(divName);
-    return index !== -1 ? 1000 - (index * 100) : -50;
+// =================================================================
+// THE HUMAN BRAIN (Scoring Engine)
+// =================================================================
+
+function calculateHumanScore(pick, block, bunkHistory, divName, activityProperties, historicalCounts) {
+    let score = 0;
+    const activityName = pick._activity;
+    const props = activityProperties[fieldLabel(pick.field)];
+
+    // 1. EFFICIENCY (Bin Packing) - "Top off the bucket"
+    // Huge bonus because this creates space for others.
+    if (pick._isJoinOpportunity) {
+        score += 50000;
+    }
+
+    // 2. PREFERENCES (Explicit Rules)
+    if (props?.preferences?.enabled) {
+        const index = (props.preferences.list || []).indexOf(divName);
+        if (index !== -1) {
+            score += (1000 - (index * 100)); // Prioritize top preferences
+        } else if (props.preferences.exclusive) {
+            score -= 10000; // Should have been filtered out, but safety net
+        } else {
+            score -= 50; // Not on pref list, low priority
+        }
+    }
+
+    // 3. BOREDOM PREVENTION (No Back-to-Back)
+    // A human says: "You just did Soccer, do something else."
+    const prevActivity = getPreviousActivity(block.bunk, block.slots);
+    if (prevActivity && prevActivity === activityName) {
+        score -= 10000; // Massive penalty for repetition
+    }
+
+    // 4. FAIRNESS (Weekly Fatigue)
+    // A human says: "You've done this 5 times this week, stop hogging it."
+    const weeklyCount = (historicalCounts?.[block.bunk]?.[activityName] || 0);
+    score -= (weeklyCount * 500); // Penalty increases with usage
+
+    // 5. FRESHNESS (Rotation)
+    // A human says: "You haven't done this in a while."
+    const lastTimePlayed = bunkHistory[activityName] || 0;
+    // We want smaller 'lastTimePlayed' (long ago) to yield HIGHER score? 
+    // Actually, we want (Now - LastTime). The larger the gap, the better.
+    // Since 'lastTimePlayed' is a timestamp, 0 means never played.
+    if (lastTimePlayed === 0) {
+        score += 2000; // Never played? High priority!
+    } else {
+        // Add small random noise to prevent rigid patterns
+        score += Math.random() * 10; 
+    }
+
+    // 6. SCARCITY (Opportunity Cost)
+    // A human says: "Grab the Art Room while it's free!"
+    score += getScarcityScore(fieldLabel(pick.field), activityProperties);
+
+    return score;
 }
 
-// UPDATED SORTING: Priority is now: Join Opportunity > Preferences > History
-function sortPicksByFreshness(possiblePicks, block, bunkHistory = {}, divName, activityProperties) {
-    return possiblePicks.sort((a, b) => {
-        // 1. OPPORTUNITY SNIPING (The "Smarter" Logic)
-        const joinA = a._isJoinOpportunity ? 1 : 0;
-        const joinB = b._isJoinOpportunity ? 1 : 0;
-        if (joinA !== joinB) return joinB - joinA; // Joined picks ALWAYS win
-
-        const fieldA = fieldLabel(a.field);
-        const fieldB = fieldLabel(b.field);
-        const propsA = activityProperties[fieldA];
-        const propsB = activityProperties[fieldB];
-
-        // 2. Preference Score
-        const prefA = calculatePreferenceScore(propsA, divName);
-        const prefB = calculatePreferenceScore(propsB, divName);
-        if (prefA !== prefB) return prefB - prefA;
-        
-        // 3. History (Freshness)
-        const lastA = bunkHistory[a._activity] || 0; 
-        const lastB = bunkHistory[b._activity] || 0;
-        if (lastA !== lastB) return lastA - lastB; 
-
-        return 0.5 - Math.random();
+function sortPicksByHumanLogic(possiblePicks, block, bunkHistory, divName, activityProperties, historicalCounts) {
+    // Pre-calculate scores for performance
+    const scoredPicks = possiblePicks.map(pick => {
+        return {
+            pick,
+            score: calculateHumanScore(pick, block, bunkHistory, divName, activityProperties, historicalCounts)
+        };
     });
+
+    // Sort descending by score
+    scoredPicks.sort((a, b) => b.score - a.score);
+
+    return scoredPicks.map(item => item.pick);
 }
 
+// --- Usage Limit Check ---
 function isOverUsageLimit(activityName, bunk, activityProperties, historicalCounts, activitiesDoneToday) {
     const props = activityProperties[activityName];
     const max = props?.maxUsage || 0;
@@ -109,6 +188,7 @@ function isOverUsageLimit(activityName, bunk, activityProperties, historicalCoun
     return false;
 }
 
+// --- Time Check ---
 function isTimeAvailable(slotIndex, fieldProps) {
     if (!window.unifiedTimes || !window.unifiedTimes[slotIndex]) return false;
     const slot = window.unifiedTimes[slotIndex];
@@ -139,24 +219,6 @@ function isTimeAvailable(slotIndex, fieldProps) {
     return isAvailable;
 }
 
-function getBlockTimeRange(block) {
-    let blockStartMin = typeof block.startTime === 'number' ? block.startTime : null;
-    let blockEndMin = typeof block.endTime === 'number' ? block.endTime : null;
-    if ((blockStartMin == null || blockEndMin == null) && window.unifiedTimes && Array.isArray(block.slots) && block.slots.length > 0) {
-      const minIndex = Math.min(...block.slots);
-      const maxIndex = Math.max(...block.slots);
-      const firstSlot = window.unifiedTimes[minIndex];
-      const lastSlot = window.unifiedTimes[maxIndex];
-      if (firstSlot && lastSlot) {
-        const firstStart = new Date(firstSlot.start);
-        const lastStart = new Date(lastSlot.start);
-        blockStartMin = firstStart.getHours() * 60 + firstStart.getMinutes();
-        blockEndMin = lastStart.getHours() * 60 + lastStart.getMinutes() + (window.INCREMENT_MINS || 30);
-      }
-    }
-    return { blockStartMin, blockEndMin };
-}
-
 // =================================================================
 // MAIN FILLER FUNCTIONS
 // =================================================================
@@ -166,8 +228,6 @@ window.findBestSpecial = function(block, allActivities, fieldUsageBySlot, yester
     const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
     const activitiesDoneToday = getGeneralActivitiesDoneToday(block.bunk);
 
-    // Specials usually aren't "joined", but if they were sharable, the logic would apply. 
-    // Generally, specials are exclusive, so we stick to standard logic here.
     const availablePicks = specials.filter(pick => {
         const name = pick._activity;
         if (!window.findBestGeneralActivity.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, name)) return false;
@@ -176,7 +236,8 @@ window.findBestSpecial = function(block, allActivities, fieldUsageBySlot, yester
         return true;
     });
     
-    const sortedPicks = sortPicksByFreshness(availablePicks, block, bunkHistory, block.divName, activityProperties);
+    // USE HUMAN SORTING
+    const sortedPicks = sortPicksByHumanLogic(availablePicks, block, bunkHistory, block.divName, activityProperties, historicalCounts);
     return sortedPicks[0] || null;
 };
 
@@ -184,26 +245,21 @@ window.findBestSportActivity = function(block, allActivities, fieldUsageBySlot, 
     const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
     const activitiesDoneToday = getGeneralActivitiesDoneToday(block.bunk);
 
-    // 1. TRY TO JOIN EXISTING GAMES FIRST
+    // 1. OPPORTUNITY SNIPING
     const joinPicks = findJoinableOpportunities(block, activityProperties);
     
-    // Filter join opportunities for validity (limits, done today)
-    const validJoinPicks = joinPicks.filter(pick => 
-        window.findBestGeneralActivity.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, pick._activity) &&
-        !activitiesDoneToday.has(pick._activity)
-    );
-
-    // 2. GET STANDARD PICKS
+    // 2. STANDARD PICKS
     const sports = allActivities.filter(a => a.type === 'field').map(a => ({ field: a.field, sport: a.sport, _activity: a.sport }));
-    const validStandardPicks = sports.filter(pick => 
+    
+    const allPicks = [...joinPicks, ...sports];
+
+    const validPicks = allPicks.filter(pick => 
         window.findBestGeneralActivity.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, pick._activity) &&
         !activitiesDoneToday.has(pick._activity)
     );
     
-    // Combine: Join picks go first implicitly due to sorting flag
-    const allPicks = [...validJoinPicks, ...validStandardPicks];
-    
-    const sortedPicks = sortPicksByFreshness(allPicks, block, bunkHistory, block.divName, activityProperties);
+    // USE HUMAN SORTING
+    const sortedPicks = sortPicksByHumanLogic(validPicks, block, bunkHistory, block.divName, activityProperties, historicalCounts);
     return sortedPicks[0] || null;
 };
 
@@ -211,52 +267,45 @@ window.findBestGeneralActivity = function(block, allActivities, h2hActivities, f
     const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
     const activitiesDoneToday = getGeneralActivitiesDoneToday(block.bunk);
 
-    // 1. OPPORTUNITY SNIPING: Find matches to join
+    // 1. OPPORTUNITY SNIPING
     const joinPicks = findJoinableOpportunities(block, activityProperties);
     
-    const validJoinPicks = joinPicks.filter(pick => {
-        // Validation check for join picks
-        if (!window.findBestGeneralActivity.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, pick._activity)) return false;
-        if (isOverUsageLimit(pick._activity, block.bunk, activityProperties, historicalCounts, activitiesDoneToday)) return false;
-        return !activitiesDoneToday.has(pick._activity);
-    });
-
-    // 2. STANDARD SEARCH: Find empty slots
+    // 2. STANDARD SEARCH
     const allPossiblePicks = allActivities.map(a => ({ field: a.field, sport: a.sport, _activity: a.sport || a.field }));
-    const validStandardPicks = allPossiblePicks.filter(pick => {
+    const allPicks = [...joinPicks, ...allPossiblePicks];
+
+    const validPicks = allPicks.filter(pick => {
         const name = pick._activity;
         if (!window.findBestGeneralActivity.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, name)) return false;
+        // Check limits
         if (pick.field && !pick.sport) { 
              if (isOverUsageLimit(name, block.bunk, activityProperties, historicalCounts, activitiesDoneToday)) return false;
         }
         return !activitiesDoneToday.has(name);
     });
 
-    // 3. MERGE & SORT
-    const combinedPicks = [...validJoinPicks, ...validStandardPicks];
-
-    const sortedPicks = sortPicksByFreshness(combinedPicks, block, bunkHistory, block.divName, activityProperties);
+    // USE HUMAN SORTING
+    const sortedPicks = sortPicksByHumanLogic(validPicks, block, bunkHistory, block.divName, activityProperties, historicalCounts);
     return sortedPicks[0] || { field: "Free", sport: null, _activity: "Free" };
 };
 
 // =================================================================
-// UPDATED CONFLICT CHECKER
+// UPDATED CONFLICT CHECKER (Uses GlobalAvailabilityManager)
 // =================================================================
 window.findBestGeneralActivity.canBlockFit = function(block, fieldName, activityProperties, fieldUsageBySlot, proposedActivity) {
     const props = activityProperties[fieldName];
     if (!props) return false;
 
-    // 1. Basic Props Check
+    // 1. Basic Props
     if (props.preferences?.enabled && props.preferences.exclusive && !props.preferences.list.includes(block.divName)) return false;
     if (props.allowedDivisions && props.allowedDivisions.length && !props.allowedDivisions.includes(block.divName)) return false;
-    
     if (props.limitUsage?.enabled) {
         if (!props.limitUsage.divisions[block.divName]) return false;
         const allowedBunks = props.limitUsage.divisions[block.divName];
         if (allowedBunks.length > 0 && block.bunk && !allowedBunks.includes(block.bunk)) return false;
     }
 
-    // 2. CHECK INTERVAL AVAILABILITY
+    // 2. INTERVAL AVAILABILITY
     const { blockStartMin, blockEndMin } = getBlockTimeRange(block);
     if (blockStartMin == null || blockEndMin == null) return false;
 
@@ -274,7 +323,7 @@ window.findBestGeneralActivity.canBlockFit = function(block, fieldName, activity
 
     if (!avail.valid) return false;
 
-    // 3. CHECK TIME RULES
+    // 3. TIME RULES
     if (props.timeRules && props.timeRules.length > 0) {
         if (!props.available) return false;
         for (const slotIndex of block.slots) {
