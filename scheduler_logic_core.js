@@ -1,10 +1,9 @@
 // ============================================================================
 // scheduler_logic_core.js
 //
-// UPDATED (Interval-Based Collision Detection):
-// - Replaced slot-counting with GlobalAvailabilityManager (Interval Registry).
-// - Handles partial overlaps, strict division matching, and activity consistency.
-// - Single Source of Truth for field availability.
+// UPDATED (Smart Sharing / Bin Packing Support):
+// - Exposed 'getReservationsForField' in GlobalAvailabilityManager.
+// - allows fillers to peek at fields to prioritize "topping off" half-full fields.
 // ============================================================================
 
 (function () {
@@ -26,10 +25,8 @@
 
   // =============================================================
   // GLOBAL AVAILABILITY MANAGER
-  // Single source of truth for all field usage
   // =============================================================
   const GlobalAvailabilityManager = (function() {
-    // Structure: { "Soccer Field A": [ { start: 540, end: 570, div: "Seniors", bunk: "1A", activity: "Soccer" } ] }
     let reservations = {};
 
     function reset() {
@@ -43,51 +40,42 @@
             end: end,
             div: meta.divName,
             bunk: meta.bunk,
-            activity: meta.activity, // "Soccer", "League", etc.
+            activity: meta.activity, 
             isLeague: meta.isLeague || false
         });
     }
 
-    /**
-     * Checks if a field can accept a NEW block based on time/capacity/rules.
-     * @returns { valid: boolean, reason: string }
-     */
+    // NEW: Allow fillers to see what is happening on a field
+    function getReservationsForField(field) {
+        return reservations[field] || [];
+    }
+
     function checkAvailability(field, start, end, meta, fieldProps) {
         if (!reservations[field]) return { valid: true };
 
         const existingBlocks = reservations[field];
-        // If sharable, allow 2, otherwise 1. Or use props.maxCapacity if available.
         const capacityLimit = fieldProps.sharable ? 2 : 1; 
 
-        // 1. Filter to only interactions that ACTUALLY overlap in time
         // Mathematical overlap: (StartA < EndB) && (EndA > StartB)
         const overlaps = existingBlocks.filter(r => r.start < end && r.end > start);
 
         if (overlaps.length === 0) return { valid: true };
 
-        // 2. HARD FAIL: If we are already at capacity at any point in this duration
+        // HARD FAIL: Capacity
         if (overlaps.length >= capacityLimit) {
             return { valid: false, reason: "At Capacity" };
         }
 
-        // 3. LOGIC FAIL: If overlaps exist, check compatibility rules
+        // LOGIC FAIL: Compatibility
         for (const overlap of overlaps) {
-            // Rule A: Leagues are usually exclusive
-            if (overlap.isLeague || meta.isLeague) {
-                return { valid: false, reason: "League Exclusive" };
-            }
-
-            // Rule B: Division Matching
-            // If the field is shared, they must be same division
-            if (overlap.div !== meta.divName) {
-                return { valid: false, reason: "Division Mismatch" };
-            }
-
-            // Rule C: Activity Matching
-            // If Bunk A is playing Soccer, Bunk B can't play Football on the same field
-            if (overlap.activity !== meta.activity) {
-                return { valid: false, reason: "Activity Mismatch" };
-            }
+            if (overlap.isLeague || meta.isLeague) return { valid: false, reason: "League Exclusive" };
+            
+            // STRICT SHARING RULES:
+            // 1. Must be same division
+            if (overlap.div !== meta.divName) return { valid: false, reason: "Division Mismatch" };
+            
+            // 2. Must be same activity
+            if (overlap.activity !== meta.activity) return { valid: false, reason: "Activity Mismatch" };
         }
 
         return { valid: true };
@@ -96,11 +84,11 @@
     return {
         reset,
         addReservation,
-        checkAvailability
+        checkAvailability,
+        getReservationsForField // <--- EXPOSED HERE
     };
   })();
 
-  // Expose to window
   window.GlobalAvailabilityManager = GlobalAvailabilityManager;
 
 
@@ -147,7 +135,7 @@
   }
 
   // ======================================================
-  // LEAGUE ROUND STATE (IN-CORE ROUND-ROBIN ENGINE)
+  // LEAGUE ROUND STATE
   // ======================================================
   let coreLeagueRoundState = window.coreLeagueRoundState || {};
 
@@ -177,12 +165,10 @@
     const teams = teamList.map(String);
     const t = [...teams];
     if (t.length % 2 !== 0) t.push('BYE');
-
     const n = t.length;
     const fixed = t[0];
     let rotating = t.slice(1);
     const rounds = [];
-
     for (let r = 0; r < n - 1; r++) {
       const pairings = [];
       pairings.push([fixed, rotating[0]]);
@@ -410,7 +396,6 @@
     window.leagueAssignments = {};
     window.unifiedTimes = [];
     
-    // RESET GLOBAL MANAGER
     window.GlobalAvailabilityManager.reset();
 
     if (!manualSkeleton || manualSkeleton.length === 0) {
@@ -584,7 +569,6 @@
         normLeague === 'League Game' ||
         normSpecLg === 'Specialty League';
 
-      // 1. PURE PINNED
       if (item.type === 'pinned' || !isGeneratedEvent) {
         allBunks.forEach((bunk) => {
           const block = {
@@ -615,8 +599,6 @@
           }
         });
       }
-
-      // 2. SPLIT BLOCK
       else if (item.type === 'split') {
         if (!item.subEvents || item.subEvents.length < 2) return;
         const swimLabel = 'Swim';
@@ -673,8 +655,6 @@
         pushGA(bunksTop, slotsSecond);
         pinSwim(bunksBottom, slotsSecond);
       }
-
-      // 3. NORMAL GENERATED SLOTS
       else if (item.type === 'slot' && isGeneratedEvent) {
         let normalizedEvent = null;
         if (normalizeSpecialtyLeague(item.event)) normalizedEvent = 'Specialty League';
@@ -767,7 +747,6 @@
         let isFieldAvailable = true;
         const slotIndex = group.slots[i % slotCount];
 
-        // Manager check instead of slot counting
         if (usedFieldsInThisBlock[i % slotCount].has(fieldName)) {
             isFieldAvailable = false;
         } else {
@@ -937,7 +916,6 @@
             }
           }
           if (!found && possibleFields.length > 0) {
-            // Try fallback
             const f = possibleFields[usedFieldsPerSlot[slotIdx].size % possibleFields.length];
             if (canLeagueGameFit(blockBase, f, fieldUsageBySlot, activityProperties)) {
               found = f;
@@ -1117,7 +1095,6 @@
     return slots;
   }
 
-  // Compute the true start/end minutes for a block (from explicit times or slots)
   function getBlockTimeRange(block) {
     let blockStartMin = typeof block.startTime === 'number' ? block.startTime : null;
     let blockEndMin = typeof block.endTime === 'number' ? block.endTime : null;
@@ -1125,10 +1102,8 @@
     if ((blockStartMin == null || blockEndMin == null) && window.unifiedTimes && Array.isArray(block.slots) && block.slots.length > 0) {
       const minIndex = Math.min(...block.slots);
       const maxIndex = Math.max(...block.slots);
-
       const firstSlot = window.unifiedTimes[minIndex];
       const lastSlot = window.unifiedTimes[maxIndex];
-
       if (firstSlot && lastSlot) {
         const firstStart = new Date(firstSlot.start);
         const lastStart = new Date(lastSlot.start);
@@ -1139,17 +1114,9 @@
     return { blockStartMin, blockEndMin };
   }
 
-  /**
-   * markFieldUsage:
-   * - UPDATED: Registers the reservation with GlobalAvailabilityManager
-   * - Still populates legacy fieldUsageBySlot for potential UI usage
-   */
   function markFieldUsage(block, fieldName, fieldUsageBySlotLocal) {
-    if (!fieldName || fieldName === 'No Field' || !window.allSchedulableNames?.includes(fieldName)) {
-      return;
-    }
+    if (!fieldName || fieldName === 'No Field' || !window.allSchedulableNames?.includes(fieldName)) return;
 
-    // 1. REGISTER INTERVAL WITH MANAGER
     const { blockStartMin, blockEndMin } = getBlockTimeRange(block);
     if (blockStartMin != null && blockEndMin != null) {
         window.GlobalAvailabilityManager.addReservation(fieldName, blockStartMin, blockEndMin, {
@@ -1160,7 +1127,6 @@
         });
     }
 
-    // 2. LEGACY SLOT POPULATION (Optional, kept for safety/UI)
     for (const slotIndex of block.slots || []) {
       if (slotIndex === undefined) continue;
       fieldUsageBySlotLocal[slotIndex] = fieldUsageBySlotLocal[slotIndex] || {};
@@ -1219,16 +1185,11 @@
     return isAvailable;
   }
 
-  /**
-   * canBlockFit:
-   * - UPDATED: Uses GlobalAvailabilityManager for interval-based checks
-   */
   function canBlockFit(block, fieldName, activityProperties, fieldUsageBySlotLocal, proposedActivity) {
     if (!fieldName) return false;
     const props = activityProperties[fieldName];
     if (!props) return false;
 
-    // 1. Basic Properties Checks
     if (props.preferences && props.preferences.enabled && props.preferences.exclusive) {
       if (!props.preferences.list.includes(block.divName)) return false;
     }
@@ -1242,7 +1203,6 @@
       if (allowedBunks.length > 0 && block.bunk && !allowedBunks.includes(block.bunk)) return false;
     }
 
-    // 2. CHECK INTERVAL AVAILABILITY
     const { blockStartMin, blockEndMin } = getBlockTimeRange(block);
     if (blockStartMin == null || blockEndMin == null) return false;
 
@@ -1255,9 +1215,6 @@
 
     if (!avail.valid) return false;
 
-    // 3. CHECK TIME RULES (Open/Closed status per slot)
-    // We assume if the interval is valid, we still need to check if the facility is "Open" 
-    // during these specific slots.
     if (props.timeRules && props.timeRules.length > 0) {
         if (!props.available) return false;
         for (const slotIndex of block.slots || []) {
@@ -1276,7 +1233,6 @@
     const props = activityProperties[fieldName];
     if (!props) return false;
 
-    // 1. Basic Properties Checks
     if (props.preferences && props.preferences.enabled && props.preferences.exclusive) {
       if (!props.preferences.list.includes(block.divName)) return false;
     }
@@ -1288,11 +1244,9 @@
       if (!limitRules.divisions[block.divName]) return false;
     }
 
-    // 2. CHECK INTERVAL AVAILABILITY
     const { blockStartMin, blockEndMin } = getBlockTimeRange(block);
     if (blockStartMin == null || blockEndMin == null) return false;
 
-    // Treat as "League" activity, implies exclusivity usually handled by Manager logic
     const avail = window.GlobalAvailabilityManager.checkAvailability(fieldName, blockStartMin, blockEndMin, {
         divName: block.divName,
         bunk: "league",
@@ -1302,7 +1256,6 @@
 
     if (!avail.valid) return false;
 
-    // 3. CHECK TIME RULES
     if (props.timeRules && props.timeRules.length > 0) {
         if (!props.available) return false;
         for (const slotIndex of block.slots || []) {
@@ -1327,11 +1280,6 @@
     return canBlockFit(block, fname, activityProperties, fieldUsageBySlotLocal, pick._activity);
   }
 
-  /**
-   * fillBlock:
-   * - Writes to scheduleAssignments
-   * - Calls markFieldUsage for NON-league fills so they block later usage
-   */
   function fillBlock(block, pick, fieldUsageBySlotLocal, yesterdayHistory, isLeagueFill = false) {
     const fieldName = fieldLabel(pick.field);
     const sport = pick.sport;
@@ -1393,12 +1341,10 @@ function loadAndFilterData() {
         leagueTeamLastSport: rotationHistoryRaw.leagueTeamLastSport || {}
     };
 
-    // --- CALCULATE HISTORICAL COUNTS FOR USAGE LIMITS ---
     const historicalCounts = {};
     try {
         const allDaily = window.loadAllDailyData?.() || {};
         const manualOffsets = globalSettings.manualUsageOffsets || {};
-        // 1. Sum from past schedules
         Object.values(allDaily).forEach(day => {
             const sched = day.scheduleAssignments || {};
             Object.keys(sched).forEach(b => {
@@ -1410,7 +1356,6 @@ function loadAndFilterData() {
                 });
             });
         });
-        // 2. Apply manual offsets
         Object.keys(manualOffsets).forEach(b => {
             if (!historicalCounts[b]) historicalCounts[b] = {};
             Object.keys(manualOffsets[b]).forEach(act => {
@@ -1422,7 +1367,6 @@ function loadAndFilterData() {
     } catch (e) {
         console.error("Error calculating historical counts:", e);
     }
-    // ----------------------------------------------------
 
     const overrides = { bunks: dailyOverrides.bunks || [], leagues: disabledLeagues };
     const availableDivisions = masterAvailableDivs.filter(divName => !overrides.bunks.includes(divName));
