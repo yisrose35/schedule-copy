@@ -1405,22 +1405,7 @@
       fieldUsageBySlotLocal[slotIndex][fieldName] = usage;
     }
 
-    // timeline booking
-    const { blockStartMin, blockEndMin } = getBlockTimeRange(block);
-    if (blockStartMin != null && blockEndMin != null) {
-      fieldBookedRanges[fieldName] = fieldBookedRanges[fieldName] || [];
-      fieldBookedRanges[fieldName].push({
-        startMin: blockStartMin,
-        endMin: blockEndMin,
-        activity:
-          block._activity ||
-          block.sport ||
-          (block.event === 'League Game' ? 'League' : block.event),
-        division: block.divName,
-        bunk: block.bunk
-      });
-    }
-  }
+    
 
   function isTimeAvailable(slotIndex, fieldProps) {
     if (!window.unifiedTimes || !window.unifiedTimes[slotIndex]) return false;
