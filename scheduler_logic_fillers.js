@@ -1,14 +1,18 @@
 // =================================================================
 // scheduler_logic_fillers.js
 //
-// UPDATED:
-// - Added 'isTimeAvailable' helper to check if a facility is open.
-// - Updated 'canBlockFit' to enforce strict time limits and division matching.
-// - Prevents overlapping schedules for different divisions unless explicitly shared.
+// UPDATED (Interval-Based):
+// - findBestGeneralActivity.canBlockFit now uses GlobalAvailabilityManager.
+// - Ensures fillers respect the reservations made by the Core logic.
+// - Removes redundant slot-counting logic.
 // =================================================================
 
 (function() {
 'use strict';
+
+// =================================================================
+// HELPERS
+// =================================================================
 
 function fieldLabel(f) { return (f && typeof f==='object' && f.name) ? f.name : f; }
 
@@ -33,7 +37,7 @@ function sortPicksByFreshness(possiblePicks, bunkHistory = {}, divName, activity
     });
 }
 
-// --- HELPER: Check Usage Limit ---
+// --- Check Max Usage Limit ---
 function isOverUsageLimit(activityName, bunk, activityProperties, historicalCounts, activitiesDoneToday) {
     const props = activityProperties[activityName];
     const max = props?.maxUsage || 0;
@@ -41,7 +45,6 @@ function isOverUsageLimit(activityName, bunk, activityProperties, historicalCoun
     // 0 means unlimited
     if (max === 0) return false; 
 
-    // Handle undefined historicalCounts gracefully
     const safeHistory = historicalCounts || {};
     const pastCount = safeHistory[bunk]?.[activityName] || 0;
     
@@ -54,7 +57,7 @@ function isOverUsageLimit(activityName, bunk, activityProperties, historicalCoun
     return false;
 }
 
-// --- HELPER: Check Time Availability ---
+// --- Check Time Availability (Is the facility Open/Closed?) ---
 function isTimeAvailable(slotIndex, fieldProps) {
     if (!window.unifiedTimes || !window.unifiedTimes[slotIndex]) return false;
     
@@ -62,7 +65,6 @@ function isTimeAvailable(slotIndex, fieldProps) {
     const slotStartMin = new Date(slot.start).getHours() * 60 + new Date(slot.start).getMinutes();
     const slotEndMin = slotStartMin + (window.INCREMENT_MINS || 30);
     
-    // Normalize rules
     const rules = (fieldProps.timeRules || []).map(r => {
         if (typeof r.startMin === "number") return r;
         return r; 
@@ -76,7 +78,7 @@ function isTimeAvailable(slotIndex, fieldProps) {
 
     for (const rule of rules) {
         if (rule.type === 'Available' && rule.startMin != null && rule.endMin != null) {
-            // If the slot fits entirely within an Available rule
+            // Check if slot fits entirely within Available rule
             if (slotStartMin >= rule.startMin && slotEndMin <= rule.endMin) {
                 isAvailable = true;
                 break;
@@ -85,7 +87,7 @@ function isTimeAvailable(slotIndex, fieldProps) {
     }
     for (const rule of rules) {
         if (rule.type === 'Unavailable' && rule.startMin != null && rule.endMin != null) {
-            // If ANY part of the slot touches an Unavailable rule
+            // Check if slot touches Unavailable rule
             if (slotStartMin < rule.endMin && slotEndMin > rule.startMin) {
                 isAvailable = false;
                 break;
@@ -95,6 +97,33 @@ function isTimeAvailable(slotIndex, fieldProps) {
     return isAvailable;
 }
 
+// --- Get Block Time Range (Local version to ensure independence) ---
+function getBlockTimeRange(block) {
+    let blockStartMin = typeof block.startTime === 'number' ? block.startTime : null;
+    let blockEndMin = typeof block.endTime === 'number' ? block.endTime : null;
+
+    // If no explicit time, derive from slots
+    if ((blockStartMin == null || blockEndMin == null) && window.unifiedTimes && Array.isArray(block.slots) && block.slots.length > 0) {
+      const minIndex = Math.min(...block.slots);
+      const maxIndex = Math.max(...block.slots);
+      const firstSlot = window.unifiedTimes[minIndex];
+      const lastSlot = window.unifiedTimes[maxIndex];
+
+      if (firstSlot && lastSlot) {
+        const firstStart = new Date(firstSlot.start);
+        const lastStart = new Date(lastSlot.start);
+        blockStartMin = firstStart.getHours() * 60 + firstStart.getMinutes();
+        // End time is start of last slot + increment
+        blockEndMin = lastStart.getHours() * 60 + lastStart.getMinutes() + (window.INCREMENT_MINS || 30);
+      }
+    }
+    return { blockStartMin, blockEndMin };
+}
+
+// =================================================================
+// MAIN FILLER FUNCTIONS
+// =================================================================
+
 window.findBestSpecial = function(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts) {
     const specials = allActivities.filter(a => a.type === 'special').map(a => ({ field: a.field, sport: null, _activity: a.field }));
     const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
@@ -102,7 +131,7 @@ window.findBestSpecial = function(block, allActivities, fieldUsageBySlot, yester
 
     const availablePicks = specials.filter(pick => {
         const name = pick._activity;
-        // 1. Check standard constraints (time, sharing, field availability)
+        // 1. Check standard constraints (uses new Manager logic)
         if (!window.findBestGeneralActivity.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, name)) return false;
         
         // 2. Check Max Usage Limit
@@ -116,7 +145,7 @@ window.findBestSpecial = function(block, allActivities, fieldUsageBySlot, yester
     
     const sortedPicks = sortPicksByFreshness(availablePicks, bunkHistory, block.divName, activityProperties);
     return sortedPicks[0] || null;
-}
+};
 
 window.findBestSportActivity = function(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts) {
     const sports = allActivities.filter(a => a.type === 'field').map(a => ({ field: a.field, sport: a.sport, _activity: a.sport }));
@@ -130,7 +159,7 @@ window.findBestSportActivity = function(block, allActivities, fieldUsageBySlot, 
     
     const sortedPicks = sortPicksByFreshness(availablePicks, bunkHistory, block.divName, activityProperties);
     return sortedPicks[0] || null;
-}
+};
 
 window.findBestGeneralActivity = function(block, allActivities, h2hActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts) {
     const allPossiblePicks = allActivities.map(a => ({ field: a.field, sport: a.sport, _activity: a.sport || a.field }));
@@ -139,6 +168,7 @@ window.findBestGeneralActivity = function(block, allActivities, h2hActivities, f
 
     const availablePicks = allPossiblePicks.filter(pick => {
         const name = pick._activity;
+        // Use the centralized canBlockFit
         if (!window.findBestGeneralActivity.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, name)) return false;
         
         // Check limits for specials here too if general picks a special
@@ -151,13 +181,14 @@ window.findBestGeneralActivity = function(block, allActivities, h2hActivities, f
 
     const sortedPicks = sortPicksByFreshness(availablePicks, bunkHistory, block.divName, activityProperties);
     return sortedPicks[0] || { field: "Free", sport: null, _activity: "Free" };
-}
+};
 
-// --- UPDATED FUNCTION: Strict Conflict & Time Checking ---
+// =================================================================
+// UPDATED CONFLICT CHECKER (Uses GlobalAvailabilityManager)
+// =================================================================
 window.findBestGeneralActivity.canBlockFit = function(block, fieldName, activityProperties, fieldUsageBySlot, proposedActivity) {
     const props = activityProperties[fieldName];
     if (!props) return false;
-    const limit = (props.sharable) ? 2 : 1;
 
     // 1. Check Preferences/Exclusivity
     if (props.preferences?.enabled && props.preferences.exclusive && !props.preferences.list.includes(block.divName)) return false;
@@ -169,34 +200,37 @@ window.findBestGeneralActivity.canBlockFit = function(block, fieldName, activity
         if (allowedBunks.length > 0 && block.bunk && !allowedBunks.includes(block.bunk)) return false;
     }
 
-    // 2. Check Every Slot in the Block
-    for (const slotIndex of block.slots) {
-        if (slotIndex === undefined) return false;
-        
-        const usage = fieldUsageBySlot[slotIndex]?.[fieldName] || { count: 0, divisions: [], bunks: {} };
-        
-        // A. Capacity Limit
-        if (usage.count >= limit) return false;
-        
-        // B. Sharing Rules (Strict Division Match)
-        if (usage.count > 0) {
-            // If someone is there, they MUST be from the same division
-            if (!usage.divisions.includes(block.divName)) return false;
-            
-            // And they MUST be doing the same activity (if proposed)
-            let existingActivity = null;
-            for (const bunkName in usage.bunks) { 
-                if (usage.bunks[bunkName]) { 
-                    existingActivity = usage.bunks[bunkName]; 
-                    break; 
-                } 
-            }
-            if (existingActivity && proposedActivity && existingActivity !== proposedActivity) return false;
-        }
-        
-        // C. Time Availability (Fixes "Not in Time" bug)
-        if (!isTimeAvailable(slotIndex, props)) return false;
+    // 2. CHECK INTERVAL AVAILABILITY (The new Logic)
+    // We delegate to the Core's GlobalAvailabilityManager to ensure we respect pinned events and leagues
+    const { blockStartMin, blockEndMin } = getBlockTimeRange(block);
+    if (blockStartMin == null || blockEndMin == null) return false;
+
+    if (!window.GlobalAvailabilityManager) {
+        console.error("GlobalAvailabilityManager not found! Core logic must run first.");
+        return false;
     }
+
+    const avail = window.GlobalAvailabilityManager.checkAvailability(fieldName, blockStartMin, blockEndMin, {
+        divName: block.divName,
+        bunk: block.bunk,
+        activity: proposedActivity,
+        isLeague: false
+    }, props);
+
+    if (!avail.valid) return false;
+
+    // 3. CHECK TIME RULES (Open/Closed)
+    // We still check slots to ensure the facility isn't closed for Lunch/etc during this specific block
+    if (props.timeRules && props.timeRules.length > 0) {
+        if (!props.available) return false;
+        for (const slotIndex of block.slots) {
+            if (slotIndex === undefined) return false;
+            if (!isTimeAvailable(slotIndex, props)) return false;
+        }
+    } else {
+        if (!props.available) return false;
+    }
+
     return true;
 };
 
