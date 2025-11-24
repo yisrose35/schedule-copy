@@ -1,10 +1,10 @@
 // =================================================================
 // scheduler_logic_fillers.js
 //
-// UPDATED (Interval-Based):
-// - findBestGeneralActivity.canBlockFit now uses GlobalAvailabilityManager.
-// - Ensures fillers respect the reservations made by the Core logic.
-// - Removes redundant slot-counting logic.
+// UPDATED (Smart Sharing Support):
+// - Implements "Bin Packing" logic.
+// - Prioritizes "Topping off" half-full fields to save empty ones for others.
+// - drastically reduces "Free" slots by maximizing field density.
 // =================================================================
 
 (function() {
@@ -16,23 +16,77 @@
 
 function fieldLabel(f) { return (f && typeof f==='object' && f.name) ? f.name : f; }
 
+// --- NEW: Scoring logic for "Bin Packing" ---
+// Returns a high score if we can fill a gap in an existing field
+function calculateSharingScore(fieldName, proposedActivity, block, activityProperties) {
+    // Safety check
+    if (!window.GlobalAvailabilityManager || !window.GlobalAvailabilityManager.getReservationsForField) return 0;
+
+    const props = activityProperties[fieldName];
+    if (!props || !props.sharable) return 0; // If field isn't sharable, no bonus
+
+    const { blockStartMin, blockEndMin } = getBlockTimeRange(block);
+    if (blockStartMin == null || blockEndMin == null) return 0;
+
+    // Get existing bookings for this field
+    const reservations = window.GlobalAvailabilityManager.getReservationsForField(fieldName);
+    
+    // Find relevant overlaps
+    const overlaps = reservations.filter(r => r.start < blockEndMin && r.end > blockStartMin);
+
+    if (overlaps.length === 1) {
+        // PERFECT SCENARIO: 1 bunk is already there. Can we join them?
+        const existing = overlaps[0];
+
+        // 1. Division Match (Strict for sharing)
+        if (existing.div !== block.divName) return -1000; // Block usage if division mismatch
+
+        // 2. Activity Match
+        if (existing.activity !== proposedActivity) return -1000; // Block usage if activity mismatch
+
+        // 3. League Check
+        if (existing.isLeague) return -1000; // Cannot share with league
+
+        // HUGE BONUS: We found a sharable slot!
+        return 10000; 
+    }
+    
+    if (overlaps.length >= 2) {
+        return -1000; // Full
+    }
+
+    return 0; // Empty field (Neutral score)
+}
+
 function calculatePreferenceScore(fieldProps, divName) {
     if (!fieldProps?.preferences?.enabled) return 0;
     const index = (fieldProps.preferences.list || []).indexOf(divName);
     return index !== -1 ? 1000 - (index * 100) : -50;
 }
 
-function sortPicksByFreshness(possiblePicks, bunkHistory = {}, divName, activityProperties) {
+// UPDATED SORTING: Prioritize Sharing > Preferences > History
+function sortPicksByFreshness(possiblePicks, block, bunkHistory = {}, divName, activityProperties) {
     return possiblePicks.sort((a, b) => {
-        const propsA = activityProperties[fieldLabel(a.field)];
-        const propsB = activityProperties[fieldLabel(b.field)];
-        const scoreA = calculatePreferenceScore(propsA, divName);
-        const scoreB = calculatePreferenceScore(propsB, divName);
-        if (scoreA !== scoreB) return scoreB - scoreA;
+        const fieldA = fieldLabel(a.field);
+        const fieldB = fieldLabel(b.field);
+        const propsA = activityProperties[fieldA];
+        const propsB = activityProperties[fieldB];
+
+        // 1. SHARING SCORE (Bin Packing) - "Top off" half-full buckets first
+        const shareA = calculateSharingScore(fieldA, a._activity, block, activityProperties);
+        const shareB = calculateSharingScore(fieldB, b._activity, block, activityProperties);
+        if (shareA !== shareB) return shareB - shareA; // Higher sharing score wins
+
+        // 2. Preference Score (Exclusive fields)
+        const prefA = calculatePreferenceScore(propsA, divName);
+        const prefB = calculatePreferenceScore(propsB, divName);
+        if (prefA !== prefB) return prefB - prefA;
         
+        // 3. History (Freshness)
         const lastA = bunkHistory[a._activity] || 0; 
         const lastB = bunkHistory[b._activity] || 0;
         if (lastA !== lastB) return lastA - lastB; 
+
         return 0.5 - Math.random();
     });
 }
@@ -143,7 +197,8 @@ window.findBestSpecial = function(block, allActivities, fieldUsageBySlot, yester
         return true;
     });
     
-    const sortedPicks = sortPicksByFreshness(availablePicks, bunkHistory, block.divName, activityProperties);
+    // PASS block to sorting for Sharing Score
+    const sortedPicks = sortPicksByFreshness(availablePicks, block, bunkHistory, block.divName, activityProperties);
     return sortedPicks[0] || null;
 };
 
@@ -157,7 +212,8 @@ window.findBestSportActivity = function(block, allActivities, fieldUsageBySlot, 
         !activitiesDoneToday.has(pick._activity)
     );
     
-    const sortedPicks = sortPicksByFreshness(availablePicks, bunkHistory, block.divName, activityProperties);
+    // PASS block to sorting for Sharing Score
+    const sortedPicks = sortPicksByFreshness(availablePicks, block, bunkHistory, block.divName, activityProperties);
     return sortedPicks[0] || null;
 };
 
@@ -179,7 +235,8 @@ window.findBestGeneralActivity = function(block, allActivities, h2hActivities, f
         return !activitiesDoneToday.has(name);
     });
 
-    const sortedPicks = sortPicksByFreshness(availablePicks, bunkHistory, block.divName, activityProperties);
+    // PASS block to sorting for Sharing Score
+    const sortedPicks = sortPicksByFreshness(availablePicks, block, bunkHistory, block.divName, activityProperties);
     return sortedPicks[0] || { field: "Free", sport: null, _activity: "Free" };
 };
 
