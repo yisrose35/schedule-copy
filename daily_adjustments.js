@@ -1,16 +1,6 @@
 // =================================================================
-// daily_adjustments.js  (REFACTORED)
-// - REFACTORED: `init` function to use a mini-tab UI for
-//   "Skeleton", "Trips", "Bunk Specific", and "Resource Availability".
-//   (Similar to leagues.js and analytics.js)
-// - NEW: "Bunk Specific" tab (Mini Tab 3) is added, with a
-//   form to add/remove bunk-specific pinned activities.
-// - NEW: `renderBunkOverridesUI` function builds and manages
-//   the new Bunk Specific UI.
-// - NEW: Bunk-specific overrides are saved to the current
-//   day's data as `bunkActivityOverrides`.
-// - All other existing logic (Skeleton, Trips, Resources) has
-//   been moved into its respective tab pane.
+// daily_adjustments.js  (UPDATED with SMART TILES)
+// - Includes "Smart Tile" logic for daily overrides.
 // =================================================================
 
 (function() {
@@ -25,20 +15,20 @@ let currentOverrides = {
   dailyDisabledSportsByField: {},
   disabledFields: [],
   disabledSpecials: [],
-  bunkActivityOverrides: [] // NEW: For bunk-specific pins
+  bunkActivityOverrides: []
 };
 
 // --- Helper containers ---
 let skeletonContainer = null;
 let tripsFormContainer = null;
-let bunkOverridesContainer = null; // NEW
-let resourceOverridesContainer = null; // NEW
+let bunkOverridesContainer = null;
+let resourceOverridesContainer = null;
 
 // Keep track of which sub-tab is active
 let activeSubTab = 'skeleton';
 
 // =================================================================
-// ===== START: SKELETON EDITOR LOGIC (Unchanged) =====
+// ===== START: SKELETON EDITOR LOGIC =====
 // =================================================================
 
 let dailyOverrideSkeleton = []; 
@@ -49,6 +39,10 @@ const TILES = [
   { type: 'activity', name: 'Activity', style: 'background: #e0f7fa; border: 1px solid #007bff;', description: "A flexible slot. The optimizer will fill this with the best available Sport OR Special Activity based on availability and rotation." },
   { type: 'sports', name: 'Sports', style: 'background: #dcedc8; border: 1px solid #689f38;', description: "A dedicated sports slot. The optimizer will fill this *only* with a Sport (e.g., Basketball, Soccer) from your 'Fields' list." },
   { type: 'special', name: 'Special Activity', style: 'background: #e8f5e9; border: 1px solid #43a047;', description: "A dedicated special slot. The optimizer will fill this *only* with a Special Activity (e.g., Canteen, Arts & Crafts) from your 'Special Activities' list." },
+  
+  // NEW SMART TILE
+  {type:'smart', name:'Smart Tile', style:'background:#e3f2fd;border:2px dashed #0288d1;color:#01579b;', description:'Balances 2 activities with a fallback (e.g. Special full? -> Sports).'},
+
   { type: 'split', name: 'Split Activity', style: 'background: #fff3e0; border: 1px solid #f57c00;', description: "Creates a block that is split in two." },
   { type: 'league', name: 'League Game', style: 'background: #d1c4e9; border: 1px solid #5e35b1;', description: "Regular League slot." },
   { type: 'specialty_league', name: 'Specialty League', style: 'background: #fff8e1; border: 1px solid #f9a825;', description: "Specialty League slot." },
@@ -233,6 +227,60 @@ function addDropListeners(gridContainer) {
         const event2 = mapEventNameForOptimizer(eventName2);
         newEvent = { id: `evt_${Math.random().toString(36).slice(2, 9)}`, type: 'split', event: `${eventName1} / ${eventName2}`, division: divName, startTime: startTime, endTime: endTime, subEvents: [ event1, event2 ] };
       
+      } else if (tileData.type === 'smart') {
+        // --- SMART TILE LOGIC ---
+        let startTime, endTime, startMin, endMin;
+        while (true) {
+          startTime = prompt(`Smart Tile for ${divName}.\n\nEnter Start Time:`, defaultStartTime);
+          if (!startTime) return;
+          startMin = validateTime(startTime, true);
+          if (startMin !== null) break;
+        }
+        while (true) {
+          endTime = prompt(`Enter End Time:`);
+          if (!endTime) return;
+          endMin = validateTime(endTime, false);
+          if (endMin !== null) {
+            if (endMin <= startMin) alert("End time must be after start time.");
+            else break;
+          }
+        }
+
+        // 1. Ask for Main Activities
+        const rawMains = prompt("Enter the 2 MAIN activities separated by a slash or comma (e.g., 'Swim / Special'):");
+        if (!rawMains) return;
+        const mains = rawMains.split(/,|\//).map(s => s.trim()).filter(s => s);
+        if (mains.length < 2) { alert("Please enter two distinct activities."); return; }
+        const [act1, act2] = mains;
+
+        // 2. Ask for Fallback Target
+        const targetChoice = prompt(`Which activity has a constraint (needs a fallback)?\n\n1: ${act1}\n2: ${act2}`);
+        if (!targetChoice) return;
+        let fallbackTarget, fallbackActivity = "None";
+
+        if (targetChoice.trim() === '1' || targetChoice.trim() === act1) fallbackTarget = act1;
+        else if (targetChoice.trim() === '2' || targetChoice.trim() === act2) fallbackTarget = act2;
+        else { alert("Invalid choice."); return; }
+
+        // 3. Ask for the Fallback Activity
+        fallbackActivity = prompt(`If "${fallbackTarget}" is unavailable, what should be played instead? (e.g., 'Sports')`);
+        if (!fallbackActivity) return;
+
+        newEvent = {
+          id: `evt_${Math.random().toString(36).slice(2, 9)}`,
+          type: 'smart',
+          event: `${act1} / ${act2}`, // Display name
+          division: divName,
+          startTime: startTime,
+          endTime: endTime,
+          smartData: {
+            main1: act1,
+            main2: act2,
+            fallbackFor: fallbackTarget,
+            fallbackActivity: fallbackActivity
+          }
+        };
+
       } else if (['lunch','snacks','custom','dismissal','swim'].includes(tileData.type)) {
         eventType = 'pinned';
         if (tileData.type === 'custom') {
@@ -288,6 +336,7 @@ function renderEventTile(event, top, height) {
   let tile = TILES.find(t => t.name === event.event);
   if (!tile) {
     if (event.type === 'split') tile = TILES.find(t => t.type === 'split');
+    else if (event.type === 'smart') tile = TILES.find(t => t.type === 'smart');
     else if (event.event === 'General Activity Slot') tile = TILES.find(t => t.type === 'activity');
     else if (event.event === 'Sports Slot') tile = TILES.find(t => t.type === 'sports');
     else if (event.event === 'Special Activity') tile = TILES.find(t => t.type === 'special');
@@ -299,14 +348,20 @@ function renderEventTile(event, top, height) {
   if (event.type === 'pinned' && tile && tile.type === 'custom') {
     tripStyle = 'background: #455a64; color: white; border: 1px solid #000;';
   }
-  return `
-    <div class="grid-event" data-event-id="${event.id}" title="Click to remove this event"
-         style="${tripStyle || style}; padding: 2px 5px; border-radius: 4px; text-align: center; 
-                margin: 0 1px; font-size: 0.9em; position: absolute;
-                top: ${top}px; height: ${height}px; width: calc(100% - 4px);
-                box-sizing: border-box; overflow: hidden; cursor: pointer;">
-      <strong>${event.event}</strong>
-      <div style="font-size: 0.85em;">${event.startTime} - ${event.endTime}</div>
+  
+  // Custom display for Smart Tile to show fallback
+  let innerHtml = `<strong>${event.event}</strong><br><div style="font-size: 0.85em;">${event.startTime} - ${event.endTime}</div>`;
+  if(event.type === 'smart' && event.smartData){
+     innerHtml += `<div style="font-size:0.75em;border-top:1px dotted #01579b;margin-top:2px;padding-top:1px;">F: ${event.smartData.fallbackActivity} (if ${event.smartData.fallbackFor.substring(0,4)}. busy)</div>`;
+  }
+
+  return `<br>
+    <div class="grid-event" data-event-id="${event.id}" title="Click to remove this event"<br>
+         style="${tripStyle || style}; padding: 2px 5px; border-radius: 4px; text-align: center; <br>
+                margin: 0 1px; font-size: 0.9em; position: absolute;<br>
+                top: ${top}px; height: ${height}px; width: calc(100% - 4px);<br>
+                box-sizing: border-box; overflow: hidden; cursor: pointer;"><br>
+      ${innerHtml}<br>
     </div>`;
 }
 
@@ -411,68 +466,68 @@ function init() {
   currentOverrides.bunkActivityOverrides = dailyData.bunkActivityOverrides || []; // NEW
 
   // --- 2. Build the main UI (Tabs + Panes) ---
-  container.innerHTML = `
-    <div style="padding: 10px 15px; background: #fff; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
-      <div>
-        <h2 style="margin: 0 0 5px 0;">Daily Adjustments for ${window.currentScheduleDate}</h2>
-        <p style="margin: 0; font-size: 0.9em; color: #555;">Make final changes to the day's template, adjust activities, and run the optimizer.</p>
-      </div>
-      <button id="run-optimizer-btn" style="background: #28a745; color: white; padding: 12px 20px; font-size: 1.2em; border: none; border-radius: 5px; cursor: pointer; white-space: nowrap;">
-        Run Optimizer & Create Schedule
-      </button>
-    </div>
+  container.innerHTML = `<br>
+    <div style="padding: 10px 15px; background: #fff; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;"><br>
+      <div><br>
+        <h2 style="margin: 0 0 5px 0;">Daily Adjustments for ${window.currentScheduleDate}</h2><br>
+        <p style="margin: 0; font-size: 0.9em; color: #555;">Make final changes to the day's template, adjust activities, and run the optimizer.</p><br>
+      </div><br>
+      <button id="run-optimizer-btn" style="background: #28a745; color: white; padding: 12px 20px; font-size: 1.2em; border: none; border-radius: 5px; cursor: pointer; white-space: nowrap;"><br>
+        Run Optimizer & Create Schedule<br>
+      </button><br>
+    </div><br>
 
-    <div class="da-tabs-nav league-nav">
-        <button class="tab-button active" data-tab="skeleton">Skeleton</button>
-        <button class="tab-button" data-tab="trips">Trips</button>
-        <button class="tab-button" data-tab="bunk-specific">Bunk Specific</button>
-        <button class="tab-button" data-tab="resources">Resource Availability</button>
-    </div>
+    <div class="da-tabs-nav league-nav"><br>
+        <button class="tab-button active" data-tab="skeleton">Skeleton</button><br>
+        <button class="tab-button" data-tab="trips">Trips</button><br>
+        <button class="tab-button" data-tab="bunk-specific">Bunk Specific</button><br>
+        <button class="tab-button" data-tab="resources">Resource Availability</button><br>
+    </div><br>
 
-    <div id="da-pane-skeleton" class="da-tab-pane league-content-pane active">
-      <div class="override-section" id="daily-skeleton-editor-section">
-        <h3>Daily Skeleton Override</h3>
-        <p style="font-size: 0.9em; color: #555;">Modify the schedule layout for <strong>this day only</strong>.</p>
-        <div id="override-scheduler-content"></div>
-      </div>
-    </div>
+    <div id="da-pane-skeleton" class="da-tab-pane league-content-pane active"><br>
+      <div class="override-section" id="daily-skeleton-editor-section"><br>
+        <h3>Daily Skeleton Override</h3><br>
+        <p style="font-size: 0.9em; color: #555;">Modify the schedule layout for <strong>this day only</strong>.</p><br>
+        <div id="override-scheduler-content"></div><br>
+      </div><br>
+    </div><br>
 
-    <div id="da-pane-trips" class="da-tab-pane league-content-pane">
-      <div class="override-section" id="daily-trips-section">
-        <h3>Daily Trips (Adds to Skeleton)</h3>
-        <div id="trips-form-container"></div>
-      </div>
-    </div>
+    <div id="da-pane-trips" class="da-tab-pane league-content-pane"><br>
+      <div class="override-section" id="daily-trips-section"><br>
+        <h3>Daily Trips (Adds to Skeleton)</h3><br>
+        <div id="trips-form-container"></div><br>
+      </div><br>
+    </div><br>
 
-    <div id="da-pane-bunk-specific" class="da-tab-pane league-content-pane">
-      <div class="override-section" id="daily-bunk-overrides-section">
-        <h3>Bunk-Specific Pinned Activities</h3>
-        <p style="font-size: 0.9em; color: #555;">Assign a specific activity to one or more bunks at a specific time. This will override the skeleton.</p>
-        <div id="bunk-overrides-container"></div>
-      </div>
-    </div>
+    <div id="da-pane-bunk-specific" class="da-tab-pane league-content-pane"><br>
+      <div class="override-section" id="daily-bunk-overrides-section"><br>
+        <h3>Bunk-Specific Pinned Activities</h3><br>
+        <p style="font-size: 0.9em; color: #555;">Assign a specific activity to one or more bunks at a specific time. This will override the skeleton.</p><br>
+        <div id="bunk-overrides-container"></div><br>
+      </div><br>
+    </div><br>
 
-    <div id="da-pane-resources" class="da-tab-pane league-content-pane">
-      <div class="override-section" id="other-overrides-section">
-        <h3>Daily Resource Availability</h3>
-        <p style="font-size: 0.9em; color: #555;">Disable fields, leagues, or activities for <strong>this day only</strong>.</p>
-        <div id="resource-overrides-container"></div>
-      </div>
-    </div>
+    <div id="da-pane-resources" class="da-tab-pane league-content-pane"><br>
+      <div class="override-section" id="other-overrides-section"><br>
+        <h3>Daily Resource Availability</h3><br>
+        <p style="font-size: 0.9em; color: #555;">Disable fields, leagues, or activities for <strong>this day only</strong>.</p><br>
+        <div id="resource-overrides-container"></div><br>
+      </div><br>
+    </div><br>
 
-    <style>
-      .grid-disabled{position:absolute;width:100%;background-color:#80808040;background-image:linear-gradient(-45deg,#0000001a 25%,transparent 25%,transparent 50%,#0000001a 50%,#0000001a 75%,transparent 75%,transparent);background-size:20px 20px;z-index:1;pointer-events:none;}
-      .grid-event{z-index:2;position:relative;}
-      .master-list .list-item{padding:10px 8px;border:1px solid #ddd;border-radius:5px;margin-bottom:3px;cursor:pointer;background:#fff;font-size:.95em;display:flex;justify-content:space-between;align-items:center;}
-      .master-list .list-item:hover{background:#f9f9f9;}
-      .master-list .list-item.selected{background:#e7f3ff;border-color:#007bff;}
-      .master-list .list-item-name{font-weight:600;flex-grow:1;}
-      .master-list .list-item.selected .list-item-name{font-weight:700;}
-      .detail-pane{border:1px solid #ccc;border-radius:8px;padding:20px;background:#fdfdfd;min-height:300px;}
-      .sport-override-list{margin-top:15px;padding-top:15px;border-top:1px solid #eee;}
-      .sport-override-list label{display:block;margin:5px 0 5px 10px;font-size:1.0em;}
-      .sport-override-list label input{margin-right:8px;vertical-align:middle;}
-    </style>
+    <style><br>
+      .grid-disabled{position:absolute;width:100%;background-color:#80808040;background-image:linear-gradient(-45deg,#0000001a 25%,transparent 25%,transparent 50%,#0000001a 50%,#0000001a 75%,transparent 75%,transparent);background-size:20px 20px;z-index:1;pointer-events:none;}<br>
+      .grid-event{z-index:2;position:relative;}<br>
+      .master-list .list-item{padding:10px 8px;border:1px solid #ddd;border-radius:5px;margin-bottom:3px;cursor:pointer;background:#fff;font-size:.95em;display:flex;justify-content:space-between;align-items:center;}<br>
+      .master-list .list-item:hover{background:#f9f9f9;}<br>
+      .master-list .list-item.selected{background:#e7f3ff;border-color:#007bff;}<br>
+      .master-list .list-item-name{font-weight:600;flex-grow:1;}<br>
+      .master-list .list-item.selected .list-item-name{font-weight:700;}<br>
+      .detail-pane{border:1px solid #ccc;border-radius:8px;padding:20px;background:#fdfdfd;min-height:300px;}<br>
+      .sport-override-list{margin-top:15px;padding-top:15px;border-top:1px solid #eee;}<br>
+      .sport-override-list label{display:block;margin:5px 0 5px 10px;font-size:1.0em;}<br>
+      .sport-override-list label input{margin-right:8px;vertical-align:middle;}<br>
+    </style><br>
   `;
 
   // --- 3. Hook up event listeners ---
@@ -507,9 +562,9 @@ function init() {
 function initDailySkeletonUI() {
   if (!skeletonContainer) return;
   loadDailySkeleton(); 
-  skeletonContainer.innerHTML = `
-    <div id="daily-skeleton-palette" style="padding: 10px; background: #f4f4f4; border-radius: 8px; margin-bottom: 15px; display: flex; flex-wrap: wrap; gap: 10px;"></div>
-    <div id="daily-skeleton-grid" style="overflow-x: auto; border: 1px solid #999; max-height: 600px; overflow-y: auto;"></div>
+  skeletonContainer.innerHTML = `<br>
+    <div id="daily-skeleton-palette" style="padding: 10px; background: #f4f4f4; border-radius: 8px; margin-bottom: 15px; display: flex; flex-wrap: wrap; gap: 10px;"></div><br>
+    <div id="daily-skeleton-grid" style="overflow-x: auto; border: 1px solid #999; max-height: 600px; overflow-y: auto;"></div><br>
   `;
   const palette = document.getElementById("daily-skeleton-palette");
   const grid = document.getElementById("daily-skeleton-grid");
@@ -528,17 +583,14 @@ function renderTripsForm() {
   form.style.padding = '15px';
   form.style.borderRadius = '8px';
 
-  form.innerHTML = `
-<label for="tripName" style="display: block; margin-bottom: 5px; font-weight: 600;">Trip Name:</label>
-<input type="text" id="tripName" placeholder="e.g., Museum Trip" style="width: 250px;">
-
-<label for="tripStart" style="display: inline-block; margin-top: 10px; font-weight: 600;">Start Time:</label>
-<input id="tripStart" placeholder="e.g., 9:00am" style="margin-right: 8px;">
-
-<label for="tripEnd" style="display: inline-block; font-weight: 600;">End Time:</label>
-<input id="tripEnd" placeholder="e.g., 2:00pm" style="margin-right: 8px;">
-
-<p style="margin-top: 15px; font-weight: 600;">Select Divisions (Trip will apply to all bunks in the division):</p>
+  form.innerHTML = `<br>
+<label for="tripName" style="display: block; margin-bottom: 5px; font-weight: 600;">Trip Name:</label><br>
+<input type="text" id="tripName" placeholder="e.g., Museum Trip" style="width: 250px;"><br><br>
+<label for="tripStart" style="display: inline-block; margin-top: 10px; font-weight: 600;">Start Time:</label><br>
+<input id="tripStart" placeholder="e.g., 9:00am" style="margin-right: 8px;"><br><br>
+<label for="tripEnd" style="display: inline-block; font-weight: 600;">End Time:</label><br>
+<input id="tripEnd" placeholder="e.g., 2:00pm" style="margin-right: 8px;"><br><br>
+<p style="margin-top: 15px; font-weight: 600;">Select Divisions (Trip will apply to all bunks in the division):</p><br>
 `;
 
   const divisions = masterSettings.app1.divisions || {};
@@ -655,17 +707,17 @@ function renderBunkOverridesUI() {
     allActivities.forEach(act => {
         activityOptions += `<option value="${act}">${act}</option>`;
     });
-    form.innerHTML = `
-      <label for="bunk-override-activity" style="display: block; margin-bottom: 5px; font-weight: 600;">Activity:</label>
-      <select id="bunk-override-activity" style="width: 250px; padding: 5px; font-size: 1em;">${activityOptions}</select>
+    form.innerHTML = `<br>
+      <label for="bunk-override-activity" style="display: block; margin-bottom: 5px; font-weight: 600;">Activity:</label><br>
+      <select id="bunk-override-activity" style="width: 250px; padding: 5px; font-size: 1em;">${activityOptions}</select><br><br>
 
-      <label for="bunk-override-start" style="display: inline-block; margin-top: 10px; font-weight: 600;">Start Time:</label>
-      <input id="bunk-override-start" placeholder="e.g., 9:00am" style="margin-right: 8px;">
+      <label for="bunk-override-start" style="display: inline-block; margin-top: 10px; font-weight: 600;">Start Time:</label><br>
+      <input id="bunk-override-start" placeholder="e.g., 9:00am" style="margin-right: 8px;"><br><br>
 
-      <label for="bunk-override-end" style="display: inline-block; font-weight: 600;">End Time:</label>
-      <input id="bunk-override-end" placeholder="e.g., 10:00am" style="margin-right: 8px;">
+      <label for="bunk-override-end" style="display: inline-block; font-weight: 600;">End Time:</label><br>
+      <input id="bunk-override-end" placeholder="e.g., 10:00am" style="margin-right: 8px;"><br><br>
 
-      <p style="margin-top: 15px; font-weight: 600;">Select Bunks:</p>
+      <p style="margin-top: 15px; font-weight: 600;">Select Bunks:</p><br>
     `;
 
     // Bunk Chip Pickers
@@ -754,12 +806,12 @@ function renderBunkOverridesUI() {
         overrides.forEach(item => {
             const el = document.createElement('div');
             el.className = 'item'; // Use style from styles.css
-            el.innerHTML = `
-              <div style="flex-grow:1;">
-                <div><strong>${item.bunk}</strong> &raquo; ${item.activity}</div>
-                <div class="muted" style="font-size: 0.9em;">${item.startTime} - ${item.endTime}</div>
-              </div>
-              <button data-id="${item.id}" style="padding: 6px 10px; border-radius:4px; cursor:pointer; background: #c0392b; color: white; border: none;">Remove</button>
+            el.innerHTML = `<br>
+              <div style="flex-grow:1;"><br>
+                <div><strong>${item.bunk}</strong> &raquo; ${item.activity}</div><br>
+                <div class="muted" style="font-size: 0.9em;">${item.startTime} - ${item.endTime}</div><br>
+              </div><br>
+              <button data-id="${item.id}" style="padding: 6px 10px; border-radius:4px; cursor:pointer; background: #c0392b; color: white; border: none;">Remove</button><br>
             `;
             el.querySelector('button').onclick = () => {
                 let currentList = window.loadCurrentDailyData?.().bunkActivityOverrides || [];
@@ -781,19 +833,19 @@ function renderResourceOverridesUI() {
     resourceOverridesContainer.innerHTML = ""; // Clear
 
     // Create the two-column layout
-    resourceOverridesContainer.innerHTML = `
-      <div style="display: flex; flex-wrap: wrap; gap: 20px;">
-        <div style="flex: 1; min-width: 300px;">
-          <h4>Fields</h4><div id="override-fields-list" class="master-list"></div>
-          <h4 style="margin-top: 15px;">Special Activities</h4><div id="override-specials-list" class="master-list"></div>
-          <h4 style="margin-top: 15px;">Leagues</h4><div id="override-leagues-list" class="master-list"></div>
-          <h4 style="margin-top: 15px;">Specialty Leagues</h4><div id="override-specialty-leagues-list" class="master-list"></div>
-        </div>
-        <div style="flex: 2; min-width: 400px; position: sticky; top: 20px;">
-          <h4>Details</h4>
-          <div id="override-detail-pane" class="detail-pane"><p class="muted">Select an item from the left to edit its details.</p></div>
-        </div>
-      </div>
+    resourceOverridesContainer.innerHTML = `<br>
+      <div style="display: flex; flex-wrap: wrap; gap: 20px;"><br>
+        <div style="flex: 1; min-width: 300px;"><br>
+          <h4>Fields</h4><div id="override-fields-list" class="master-list"></div><br>
+          <h4 style="margin-top: 15px;">Special Activities</h4><div id="override-specials-list" class="master-list"></div><br>
+          <h4 style="margin-top: 15px;">Leagues</h4><div id="override-leagues-list" class="master-list"></div><br>
+          <h4 style="margin-top: 15px;">Specialty Leagues</h4><div id="override-specialty-leagues-list" class="master-list"></div><br>
+        </div><br>
+        <div style="flex: 2; min-width: 400px; position: sticky; top: 20px;"><br>
+          <h4>Details</h4><br>
+          <div id="override-detail-pane" class="detail-pane"><p class="muted">Select an item from the left to edit its details.</p></div><br>
+        </div><br>
+      </div><br>
     `;
 
     // Get element references
@@ -1051,9 +1103,9 @@ function renderTimeRulesUI(itemName, globalRules, dailyRules, onSave) {
     addContainer.style.marginTop = "10px";
     
     const typeSelect = document.createElement("select");
-    typeSelect.innerHTML = `
-        <option value="Available">Available</option>
-        <option value="Unavailable">Unavailable</option>
+    typeSelect.innerHTML = `<br>
+        <option value="Available">Available</option><br>
+        <option value="Unavailable">Unavailable</option><br>
     `;
     
     const startInput = document.createElement("input");
