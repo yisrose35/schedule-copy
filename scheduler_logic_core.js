@@ -1,10 +1,10 @@
 // ============================================================================
 // scheduler_logic_core.js
 //
-// UPDATED (Smart Tiles v6 - COMPLETE):
-// - FIXED Time Grid: Atomic Intervals based on skeleton times (no overlaps).
-// - FIXED "Swim"/Virtuals: Infinite capacity for undefined fields.
-// - FULL LOGIC: Includes the complete League Optimizer (DFS) + Smart Tile Rotation.
+// UPDATED (Smart Tiles v7 - Fairness Fix):
+// - FIXED Rotation Logic: Now aggregates specific activity history (e.g., "Gameroom", "Art")
+//   when sorting for generic categories like "Special Activity".
+//   This ensures bunks that played *any* special yesterday are deprioritized today.
 // ============================================================================
 
 (function() {
@@ -588,15 +588,44 @@
             const priorityAct = (fallbackFor === main2) ? main2 : main1;
             const secondaryAct = (priorityAct === main1) ? main2 : main1;
 
-            const pKey = (priorityAct === 'Special' || priorityAct === 'Special Activity') ? 'Special Activity' : priorityAct;
+            // --- FAIRNESS SORT (Enhanced for Generic Categories) ---
+            // Sort bunks so those who have done the "Priority Activity" LEAST or LEAST RECENTLY come first.
+            
+            const bunkStats = {};
+            const isSpecialCategory = (priorityAct === 'Special' || priorityAct === 'Special Activity');
+            
+            let relevantActivities = [];
+            if (isSpecialCategory) {
+                // Aggregate ALL special activities defined in the system
+                // (because history tracks specific names like "Gameroom", not just "Special Activity")
+                relevantActivities = allActivities.filter(a => a.type === 'special').map(a => a.field);
+                relevantActivities.push('Special Activity'); // include generic just in case
+            } else {
+                relevantActivities = [priorityAct];
+            }
+
+            bunks.forEach(b => {
+                let count = 0;
+                let lastTime = 0;
+                
+                relevantActivities.forEach(actName => {
+                    count += (historicalCounts[b]?.[actName] || 0);
+                    const t = rotationHistory.bunks[b]?.[actName] || 0;
+                    if (t > lastTime) lastTime = t;
+                });
+                
+                bunkStats[b] = { count, lastTime };
+            });
 
             bunks.sort((a, b) => {
-                const countA = historicalCounts[a]?.[pKey] || 0;
-                const countB = historicalCounts[b]?.[pKey] || 0;
-                if (countA !== countB) return countA - countB; 
-                const timeA = rotationHistory.bunks[a]?.[pKey] || 0;
-                const timeB = rotationHistory.bunks[b]?.[pKey] || 0;
-                return timeA - timeB;
+                const statsA = bunkStats[a];
+                const statsB = bunkStats[b];
+                
+                // 1. Least Played (Counts)
+                if (statsA.count !== statsB.count) return statsA.count - statsB.count;
+                
+                // 2. Least Recently Played (Timestamps)
+                return statsA.lastTime - statsB.lastTime;
             });
 
             const b1 = blocks[0];
