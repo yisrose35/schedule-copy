@@ -1,16 +1,52 @@
 // -------------------- scheduler_ui.js --------------------
-// MINIMAL VERSION
-// - Uses unifiedTimes + scheduleAssignments
+// Full-featured staggered view + editing
 // - One table per division
-// - Rows: time slots, Columns: bunks
-// - Click a cell to edit the activity
+// - Rows from manualSkeleton (Daily Adjustments)
+// - League mirroring via _allMatchups list
+// - League Game X / Specialty League X counters (persisted day-to-day)
+// - Split blocks (first half / second half) aligned to slots
+// - Pins vs generated vs dismissal vs snacks
+// - Click any cell to edit (range-aware, using overlap logic)
 // --------------------------------------------------------
 
 (function () {
   "use strict";
 
-  // Base slot size (must match core)
-  var INCREMENT_MINS = 30;
+  // ===== CONFIG / HELPERS =====
+  var INCREMENT_MINS = 30; // Must match core
+
+  function parseTimeToMinutes(str) {
+    if (!str || typeof str !== "string") return null;
+
+    var s = str.trim();
+    var lower = s.toLowerCase();
+    var mer = null;
+
+    if (lower.endsWith("am") || lower.endsWith("pm")) {
+      mer = lower.endsWith("am") ? "am" : "pm";
+      s = s.slice(0, -2).trim();
+    }
+
+    var m = s.match(/^(\d{1,2})\s*:\s*(\d{2})$/);
+    if (!m) return null;
+
+    var hh = parseInt(m[1], 10);
+    var mm = parseInt(m[2], 10);
+    if (isNaN(hh) || isNaN(mm) || mm < 0 || mm > 59) return null;
+
+    if (mer) {
+      if (hh === 12) {
+        hh = mer === "am" ? 0 : 12;
+      } else if (mer === "pm") {
+        hh += 12;
+      }
+    } else {
+      // Expect explicit AM/PM everywhere
+      return null;
+    }
+
+    return hh * 60 + mm;
+  }
 
   function fieldLabel(f) {
     if (typeof f === "string") return f;
@@ -25,6 +61,36 @@
     var ap = h >= 12 ? "PM" : "AM";
     h = h % 12 || 12;
     return h + ":" + m + " " + ap;
+  }
+
+  // ===== MATCH GENERATED EVENTS =====
+  var UI_GENERATED_EVENTS = new Set([
+    "activity",
+    "activities",
+    "general activity",
+    "general activity slot",
+    "sports",
+    "sport",
+    "sports slot",
+    "special activity",
+    "league game",
+    "specialty league",
+    "speciality league",
+    "swim"
+  ]);
+
+  function uiIsGeneratedEventName(name) {
+    if (!name) return false;
+    return UI_GENERATED_EVENTS.has(String(name).trim().toLowerCase());
+  }
+
+  // ===== ENTRY FORMATTER =====
+  function getEntry(bunk, slotIndex) {
+    var assignments = window.scheduleAssignments || {};
+    if (bunk && assignments[bunk] && assignments[bunk][slotIndex]) {
+      return assignments[bunk][slotIndex];
+    }
+    return null;
   }
 
   function formatEntry(entry) {
@@ -45,15 +111,56 @@
     }
   }
 
-  // ===== EDIT CELL (minimal) =====
-  function editCell(bunkName, slotIndex, currentActivity) {
-    if (!bunkName) return;
-    if (!window.unifiedTimes || slotIndex == null) return;
+  // ===== SLOT HELPERS =====
+  function findFirstSlotForTime(startMin) {
+    if (startMin === null || !window.unifiedTimes) return -1;
 
-    var slot = window.unifiedTimes[slotIndex];
-    var d = new Date(slot.start);
-    var startMin = d.getHours() * 60 + d.getMinutes();
-    var endMin = startMin + INCREMENT_MINS;
+    // Near-exact match first
+    for (var i = 0; i < window.unifiedTimes.length; i++) {
+      var slot = window.unifiedTimes[i];
+      var d = new Date(slot.start);
+      var slotStart = d.getHours() * 60 + d.getMinutes();
+      if (Math.abs(slotStart - startMin) < 2) {
+        return i;
+      }
+    }
+
+    // Fallback: overlap (start inside a slot)
+    for (var j = 0; j < window.unifiedTimes.length; j++) {
+      var slot2 = window.unifiedTimes[j];
+      var d2 = new Date(slot2.start);
+      var slotStart2 = d2.getHours() * 60 + d2.getMinutes();
+      var slotEnd2 = slotStart2 + INCREMENT_MINS;
+      if (startMin >= slotStart2 && startMin < slotEnd2) {
+        return j;
+      }
+    }
+
+    return -1;
+  }
+
+  // Overlap-based slot finder (synced with core)
+  function findSlotsForRange(startMin, endMin) {
+    var slots = [];
+    if (!window.unifiedTimes || startMin == null || endMin == null) return slots;
+
+    for (var i = 0; i < window.unifiedTimes.length; i++) {
+      var slot = window.unifiedTimes[i];
+      var d = new Date(slot.start);
+      var slotStart = d.getHours() * 60 + d.getMinutes();
+      var slotEnd = slotStart + INCREMENT_MINS;
+
+      // Overlap: Max(startA, startB) < Min(endA, endB)
+      if (Math.max(startMin, slotStart) < Math.min(endMin, slotEnd)) {
+        slots.push(i);
+      }
+    }
+    return slots;
+  }
+
+  // ===== EDITING (range-aware) =====
+  function editCell(bunkName, startMin, endMin, currentActivity) {
+    if (!bunkName) return;
 
     var promptText =
       "Edit activity for " +
@@ -68,6 +175,12 @@
     if (newActivityName === null) return;
 
     var finalActivityName = newActivityName.trim();
+    var slotsToUpdate = findSlotsForRange(startMin, endMin);
+
+    if (!slotsToUpdate.length) {
+      console.error("Could not find slots to update for", startMin, endMin);
+      return;
+    }
 
     if (!window.scheduleAssignments[bunkName]) {
       window.scheduleAssignments[bunkName] = new Array(window.unifiedTimes.length);
@@ -78,50 +191,59 @@
       finalActivityName.toUpperCase() === "CLEAR" ||
       finalActivityName.toUpperCase() === "FREE"
     ) {
-      // Mark this slot as Free
-      window.scheduleAssignments[bunkName][slotIndex] = {
-        field: "Free",
-        sport: null,
-        continuation: false,
-        _fixed: true,
-        _h2h: false,
-        _activity: "Free"
-      };
+      // Mark all covered slots as Free
+      slotsToUpdate.forEach(function (slotIndex, idx) {
+        window.scheduleAssignments[bunkName][slotIndex] = {
+          field: "Free",
+          sport: null,
+          continuation: idx > 0,
+          _fixed: true,
+          _h2h: false,
+          _activity: "Free"
+        };
+      });
     } else {
-      // Simple pinned activity
-      window.scheduleAssignments[bunkName][slotIndex] = {
-        field: finalActivityName,
-        sport: null,
-        continuation: false,
-        _fixed: true,
-        _h2h: false,
-        vs: null,
-        _activity: finalActivityName
-      };
+      // Custom pin across range
+      slotsToUpdate.forEach(function (slotIndex, idx) {
+        window.scheduleAssignments[bunkName][slotIndex] = {
+          field: finalActivityName,
+          sport: null,
+          continuation: idx > 0,
+          _fixed: true,
+          _h2h: false,
+          vs: null,
+          _activity: finalActivityName
+        };
+      });
     }
 
     if (typeof window.saveSchedule === "function") window.saveSchedule();
     if (typeof window.updateTable === "function") window.updateTable();
   }
 
-  // ===== CORE RENDER =====
+  // ===== CORE RENDER (FULL) =====
   function renderStaggeredView(container) {
     container.innerHTML = "";
 
     var availableDivisions = window.availableDivisions || [];
     var divisions = window.divisions || {};
-    var scheduleAssignments = window.scheduleAssignments || {};
-    var unifiedTimes = window.unifiedTimes || [];
 
-    if (!unifiedTimes.length) {
-      container.innerHTML =
-        "<p>No unified time grid found. Generate a schedule first.</p>";
-      return;
-    }
+    var dailyData =
+      (typeof window.loadCurrentDailyData === "function" &&
+        window.loadCurrentDailyData()) ||
+      {};
+    var manualSkeleton = dailyData.manualSkeleton || [];
 
-    if (!availableDivisions.length) {
+    var prevDailyData =
+      (typeof window.loadPreviousDailyData === "function" &&
+        window.loadPreviousDailyData()) ||
+      {};
+    var prevCounters = prevDailyData.leagueDayCounters || {};
+    var todayCounters = {};
+
+    if (!manualSkeleton.length) {
       container.innerHTML =
-        "<p>No divisions available. Add divisions in the setup tab.</p>";
+        "<p>No schedule built for this day. Go to the 'Daily Adjustments' tab to build one.</p>";
       return;
     }
 
@@ -129,7 +251,6 @@
     wrapper.className = "schedule-view-wrapper";
     container.appendChild(wrapper);
 
-    // Build one table per division
     availableDivisions.forEach(function (div) {
       var divData = divisions[div] || {};
       var bunks = (divData.bunks || []).slice().sort();
@@ -171,50 +292,271 @@
       thead.appendChild(tr2);
       table.appendChild(thead);
 
-      // Body
+      // Build blocks from manualSkeleton for this division
       var tbody = document.createElement("tbody");
+      var tempSortedBlocks = [];
 
-      unifiedTimes.forEach(function (slot, slotIndex) {
-        var d = new Date(slot.start);
-        var startMin = d.getHours() * 60 + d.getMinutes();
-        var endMin = startMin + INCREMENT_MINS;
+      manualSkeleton.forEach(function (item) {
+        if (item.division !== div) return;
 
+        var startMin = parseTimeToMinutes(item.startTime);
+        var endMin = parseTimeToMinutes(item.endTime);
+        if (startMin === null || endMin === null) return;
+
+        var divStartMin =
+          typeof divData.startTime === "string"
+            ? parseTimeToMinutes(divData.startTime)
+            : null;
+        var divEndMin =
+          typeof divData.endTime === "string"
+            ? parseTimeToMinutes(divData.endTime)
+            : null;
+
+        if (divStartMin !== null && endMin <= divStartMin) return;
+        if (divEndMin !== null && startMin >= divEndMin) return;
+
+        tempSortedBlocks.push({
+          item: item,
+          startMin: startMin,
+          endMin: endMin
+        });
+      });
+
+      tempSortedBlocks.sort(function (a, b) {
+        return a.startMin - b.startMin;
+      });
+
+      var prevDivCounts = prevCounters[div] || { league: 0, specialty: 0 };
+      var todayLeagueCount = prevDivCounts.league;
+      var todaySpecialtyCount = prevDivCounts.specialty;
+
+      var divisionBlocks = [];
+
+      tempSortedBlocks.forEach(function (block) {
+        var item = block.item;
+        var startMin = block.startMin;
+        var endMin = block.endMin;
+        var eventName = item.event;
+
+        if (item.event === "League Game") {
+          todayLeagueCount += 1;
+          eventName = "League Game " + todayLeagueCount;
+        } else if (item.event === "Specialty League") {
+          todaySpecialtyCount += 1;
+          eventName = "Specialty League " + todaySpecialtyCount;
+        }
+
+        divisionBlocks.push({
+          label:
+            minutesToTimeLabel(startMin) +
+            " - " +
+            minutesToTimeLabel(endMin),
+          startMin: startMin,
+          endMin: endMin,
+          event: eventName,
+          type: item.type
+        });
+      });
+
+      todayCounters[div] = {
+        league: todayLeagueCount,
+        specialty: todaySpecialtyCount
+      };
+
+      // Deduplicate by label (time range)
+      var uniqueBlocks = divisionBlocks.filter(function (block, index, self) {
+        return (
+          index ===
+          self.findIndex(function (t) {
+            return t.label === block.label;
+          })
+        );
+      });
+
+      // Split blocks into first half / second half using slot-based split
+      var flattenedBlocks = [];
+      uniqueBlocks.forEach(function (block) {
+        if (
+          block.type === "split" &&
+          block.startMin !== null &&
+          block.endMin !== null
+        ) {
+          var durationMins = block.endMin - block.startMin;
+          var totalSlots = Math.floor(durationMins / INCREMENT_MINS);
+          var firstHalfSlots = Math.ceil(totalSlots / 2);
+          var midMin = block.startMin + firstHalfSlots * INCREMENT_MINS;
+
+          // First half
+          flattenedBlocks.push({
+            label:
+              minutesToTimeLabel(block.startMin) +
+              " - " +
+              minutesToTimeLabel(midMin),
+            startMin: block.startMin,
+            endMin: midMin,
+            event: block.event,
+            type: block.type,
+            splitPart: 1
+          });
+
+          // Second half
+          flattenedBlocks.push({
+            label:
+              minutesToTimeLabel(midMin) +
+              " - " +
+              minutesToTimeLabel(block.endMin),
+            startMin: midMin,
+            endMin: block.endMin,
+            event: block.event,
+            type: block.type,
+            splitPart: 2
+          });
+        } else {
+          flattenedBlocks.push(block);
+        }
+      });
+
+      if (!flattenedBlocks.length) {
+        var trEmpty = document.createElement("tr");
+        var tdEmpty = document.createElement("td");
+        tdEmpty.colSpan = bunks.length + 1;
+        tdEmpty.textContent =
+          "No schedule blocks found for this division in the template.";
+        tdEmpty.className = "grey-cell";
+        trEmpty.appendChild(tdEmpty);
+        tbody.appendChild(trEmpty);
+      }
+
+      flattenedBlocks.forEach(function (eventBlock) {
         var tr = document.createElement("tr");
 
         // Time cell
         var tdTime = document.createElement("td");
-        tdTime.style.border = "1px solid #ccc";
+        tdTime.style.border = "1px solid "#ccc";
         tdTime.style.verticalAlign = "top";
         tdTime.style.fontWeight = "bold";
-        tdTime.textContent =
-          minutesToTimeLabel(startMin) +
-          " - " +
-          minutesToTimeLabel(endMin);
+        tdTime.textContent = eventBlock.label;
         tr.appendChild(tdTime);
 
-        // Activity cells per bunk
-        bunks.forEach(function (bunk) {
-          var td = document.createElement("td");
-          td.style.border = "1px solid #ccc";
-          td.style.verticalAlign = "top";
-          td.style.cursor = "pointer";
+        var rawName = eventBlock.event || "";
+        var nameLc = rawName.toLowerCase();
+        var isDismissalBlock = nameLc.indexOf("dismiss") !== -1;
+        var isSnackBlock = nameLc.indexOf("snack") !== -1;
 
-          var entry =
-            scheduleAssignments[bunk] && scheduleAssignments[bunk][slotIndex]
-              ? scheduleAssignments[bunk][slotIndex]
-              : null;
+        // League / Specialty rows get a merged cell with bullet list
+        if (
+          rawName.indexOf("League Game") === 0 ||
+          rawName.indexOf("Specialty League") === 0
+        ) {
+          var tdLeague = document.createElement("td");
+          tdLeague.colSpan = bunks.length;
+          tdLeague.style.verticalAlign = "top";
+          tdLeague.style.textAlign = "left";
+          tdLeague.style.padding = "5px 8px";
+          tdLeague.style.background = "#f0f8f0";
 
-          var label = formatEntry(entry);
+          var firstSlotIndex = findFirstSlotForTime(eventBlock.startMin);
+          var allMatchups = [];
 
-          td.textContent = label;
-          td.title = "Click to edit this activity";
+          if (bunks.length > 0) {
+            var firstBunkEntry = getEntry(bunks[0], firstSlotIndex);
+            if (firstBunkEntry && firstBunkEntry._allMatchups) {
+              allMatchups = firstBunkEntry._allMatchups;
+            }
+          }
 
-          td.onclick = function () {
-            editCell(bunk, slotIndex, label);
-          };
+          var html = "";
+          if (!allMatchups || !allMatchups.length) {
+            html =
+              '<p class="muted" style="margin:0; padding: 4px;">' +
+              rawName +
+              "</p>";
+          } else {
+            html =
+              '<p style="margin:2px 0 5px 4px; font-weight: bold;">' +
+              rawName +
+              "</p>";
+            html += '<ul style="margin: 0; padding-left: 18px;">';
+            allMatchups.forEach(function (matchupLabel) {
+              html += "<li>" + matchupLabel + "</li>";
+            });
+            html += "</ul>";
+          }
 
-          tr.appendChild(td);
-        });
+          tdLeague.innerHTML = html;
+          tr.appendChild(tdLeague);
+        } else {
+          // Non-league blocks: may be pins, generated, dismissal, snacks
+          var isGeneratedBlock = uiIsGeneratedEventName(rawName);
+          if (!isGeneratedBlock && rawName.indexOf("/") !== -1) {
+            var parts = rawName
+              .split("/")
+              .map(function (s) {
+                return s.trim().toLowerCase();
+              })
+              .filter(function (p) {
+                return p;
+              });
+            if (
+              parts.some(function (p) {
+                return UI_GENERATED_EVENTS.has(p);
+              })
+            ) {
+              isGeneratedBlock = true;
+            }
+          }
+
+          var isPinBlock =
+            !isGeneratedBlock && !isDismissalBlock && !isSnackBlock;
+
+          bunks.forEach(function (bunk) {
+            var tdActivity = document.createElement("td");
+            tdActivity.style.border = "1px solid #ccc";
+            tdActivity.style.verticalAlign = "top";
+
+            var startMin = eventBlock.startMin;
+            var endMin = eventBlock.endMin;
+            var cellActivityName = "";
+
+            if (isDismissalBlock) {
+              cellActivityName = "Dismissal";
+              tdActivity.style.background = "#ffecec";
+              tdActivity.style.fontWeight = "bold";
+            } else if (isSnackBlock) {
+              cellActivityName = "Snacks";
+              tdActivity.style.background = "#e8f5e9";
+              tdActivity.style.fontWeight = "bold";
+            } else if (isPinBlock) {
+              cellActivityName = rawName || "Pinned";
+              tdActivity.style.background = "#fff8e1";
+              tdActivity.style.fontWeight = "bold";
+            } else {
+              var slotIndex = findFirstSlotForTime(startMin);
+              var entry = getEntry(bunk, slotIndex);
+
+              if (entry) {
+                cellActivityName = formatEntry(entry);
+                if (entry._h2h) {
+                  tdActivity.style.background = "#e8f4ff";
+                  tdActivity.style.fontWeight = "bold";
+                } else if (entry._fixed) {
+                  tdActivity.style.background = "#fff8e1";
+                }
+              } else {
+                cellActivityName = rawName;
+              }
+            }
+
+            tdActivity.textContent = cellActivityName;
+            tdActivity.style.cursor = "pointer";
+            tdActivity.title = "Click to edit this activity";
+            tdActivity.onclick = function () {
+              editCell(bunk, startMin, endMin, cellActivityName);
+            };
+
+            tr.appendChild(tdActivity);
+          });
+        }
 
         tbody.appendChild(tr);
       });
@@ -222,6 +564,10 @@
       table.appendChild(tbody);
       wrapper.appendChild(table);
     });
+
+    if (typeof window.saveCurrentDailyData === "function") {
+      window.saveCurrentDailyData("leagueDayCounters", todayCounters);
+    }
   }
 
   // ===== Save / Load / Init =====
