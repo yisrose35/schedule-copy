@@ -1,14 +1,15 @@
 // =================================================================
 // app1.js
 //
-// UNIFIED THEME (MATCH FIELDS) + BUNK CLICK LOGIC
-// - Divisions list uses same .master-list / .list-item look as Fields.
-// - Division color row is a small labeled chip + color input.
+// UNIFIED THEME WITH FIELDS
+// - Divisions list = same master-list / list-item look as Fields.
+// - Detail pane layout = same card grid pattern as Fields:
+//      • Card 1: Division Times
+//      • Card 2: Bunks in this Division
 // - Bunks:
-//     • Styled like field chips (rounded pills, same feel).
-//     • Single click  -> inline edit name
-//     • Double click  -> delete bunk from this division
-//       (using a click timer so edit waits for possible 2nd click).
+//      • Styled like field chips (rounded pills).
+//      • Single click  -> inline edit
+//      • Double click  -> delete (with click timer).
 // =================================================================
 
 (function() {
@@ -17,7 +18,7 @@
 // -------------------- State --------------------
 let bunks = [];
 let divisions = {}; // { divName:{ bunks:[], color, startTime, endTime } }
-let specialActivities = []; // For special_activities.js
+let specialActivities = [];
 
 let availableDivisions = [];
 let selectedDivision = null;
@@ -25,7 +26,7 @@ let selectedDivision = null;
 // Master list of all sports
 let allSports = [];
 const defaultSports = [
-    "Baseball", "Basketball", "Football", "Hockey", "Kickball", 
+    "Baseball", "Basketball", "Football", "Hockey", "Kickball",
     "Lacrosse", "Newcomb", "Punchball", "Soccer", "Volleyball"
 ];
 
@@ -51,7 +52,8 @@ function ensureSharedSetupStyles() {
     const style = document.createElement("style");
     style.id = "setup-shared-styles";
     style.textContent = `
-        /* Master list container – card-like shell (shared by Fields + Divisions) */
+        /* Shared with Fields tab */
+
         .master-list {
             border-radius: 12px;
             border: 1px solid #e5e7eb;
@@ -102,12 +104,12 @@ function ensureSharedSetupStyles() {
             box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
         }
 
-        /* Division color row */
+        /* Color row for division */
         .division-color-row {
             display: flex;
             align-items: center;
             gap: 8px;
-            margin-top: 4px;
+            margin: 4px 0 12px;
             font-size: 0.8rem;
             color: #4b5563;
         }
@@ -159,7 +161,7 @@ function parseTimeToMinutes(str) {
         mer = s.endsWith("am") ? "am" : "pm";
         s = s.replace(/am|pm/g, "").trim();
     }
-    
+
     const m = s.match(/^(\d{1,2})\s*:\s*(\d{2})$/);
     if (!m) return null;
     let hh = parseInt(m[1], 10);
@@ -168,17 +170,16 @@ function parseTimeToMinutes(str) {
 
     if (!mer) return null; // require am/pm
 
-    if (hh === 12) hh = (mer === "am") ? 0 : 12; // 12am -> 0, 12pm -> 12
-    else if (mer === "pm") hh += 12;             // 1pm -> 13
+    if (hh === 12) hh = (mer === "am") ? 0 : 12;
+    else if (mer === "pm") hh += 12;
 
     return hh * 60 + mm;
 }
 
-// Sort helper: put "Bunk 1, Bunk 2, Bunk 10" in numeric order
+// Sort helper: "Bunk 1, Bunk 2, Bunk 10" numeric order
 function compareBunks(a, b) {
     const sa = String(a);
     const sb = String(b);
-
     const re = /(\d+)/;
     const ma = sa.match(re);
     const mb = sb.match(re);
@@ -190,8 +191,6 @@ function compareBunks(a, b) {
             return na - nb;
         }
     }
-
-    // Fallback: natural string compare
     return sa.localeCompare(sb, undefined, { numeric: true, sensitivity: "base" });
 }
 
@@ -232,7 +231,7 @@ function renameBunkEverywhere(oldName, newName) {
     window.updateTable?.();
 }
 
-// -------------------- Bunks (logic; UI in detail pane) --------------------
+// -------------------- Bunks --------------------
 function addBunkToDivision(divName, bunkName) {
     if (!divName || !bunkName) return;
     const cleanDiv = String(divName).trim();
@@ -293,7 +292,7 @@ function addDivision() {
 }
 
 /**
- * LEFT SIDE: master list of divisions, Fields-style.
+ * LEFT SIDE: master list of divisions – same as Fields list.
  */
 function setupDivisionButtons() {
     const cont = document.getElementById("divisionButtons");
@@ -341,12 +340,13 @@ function setupDivisionButtons() {
             nameEl.style.paddingLeft = "8px";
         }
 
-        // small sub-line: bunk count + times
         const sub = document.createElement("span");
         sub.style.fontSize = "0.78rem";
         sub.style.color = "#6b7280";
         const bunkCount = (obj.bunks || []).length;
-        const times = (obj.startTime && obj.endTime) ? `${obj.startTime} – ${obj.endTime}` : "Times not set";
+        const times = (obj.startTime && obj.endTime) ?
+            `${obj.startTime} – ${obj.endTime}` :
+            "Times not set";
         sub.textContent = `${bunkCount} bunks • ${times}`;
 
         makeEditable(nameEl, newName => {
@@ -386,7 +386,7 @@ function setupDivisionButtons() {
 }
 
 /**
- * RIGHT SIDE: detail pane for selected division.
+ * RIGHT SIDE: detail pane – mirror Fields card layout.
  */
 function renderDivisionDetailPane() {
     const pane = document.getElementById("division-detail-pane");
@@ -406,7 +406,7 @@ function renderDivisionDetailPane() {
 
     const divObj = divisions[selectedDivision];
 
-    // --- Header: name + delete ---
+    // --- Header: name + delete (same feel as Fields header) ---
     const header = document.createElement("div");
     header.style.display = "flex";
     header.style.justifyContent = "space-between";
@@ -474,7 +474,7 @@ function renderDivisionDetailPane() {
     header.appendChild(deleteBtn);
     pane.appendChild(header);
 
-    // --- Color picker (themed) ---
+    // --- Color row (simple strip) ---
     const colorRow = document.createElement("div");
     colorRow.className = "division-color-row";
 
@@ -501,19 +501,34 @@ function renderDivisionDetailPane() {
     colorRow.appendChild(colorInput);
     pane.appendChild(colorRow);
 
-    // --- Times ---
-    const timeSection = document.createElement("div");
-    timeSection.style.margin = "16px 0 20px";
+    // --- Main detail grid: same structure as Fields ---
+    const detailGrid = document.createElement("div");
+    detailGrid.className = "field-detail-grid"; // class defined in fields.js style
+    pane.appendChild(detailGrid);
 
-    const timeTitle = document.createElement("strong");
-    timeTitle.textContent = "Division day times:";
-    timeSection.appendChild(timeTitle);
+    // ========== CARD 1: DIVISION TIMES ==========
+    const timeCard = document.createElement("div");
+    timeCard.className = "field-section-card";
+
+    const timeHeader = document.createElement("div");
+    timeHeader.className = "field-section-header";
+    timeHeader.innerHTML = `
+        <span class="field-section-title">Division Times</span>
+        <span class="field-section-tag">Day window</span>
+    `;
+    timeCard.appendChild(timeHeader);
+
+    const timeHelp = document.createElement("p");
+    timeHelp.className = "field-section-help";
+    timeHelp.textContent =
+        "Set the daily time window this division is in camp. Used to build the schedule grid.";
+    timeCard.appendChild(timeHelp);
 
     const timeForm = document.createElement("div");
     timeForm.style.display = "flex";
     timeForm.style.alignItems = "center";
     timeForm.style.gap = "6px";
-    timeForm.style.marginTop = "8px";
+    timeForm.style.marginTop = "6px";
 
     const startInput = document.createElement("input");
     startInput.type = "text";
@@ -531,7 +546,7 @@ function renderDivisionDetailPane() {
     endInput.style.width = "130px";
 
     const updateBtn = document.createElement("button");
-    updateBtn.textContent = "Update Times";
+    updateBtn.textContent = "Update";
     updateBtn.style.padding = "4px 8px";
 
     updateBtn.onclick = () => {
@@ -567,17 +582,29 @@ function renderDivisionDetailPane() {
     timeForm.appendChild(toLabel);
     timeForm.appendChild(endInput);
     timeForm.appendChild(updateBtn);
-    timeSection.appendChild(timeForm);
-    pane.appendChild(timeSection);
+    timeCard.appendChild(timeForm);
+    detailGrid.appendChild(timeCard);
 
-    // --- Bunks list ---
-    const bunksSection = document.createElement("div");
-    const bunksTitle = document.createElement("strong");
-    bunksTitle.textContent = "Bunks in this division:";
-    bunksSection.appendChild(bunksTitle);
+    // ========== CARD 2: BUNKS IN THIS DIVISION ==========
+    const bunksCard = document.createElement("div");
+    bunksCard.className = "field-section-card";
+
+    const bunksHeader = document.createElement("div");
+    bunksHeader.className = "field-section-header";
+    bunksHeader.innerHTML = `
+        <span class="field-section-title">Bunks in this Division</span>
+        <span class="field-section-tag">Click to edit / delete</span>
+    `;
+    bunksCard.appendChild(bunksHeader);
+
+    const bunksHelp = document.createElement("p");
+    bunksHelp.className = "field-section-help";
+    bunksHelp.textContent =
+        "Single-click a bunk to rename it. Double-click quickly to remove it from this division.";
+    bunksCard.appendChild(bunksHelp);
 
     const bunkList = document.createElement("div");
-    bunkList.style.marginTop = "8px";
+    bunkList.style.marginTop = "6px";
     bunkList.style.display = "flex";
     bunkList.style.flexWrap = "wrap";
     bunkList.style.gap = "6px";
@@ -587,14 +614,14 @@ function renderDivisionDetailPane() {
         msg.className = "muted";
         msg.style.margin = "4px 0 0 0";
         msg.textContent = "No bunks assigned yet. Add one below.";
-        bunksSection.appendChild(msg);
+        bunksCard.appendChild(msg);
     } else {
         const sorted = divObj.bunks.slice().sort(compareBunks);
         sorted.forEach(bunkName => {
             const pill = document.createElement("span");
             pill.textContent = bunkName;
 
-            // MATCH FIELDS CHIP LOOK: rounded rectangle pill
+            // Match Fields chip style
             pill.style.padding = "4px 8px";
             pill.style.borderRadius = "12px";
             pill.style.border = "1px solid #ccc";
@@ -607,7 +634,7 @@ function renderDivisionDetailPane() {
             pill.style.justifyContent = "center";
 
             let clickTimer = null;
-            const clickDelay = 260; // ms – wait this long before treating as "single click"
+            const clickDelay = 260; // ms
 
             function startInlineEdit() {
                 const old = bunkName;
@@ -640,7 +667,7 @@ function renderDivisionDetailPane() {
             pill.onclick = (e) => {
                 e.stopPropagation();
                 if (clickTimer) {
-                    // second click within delay -> double-click = delete
+                    // second click -> delete
                     clearTimeout(clickTimer);
                     clickTimer = null;
 
@@ -650,7 +677,7 @@ function renderDivisionDetailPane() {
                     renderDivisionDetailPane();
                     window.updateTable?.();
                 } else {
-                    // start single-click timer (edit)
+                    // wait for potential second click
                     clickTimer = setTimeout(() => {
                         clickTimer = null;
                         startInlineEdit();
@@ -662,9 +689,8 @@ function renderDivisionDetailPane() {
         });
     }
 
-    bunksSection.appendChild(bunkList);
+    bunksCard.appendChild(bunkList);
 
-    // add bunk row
     const addRow = document.createElement("div");
     addRow.style.marginTop = "10px";
     addRow.style.display = "flex";
@@ -695,15 +721,15 @@ function renderDivisionDetailPane() {
 
     addRow.appendChild(addInput);
     addRow.appendChild(addBtn);
-    bunksSection.appendChild(addRow);
+    bunksCard.appendChild(addRow);
 
-    pane.appendChild(bunksSection);
+    detailGrid.appendChild(bunksCard);
 }
 
 // -------------------- Persistence --------------------
 function saveData() {
     const app1Data = window.loadGlobalSettings?.().app1 || {};
-    const data = { 
+    const data = {
         ...app1Data,
         bunks,
         divisions,
@@ -748,7 +774,6 @@ function loadData() {
 
         savedSkeletons = data.savedSkeletons || {};
         skeletonAssignments = data.skeletonAssignments || {};
-
     } catch (e) {
         console.error("Error loading app1 data:", e);
     }
@@ -775,7 +800,6 @@ function initApp1() {
         enableColorEl.onchange = setupDivisionButtons;
     }
 
-    // Make the containers feel like Fields (same card/list look)
     const divisionButtonsContainer = document.getElementById("divisionButtons");
     if (divisionButtonsContainer) {
         divisionButtonsContainer.classList.add("master-list");
