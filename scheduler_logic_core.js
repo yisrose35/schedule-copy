@@ -1,11 +1,11 @@
 // ============================================================================
 // scheduler_logic_core.js
 //
-// HYBRID CORE VERSION (FIXED):
-// - Fixed Split Logic: Now calculates correct durations for split halves.
-// - Fixed League Generation: Ensures 'No Field' fallbacks are committed if valid fields fail.
-// - Architecture: GlobalAvailabilityManager (Precise Time/Collision)
-// - Logic: Dynamic Matchup Shuffler & Iterative Fallback (Restored)
+// HYBRID CORE VERSION (REPAIRED):
+// - Leagues: Reverted availability check to use 'fieldUsageBySlot' (Old Logic)
+//            to ensure games are generated even if GAM is strict.
+// - Splits: Explicitly calculates start/end minutes for halves.
+// - Architecture: Keeps GAM for Fillers, but uses Slot Logic for Leagues.
 // ============================================================================
 
 (function () {
@@ -47,21 +47,18 @@
     function getReservationsForField(field) { return reservations[field] || []; }
 
     function checkAvailability(field, start, end, meta, fieldProps) {
-        if (!fieldProps) return { valid: false, reason: "No Props" };
         if (!reservations[field]) return { valid: true };
         
         const existingBlocks = reservations[field];
         const capacityLimit = (fieldProps.sharable && !meta.isLeague) ? 2 : 1; 
 
-        // Strict overlap check: (StartA < EndB) && (EndA > StartB)
+        // Overlap = (StartA < EndB) && (EndA > StartB)
         const overlaps = existingBlocks.filter(r => r.start < end && r.end > start);
 
         if (overlaps.length === 0) return { valid: true };
 
-        // HARD FAIL: Capacity
         if (overlaps.length >= capacityLimit) return { valid: false, reason: "At Capacity" };
 
-        // LOGIC FAIL: Compatibility
         for (const overlap of overlaps) {
             if (overlap.isLeague || meta.isLeague) return { valid: false, reason: "League Exclusive" };
             if (overlap.div !== meta.divName) return { valid: false, reason: "Division Mismatch" };
@@ -183,7 +180,7 @@
     return pairs;
   }
 
-  // ====== LEAGUE SPORT OPTIMIZER (DFS) ======
+  // ====== LEAGUE SPORT OPTIMIZER ======
   function assignSportsMultiRound(matchups, availableLeagueSports, existingTeamCounts, leagueHistory, lastSportByTeamBase) {
     const sports = availableLeagueSports.slice();
     const baseTeamCounts = existingTeamCounts || {};
@@ -382,19 +379,19 @@
                 markFieldUsage({ divName: item.division, bunk, startTime: startMin, endTime: endMin, slots: allSlots }, item.event, fieldUsageBySlot);
             });
         } else if (item.type === 'split') {
-             // SPLIT LOGIC FIX:
-             // We DO NOT pass startMin/endMin to 'pin' or 'push'.
-             // We let 'markFieldUsage' derive the times from the slot indices.
-             // This ensures Swim doesn't reserve the whole hour.
-             
-             const mid = Math.ceil(allBunks.length/2);
+             // SPLIT LOGIC FIXED: Explicitly calculate mid-time
+             const midBunk = Math.ceil(allBunks.length/2);
              const midSlot = Math.ceil(allSlots.length/2);
-             const bunksTop = allBunks.slice(0, mid);
-             const bunksBot = allBunks.slice(mid);
+             
+             const bunksTop = allBunks.slice(0, midBunk);
+             const bunksBot = allBunks.slice(midBunk);
              const slots1 = allSlots.slice(0, midSlot);
              const slots2 = allSlots.slice(midSlot);
+
+             // Calculate times for halves
+             const midTime = startMin + (midSlot * INCREMENT_MINS);
              
-             const pin = (bunks, slots, act) => {
+             const pin = (bunks, slots, act, sTime, eTime) => {
                  bunks.forEach(b => {
                      slots.forEach((idx, i) => {
                          window.scheduleAssignments[b][idx] = {
@@ -402,22 +399,25 @@
                              _fixed: true, continuation: i>0, _activity: act
                          };
                      });
-                     // IMPORTANT: No startTime/endTime passed here. Derived from slots.
-                     markFieldUsage({divName:item.division, bunk:b, slots}, act, fieldUsageBySlot);
+                     // Explicit times passed to markFieldUsage
+                     markFieldUsage({divName:item.division, bunk:b, startTime:sTime, endTime:eTime, slots}, act, fieldUsageBySlot);
                  });
              };
-             const push = (bunks, slots, act) => {
+             const push = (bunks, slots, act, sTime, eTime) => {
                  bunks.forEach(b => schedulableSlotBlocks.push({
-                     divName: item.division, bunk:b, event:act, slots 
-                     // IMPORTANT: No startTime/endTime here.
+                     divName: item.division, bunk:b, event:act, startTime:sTime, endTime:eTime, slots
                  }));
              };
 
              const gaName = normalizeGA(item.subEvents?.[1]?.event) || 'General Activity Slot';
-             pin(bunksTop, slots1, 'Swim');
-             push(bunksBot, slots1, gaName);
-             push(bunksTop, slots2, gaName);
-             pin(bunksBot, slots2, 'Swim');
+             
+             // 1st Half (Start -> Mid)
+             pin(bunksTop, slots1, 'Swim', startMin, midTime);
+             push(bunksBot, slots1, gaName, startMin, midTime);
+             
+             // 2nd Half (Mid -> End)
+             push(bunksTop, slots2, gaName, midTime, endMin);
+             pin(bunksBot, slots2, 'Swim', midTime, endMin);
 
         } else {
             allBunks.forEach(bunk => {
@@ -434,7 +434,7 @@
     });
 
     // =================================================================
-    // PASS 3 & 3.5: LEAGUES (Hybrid Logic)
+    // PASS 3 & 3.5: LEAGUES (Old Slot-Based Logic + Hybrid Features)
     // =================================================================
     const processLeagues = (blocks, isSpecialty) => {
         const groups = {};
@@ -456,53 +456,57 @@
             const leagueTeams = (leagueEntry.teams || []).map(String);
             const bunks = Array.from(group.bunks).sort();
             const sports = (leagueEntry.sports || []).filter(s => fieldsBySport[s]);
+            const slotCount = group.slots.length || 1;
             
             let bestResult = { successCount: -1, assignments: [] };
             
             // 1. Matchups
             let matchups = isSpecialty ? pairRoundRobin(leagueTeams) : coreGetNextLeagueRound(leagueEntry.name, leagueTeams);
             
-            // 2. Simulation
+            // 2. Simulation (Using Old Slot Logic)
             const simulate = (candidateMatchups) => {
                 const nonBye = candidateMatchups.filter(p => p[0] !== 'BYE' && p[1] !== 'BYE');
                 const { assignments } = assignSportsMultiRound(nonBye, sports, {}, {}, {}); 
                 
                 let successes = 0;
-                const localUsedFields = new Set();
+                // Track usage within this specific simulation run (per slot index)
+                const simUsedFields = Array.from({length: slotCount}, () => new Set());
                 const results = [];
 
                 nonBye.forEach((pair, idx) => {
                     const prefSport = assignments[idx]?.sport || sports[0];
-                    // ITERATIVE FALLBACK: Try preferred, then ALL others
                     const candidateSports = [prefSport, ...sports.filter(s => s !== prefSport)];
-                    
                     let foundField = null;
                     let foundSport = null;
+                    let slotIdx = idx % slotCount; // Distribute games across available time slots if multiple
 
                     for (const s of candidateSports) {
                         const fields = fieldsBySport[s] || [];
                         for (const f of fields) {
-                            if (localUsedFields.has(f)) continue;
-                            const props = activityProperties[f];
+                            // OLD LOGIC: Check if slot is taken in global tracking + local simulation
+                            if (simUsedFields[slotIdx].has(f)) continue;
                             
-                            const avail = window.GlobalAvailabilityManager.checkAvailability(f, group.startTime, group.endTime, {
-                                divName: group.divName, bunk: "league", activity: "League", isLeague: true
-                            }, props);
-                            
-                            const isTimeOk = isTimeAvailable({startTime: group.startTime, endTime: group.endTime}, props);
+                            const globalCount = fieldUsageBySlot[group.slots[slotIdx]]?.[f]?.count || 0;
+                            if (globalCount > 0) continue; // Slot taken by someone else
 
-                            if (avail.valid && isTimeOk) {
-                                foundField = f;
-                                foundSport = s;
-                                break;
-                            }
+                            // Time Rules Check
+                            const props = activityProperties[f];
+                            if (!isTimeAvailable(group.slots[slotIdx], props)) continue;
+                            
+                            // Prop Checks (Divisions/Preferences)
+                            // We assume leagues override "Sharable" but respect "Allowed Divisions"
+                            if (props.allowedDivisions && !props.allowedDivisions.includes(group.divName)) continue;
+
+                            foundField = f;
+                            foundSport = s;
+                            break;
                         }
                         if (foundField) break;
                     }
 
                     if (foundField) {
                         successes++;
-                        localUsedFields.add(foundField);
+                        simUsedFields[slotIdx].add(foundField);
                         results.push({ pair, field: foundField, sport: foundSport });
                     } else {
                         results.push({ pair, field: null, sport: prefSport }); 
@@ -513,9 +517,8 @@
 
             bestResult = simulate(matchups);
 
-            // 3. Shuffle on Failure
+            // 3. Shuffle (Old Logic Feature)
             if (!isSpecialty && bestResult.successes < matchups.filter(p=>p[0]!=='BYE'&&p[1]!=='BYE').length) {
-                console.log(`Reshuffling league ${leagueEntry.name}...`);
                 const teamsCopy = [...leagueTeams];
                 for(let i=0; i<50; i++) {
                     shuffleArray(teamsCopy);
@@ -538,6 +541,7 @@
                 
                 if (res.field) {
                     label = `${teamA} vs ${teamB} (${res.sport}) @ ${res.field}`;
+                    // Write to BOTH systems
                     markFieldUsage({ ...group, _activity: res.sport }, res.field, fieldUsageBySlot);
                     pick = { field: res.field, sport: label, _h2h: true, _activity: res.sport };
                 } else {
@@ -634,13 +638,9 @@
   }
 
   function getBlockTimeRange(block) {
-    // Priority 1: Explicit times (if valid)
-    // Priority 2: Derived from slots
     let blockStartMin = typeof block.startTime === 'number' ? block.startTime : null;
     let blockEndMin = typeof block.endTime === 'number' ? block.endTime : null;
 
-    // If times are missing OR if we suspect they are broad parent times (e.g. for split blocks),
-    // we check if 'slots' gives us a more precise (shorter) duration.
     if (window.unifiedTimes && Array.isArray(block.slots) && block.slots.length > 0) {
       const minIndex = Math.min(...block.slots);
       const maxIndex = Math.max(...block.slots);
@@ -649,8 +649,6 @@
       if (firstSlot && lastSlot) {
         const derivedStart = new Date(firstSlot.start).getHours() * 60 + new Date(firstSlot.start).getMinutes();
         const derivedEnd = new Date(lastSlot.start).getHours() * 60 + new Date(lastSlot.start).getMinutes() + INCREMENT_MINS;
-        
-        // If explicit times don't exist, OR if derived times are tighter (e.g. split block), use derived.
         if (blockStartMin == null || derivedEnd - derivedStart < blockEndMin - blockStartMin) {
             blockStartMin = derivedStart;
             blockEndMin = derivedEnd;
@@ -701,7 +699,6 @@
     }
   }
 
-  // --- Re-Check Logic for Fillers ---
   function isTimeAvailable(timeObj, fieldProps) {
     let s, e;
     if (typeof timeObj === 'number') {
