@@ -1,13 +1,8 @@
 // -------------------- scheduler_ui.js --------------------
 //
-// --- FEATURES ---
-// - Staggered (YKLI) view: one table per division
-// - League mirroring via _allMatchups list
-// - Post-generation editing for ALL cells (generated + pins)
-// - Dismissal / Snacks / custom tiles shown as fixed pin tiles
-// - Split blocks: UI shows whatever the core actually scheduled
-// - League counters (League Game 1, 2, 3...) persisted day-to-day
-//
+// UPDATED:
+// - Fixed Split Block Math: Snaps split times to INCREMENT_MINS grid 
+//   to match Core logic and prevent "missing data" in odd-length blocks.
 // -----------------------------------------------------------------
 
 // ===== HELPERS =====
@@ -29,10 +24,10 @@ function parseTimeToMinutes(str) {
   if (Number.isNaN(hh) || Number.isNaN(mm) || mm < 0 || mm > 59) return null;
 
   if (mer) {
-    if (hh === 12) hh = mer === "am" ? 0 : 12; // 12am -> 0, 12pm -> 12
-    else if (mer === "pm") hh += 12; // 1pm -> 13
+    if (hh === 12) hh = mer === "am" ? 0 : 12;
+    else if (mer === "pm") hh += 12;
   } else {
-    return null; // AM/PM is required
+    return null;
   }
 
   return hh * 60 + mm;
@@ -46,9 +41,7 @@ function fieldLabel(f) {
 
 function fmtTime(d) {
   if (!d) return "";
-  if (typeof d === "string") {
-    d = new Date(d);
-  }
+  if (typeof d === "string") d = new Date(d);
   let h = d.getHours();
   const m = d.getMinutes().toString().padStart(2, "0");
   const ap = h >= 12 ? "PM" : "AM";
@@ -56,11 +49,8 @@ function fmtTime(d) {
   return `${h}:${m} ${ap}`;
 }
 
-/**
- * Helper: Converts minutes (e.g., 740) to a 12-hour string (e.g., "12:20 PM")
- */
 function minutesToTimeLabel(min) {
-  if (min == null || Number.isNaN(min)) return "Invalid Time"; // safety check
+  if (min == null || Number.isNaN(min)) return "Invalid Time";
   let h = Math.floor(min / 60);
   const m = (min % 60).toString().padStart(2, "0");
   const ap = h >= 12 ? "PM" : "AM";
@@ -68,20 +58,11 @@ function minutesToTimeLabel(min) {
   return `${h}:${m} ${ap}`;
 }
 
-// ===== MATCH GENERATED EVENTS (mirror of core) =====
+// ===== MATCH GENERATED EVENTS =====
 const UI_GENERATED_EVENTS = new Set([
-  "activity",
-  "activities",
-  "general activity",
-  "general activity slot",
-  "sports",
-  "sport",
-  "sports slot",
-  "special activity",
-  "league game",
-  "specialty league",
-  "speciality league",
-  "swim"
+  "activity", "activities", "general activity", "general activity slot",
+  "sports", "sport", "sports slot", "special activity",
+  "league game", "specialty league", "speciality league", "swim"
 ]);
 
 function uiIsGeneratedEventName(name) {
@@ -91,17 +72,12 @@ function uiIsGeneratedEventName(name) {
 
 // ===== EDITING FUNCTIONS =====
 
-/**
- * Helper: Finds all unified slot indices within a time range.
- */
 function findSlotsForRange(startMin, endMin) {
   const slots = [];
   if (!window.unifiedTimes) return slots;
   for (let i = 0; i < window.unifiedTimes.length; i++) {
     const slot = window.unifiedTimes[i];
-    const slotStart =
-      new Date(slot.start).getHours() * 60 + new Date(slot.start).getMinutes();
-    // Slot starts within the block
+    const slotStart = new Date(slot.start).getHours() * 60 + new Date(slot.start).getMinutes();
     if (slotStart >= startMin && slotStart < endMin) {
       slots.push(i);
     }
@@ -109,22 +85,14 @@ function findSlotsForRange(startMin, endMin) {
   return slots;
 }
 
-/**
- * Handles the editing of a single schedule cell.
- */
 function editCell(bunkName, startMin, endMin, currentActivity) {
   if (!bunkName) return;
 
   const newActivityName = prompt(
-    `Edit activity for ${bunkName}\n(${minutesToTimeLabel(
-      startMin
-    )} - ${minutesToTimeLabel(
-      endMin
-    )}):\n\n(Enter 'CLEAR' or 'FREE' to empty the slot)`,
+    `Edit activity for ${bunkName}\n(${minutesToTimeLabel(startMin)} - ${minutesToTimeLabel(endMin)}):\n\n(Enter 'CLEAR' or 'FREE' to empty the slot)`,
     currentActivity
   );
 
-  // User cancelled
   if (newActivityName === null) return;
 
   const finalActivityName = newActivityName.trim();
@@ -139,146 +107,91 @@ function editCell(bunkName, startMin, endMin, currentActivity) {
     window.scheduleAssignments[bunkName] = new Array(window.unifiedTimes.length);
   }
 
-  if (
-    finalActivityName === "" ||
-    finalActivityName.toUpperCase() === "CLEAR" ||
-    finalActivityName.toUpperCase() === "FREE"
-  ) {
-    // Clear the slots by setting to "Free"
+  if (finalActivityName === "" || finalActivityName.toUpperCase() === "CLEAR" || finalActivityName.toUpperCase() === "FREE") {
     slotsToUpdate.forEach((slotIndex, idx) => {
       window.scheduleAssignments[bunkName][slotIndex] = {
-        field: "Free",
-        sport: null,
-        continuation: idx > 0, // "Free" can also be a block
-        _fixed: true, // Mark as manually set
-        _h2h: false,
-        _activity: "Free"
+        field: "Free", sport: null, continuation: idx > 0, _fixed: true, _h2h: false, _activity: "Free"
       };
     });
   } else {
-    // Set the new activity
     slotsToUpdate.forEach((slotIndex, idx) => {
       window.scheduleAssignments[bunkName][slotIndex] = {
-        field: finalActivityName,
-        sport: null, // It's a custom pin, not a sport/field combo
-        continuation: idx > 0, // Mark as continuation
-        _fixed: true, // Mark as a manual override
-        _h2h: false,
-        vs: null,
-        _activity: finalActivityName
+        field: finalActivityName, sport: null, continuation: idx > 0, _fixed: true, _h2h: false, vs: null, _activity: finalActivityName
       };
     });
   }
 
-  // Save and re-render
   saveSchedule();
   updateTable();
 }
 
-// ===== Main updateTable function =====
-
 function updateTable() {
   const container = document.getElementById("scheduleTable");
   if (!container) return;
-
-  // Always render the Staggered View
   renderStaggeredView(container);
 }
 
-/**
- * Helper function to get the schedule entry for a slot.
- */
 function getEntry(bunk, slotIndex) {
   const assignments = window.scheduleAssignments || {};
   if (bunk && assignments[bunk] && assignments[bunk][slotIndex]) {
     return assignments[bunk][slotIndex];
   }
-  return null; // Return null if empty or bunk is invalid
+  return null;
 }
 
-/**
- * Helper to format a schedule entry into text.
- */
 function formatEntry(entry) {
   if (!entry) return "";
-
-  // Safety: if core flagged it, force label
-  if (entry._isDismissal) {
-    return "Dismissal";
-  }
-  if (entry._isSnack) {
-    return "Snacks";
-  }
+  if (entry._isDismissal) return "Dismissal";
+  if (entry._isSnack) return "Snacks";
 
   const label = fieldLabel(entry.field) || "";
 
-  if (entry._h2h) {
-    // League game: sport holds matchup label
-    return entry.sport || "League Game";
-  } else if (entry._fixed) {
-    // Fixed/pinned activities (Lunch, Learning, etc.)
-    return label || entry._activity || "";
-  } else if (entry.sport) {
-    return `${label} – ${entry.sport}`;
-  } else {
-    return label;
-  }
+  if (entry._h2h) return entry.sport || "League Game";
+  else if (entry._fixed) return label || entry._activity || "";
+  else if (entry.sport) return `${label} – ${entry.sport}`;
+  else return label;
 }
 
-/**
- * Helper: Finds the *first* 30-min slot index
- * that matches the start time of a custom block.
- */
 function findFirstSlotForTime(startMin) {
-  if (startMin === null || !window.unifiedTimes) return -1; // safety
+  if (startMin === null || !window.unifiedTimes) return -1;
   for (let i = 0; i < window.unifiedTimes.length; i++) {
     const slot = window.unifiedTimes[i];
-    const slotStart =
-      new Date(slot.start).getHours() * 60 + new Date(slot.start).getMinutes();
-    // Failsafe: find the closest one
-    if (slotStart >= startMin && slotStart < startMin + INCREMENT_MINS) {
+    const slotStart = new Date(slot.start).getHours() * 60 + new Date(slot.start).getMinutes();
+    // Relaxed check: Allow slot to be "close enough" (within 1 min) to handle rounding errors
+    if (Math.abs(slotStart - startMin) < 2) {
       return i;
     }
   }
   return -1;
 }
 
-/**
- * Renders the "Staggered" (YKLI) view
- * --- one table PER DIVISION ---
- * --- with LEAGUE MIRRORING & EDIT-ON-CLICK ---
- * --- and explicit Dismissal + Snacks + custom pin tiles ---
- */
+// ===== RENDER LOGIC =====
+
 function renderStaggeredView(container) {
   container.innerHTML = "";
 
   const availableDivisions = window.availableDivisions || [];
   const divisions = window.divisions || {};
-  const scheduleAssignments = window.scheduleAssignments || {};
-
+  
   const dailyData = window.loadCurrentDailyData?.() || {};
   const manualSkeleton = dailyData.manualSkeleton || [];
 
-  // Load previous day's league counters
   const prevDailyData = window.loadPreviousDailyData?.() || {};
   const prevCounters = prevDailyData.leagueDayCounters || {};
-  const todayCounters = {}; // This will be saved at the end
+  const todayCounters = {};
 
   if (manualSkeleton.length === 0) {
-    container.innerHTML =
-      "<p>No schedule built for this day. Go to the 'Daily Adjustments' tab to build one.</p>";
+    container.innerHTML = "<p>No schedule built for this day. Go to the 'Daily Adjustments' tab to build one.</p>";
     return;
   }
 
-  // Wrapper for side-by-side styling
   const wrapper = document.createElement("div");
   wrapper.className = "schedule-view-wrapper";
   container.appendChild(wrapper);
 
-  // 1. Loop over each division and create a separate table
   availableDivisions.forEach((div) => {
     const bunks = (divisions[div]?.bunks || []).sort();
-    if (bunks.length === 0) return; // no bunks, no table
+    if (bunks.length === 0) return;
 
     const table = document.createElement("table");
     table.className = "schedule-division-table";
@@ -286,11 +199,11 @@ function renderStaggeredView(container) {
 
     // Header
     const thead = document.createElement("thead");
-    const tr1 = document.createElement("tr"); // Division name
-    const tr2 = document.createElement("tr"); // Column titles
+    const tr1 = document.createElement("tr");
+    const tr2 = document.createElement("tr");
 
     const thDiv = document.createElement("th");
-    thDiv.colSpan = 1 + bunks.length; // 1 for Time, N for bunks
+    thDiv.colSpan = 1 + bunks.length;
     thDiv.textContent = div;
     thDiv.style.background = divisions[div]?.color || "#333";
     thDiv.style.color = "#fff";
@@ -316,39 +229,27 @@ function renderStaggeredView(container) {
 
     // Body
     const tbody = document.createElement("tbody");
-
-    // Pre-filter, validate, and sort blocks for this division
     const tempSortedBlocks = [];
+    
     manualSkeleton.forEach((item) => {
       if (item.division === div) {
         const startMin = parseTimeToMinutes(item.startTime);
         const endMin = parseTimeToMinutes(item.endTime);
-
-        if (startMin === null || endMin === null) {
-          return; // invalid time
-        }
+        if (startMin === null || endMin === null) return;
 
         const divData = divisions[div];
         if (divData) {
           const divStartMin = parseTimeToMinutes(divData.startTime);
           const divEndMin = parseTimeToMinutes(divData.endTime);
-
-          if (divStartMin !== null && endMin <= divStartMin) {
-            return; // too early
-          }
-          if (divEndMin !== null && startMin >= divEndMin) {
-            return; // too late
-          }
+          if (divStartMin !== null && endMin <= divStartMin) return;
+          if (divEndMin !== null && startMin >= divEndMin) return;
         }
-
         tempSortedBlocks.push({ item, startMin, endMin });
       }
     });
 
-    // Sort by start time
     tempSortedBlocks.sort((a, b) => a.startMin - b.startMin);
 
-    // Build final blocks with league/specialty counters
     const prevDivCounts = prevCounters[div] || { league: 0, specialty: 0 };
     let todayLeagueCount = prevDivCounts.league;
     let todaySpecialtyCount = prevDivCounts.specialty;
@@ -357,7 +258,6 @@ function renderStaggeredView(container) {
 
     tempSortedBlocks.forEach((block) => {
       const { item, startMin, endMin } = block;
-
       let eventName = item.event;
 
       if (item.event === "League Game") {
@@ -369,9 +269,7 @@ function renderStaggeredView(container) {
       }
 
       divisionBlocks.push({
-        label: `${minutesToTimeLabel(startMin)} - ${minutesToTimeLabel(
-          endMin
-        )}`,
+        label: `${minutesToTimeLabel(startMin)} - ${minutesToTimeLabel(endMin)}`,
         startMin,
         endMin,
         event: eventName,
@@ -379,35 +277,26 @@ function renderStaggeredView(container) {
       });
     });
 
-    todayCounters[div] = {
-      league: todayLeagueCount,
-      specialty: todaySpecialtyCount
-    };
+    todayCounters[div] = { league: todayLeagueCount, specialty: todaySpecialtyCount };
 
-    const uniqueBlocks = divisionBlocks.filter(
-      (block, index, self) =>
+    const uniqueBlocks = divisionBlocks.filter((block, index, self) =>
         index === self.findIndex((t) => t.label === block.label)
     );
 
-    // Flatten split blocks into two half-blocks (UI-level time split;
-    // content comes from scheduleAssignments, not from this split)
     const flattenedBlocks = [];
     uniqueBlocks.forEach((block) => {
-      if (
-        block.type === "split" &&
-        block.startMin !== null &&
-        block.endMin !== null
-      ) {
-        const midMin = Math.round(
-          block.startMin + (block.endMin - block.startMin) / 2
-        );
+      if (block.type === "split" && block.startMin !== null && block.endMin !== null) {
+        // --- FIX: SNAP TO GRID ---
+        // Calculate duration in Slots, not just minutes
+        const durationMins = block.endMin - block.startMin;
+        const totalSlots = Math.floor(durationMins / INCREMENT_MINS); 
+        const firstHalfSlots = Math.ceil(totalSlots / 2); // Core uses ceil for first half
+        const midMin = block.startMin + (firstHalfSlots * INCREMENT_MINS);
 
         // First half
         flattenedBlocks.push({
           ...block,
-          label: `${minutesToTimeLabel(block.startMin)} - ${minutesToTimeLabel(
-            midMin
-          )}`,
+          label: `${minutesToTimeLabel(block.startMin)} - ${minutesToTimeLabel(midMin)}`,
           startMin: block.startMin,
           endMin: midMin,
           splitPart: 1
@@ -415,9 +304,7 @@ function renderStaggeredView(container) {
         // Second half
         flattenedBlocks.push({
           ...block,
-          label: `${minutesToTimeLabel(midMin)} - ${minutesToTimeLabel(
-            block.endMin
-          )}`,
+          label: `${minutesToTimeLabel(midMin)} - ${minutesToTimeLabel(block.endMin)}`,
           startMin: midMin,
           endMin: block.endMin,
           splitPart: 2
@@ -427,13 +314,11 @@ function renderStaggeredView(container) {
       }
     });
 
-    // Render rows
     if (flattenedBlocks.length === 0) {
       const tr = document.createElement("tr");
       const td = document.createElement("td");
       td.colSpan = bunks.length + 1;
-      td.textContent =
-        "No schedule blocks found for this division in the template.";
+      td.textContent = "No schedule blocks found for this division in the template.";
       td.className = "grey-cell";
       tr.appendChild(td);
       tbody.appendChild(tr);
@@ -451,17 +336,13 @@ function renderStaggeredView(container) {
       tr.appendChild(tdTime);
 
       // Activity cells
-      if (
-        eventBlock.event.startsWith("League Game") ||
-        eventBlock.event.startsWith("Specialty League")
-      ) {
-        // LEAGUE / SPECIALTY: merged cell with mirrored games
+      if (eventBlock.event.startsWith("League Game") || eventBlock.event.startsWith("Specialty League")) {
         const tdLeague = document.createElement("td");
         tdLeague.colSpan = bunks.length;
         tdLeague.style.verticalAlign = "top";
         tdLeague.style.textAlign = "left";
         tdLeague.style.padding = "5px 8px";
-        tdLeague.style.background = "#f0f8f0"; // light green
+        tdLeague.style.background = "#f0f8f0";
 
         const firstSlotIndex = findFirstSlotForTime(eventBlock.startMin);
         let allMatchups = [];
@@ -487,32 +368,18 @@ function renderStaggeredView(container) {
         tdLeague.innerHTML = html;
         tr.appendChild(tdLeague);
       } else {
-        // REGULAR / DISMISSAL / SNACKS / CUSTOM PINS / GENERATED / SPLIT
         const rawName = eventBlock.event || "";
         const nameLc = rawName.toLowerCase();
-
         const isDismissalBlock = nameLc.includes("dismiss");
         const isSnackBlock = nameLc.includes("snack");
 
-        // GENERATED vs PIN logic:
-        // 1) If the whole name matches a known generated type (Activity, Swim, etc.)
-        // 2) Or if it's a split block
-        // 3) Or if it's a combo like "Swim / Activity" where ANY part is generated
         let isGeneratedBlock = uiIsGeneratedEventName(rawName);
-
-        if (eventBlock.type === "split") {
-          isGeneratedBlock = true;
-        } else if (!isGeneratedBlock && rawName.includes("/")) {
+        if (!isGeneratedBlock && rawName.includes("/")) {
           const parts = rawName.split("/").map((s) => s.trim().toLowerCase());
-          const anyGeneratedPart = parts.some((p) => UI_GENERATED_EVENTS.has(p));
-          if (anyGeneratedPart) {
-            isGeneratedBlock = true;
-          }
+          if (parts.some((p) => UI_GENERATED_EVENTS.has(p))) isGeneratedBlock = true;
         }
 
-        // PIN = NOT dismissal, NOT snack, NOT generated
-        const isPinBlock =
-          !isGeneratedBlock && !isDismissalBlock && !isSnackBlock;
+        const isPinBlock = !isGeneratedBlock && !isDismissalBlock && !isSnackBlock;
 
         bunks.forEach((bunk) => {
           const tdActivity = document.createElement("td");
@@ -521,66 +388,44 @@ function renderStaggeredView(container) {
 
           const startMin = eventBlock.startMin;
           const endMin = eventBlock.endMin;
-
-          // This string is what will go into the prompt on click
           let cellActivityName = "";
 
-          // Dismissal row
           if (isDismissalBlock) {
             cellActivityName = "Dismissal";
-            tdActivity.textContent = cellActivityName;
-            tdActivity.style.background = "#ffecec"; // light red/pink
+            tdActivity.style.background = "#ffecec";
             tdActivity.style.fontWeight = "bold";
-          }
-          // Snacks row
-          else if (isSnackBlock) {
+          } else if (isSnackBlock) {
             cellActivityName = "Snacks";
-            tdActivity.textContent = cellActivityName;
-            tdActivity.style.background = "#e8f5e9"; // light green-ish
+            tdActivity.style.background = "#e8f5e9";
             tdActivity.style.fontWeight = "bold";
-          }
-          // Any other NON-GENERATED tile = PIN TILE
-          // (Lunch, Regroup, Lineup, Cleanup, etc.)
-          else if (isPinBlock) {
+          } else if (isPinBlock) {
             cellActivityName = rawName || "Pinned";
-            tdActivity.textContent = cellActivityName;
-            tdActivity.style.background = "#fff8e1"; // light yellow for pins
+            tdActivity.style.background = "#fff8e1";
             tdActivity.style.fontWeight = "bold";
-          }
-          // GENERATED SLOTS (Activity / Sports / Special Activity / Swim / Split)
-          // -> show whatever the scheduler actually picked
-          else {
+          } else {
             const slotIndex = findFirstSlotForTime(startMin);
             const entry = getEntry(bunk, slotIndex);
 
             if (entry) {
               cellActivityName = formatEntry(entry);
-
               if (entry._h2h) {
                 tdActivity.style.background = "#e8f4ff";
                 tdActivity.style.fontWeight = "bold";
               } else if (entry._fixed) {
-                tdActivity.style.background = "#fff8e1"; // fixed/pinned color
+                tdActivity.style.background = "#fff8e1";
               }
-
-              tdActivity.textContent = cellActivityName;
             } else {
-              // fallback so prompt isn't empty
               cellActivityName = rawName;
-              tdActivity.textContent = cellActivityName;
             }
           }
-
-          // Apply the click handler to ALL cells (pins + generated)
+          tdActivity.textContent = cellActivityName;
           tdActivity.style.cursor = "pointer";
           tdActivity.title = "Click to edit this activity";
-          tdActivity.onclick = () =>
-            editCell(bunk, startMin, endMin, cellActivityName);
+          tdActivity.onclick = () => editCell(bunk, startMin, endMin, cellActivityName);
 
           tr.appendChild(tdActivity);
         });
       }
-
       tbody.appendChild(tr);
     });
 
@@ -588,7 +433,6 @@ function renderStaggeredView(container) {
     wrapper.appendChild(table);
   });
 
-  // Save league counters to today's data
   window.saveCurrentDailyData?.("leagueDayCounters", todayCounters);
 }
 
@@ -596,18 +440,10 @@ function renderStaggeredView(container) {
 
 function saveSchedule() {
   try {
-    window.saveCurrentDailyData?.(
-      "scheduleAssignments",
-      window.scheduleAssignments
-    );
-    window.saveCurrentDailyData?.(
-      "leagueAssignments",
-      window.leagueAssignments
-    );
+    window.saveCurrentDailyData?.("scheduleAssignments", window.scheduleAssignments);
+    window.saveCurrentDailyData?.("leagueAssignments", window.leagueAssignments);
     window.saveCurrentDailyData?.("unifiedTimes", window.unifiedTimes);
-  } catch (e) {
-    // save failed
-  }
+  } catch (e) {}
 }
 
 function reconcileOrRenderSaved() {
@@ -627,7 +463,6 @@ function reconcileOrRenderSaved() {
     window.leagueAssignments = {};
     window.unifiedTimes = [];
   }
-
   updateTable();
 }
 
