@@ -600,8 +600,11 @@
     const leftSide = document.createElement("div");
     leftSide.className = "division-header-left";
 
-    const dot = document.createElement("span");
-    dot.className = "division-status-dot";
+   const dot = document.createElement("span");
+dot.className = "division-status-dot";
+dot.style.backgroundColor = divObj.color || "#16a34a";
+dot.style.boxShadow = `0 0 0 4px ${ (divObj.color || "#16a34a") }33`; // 33 = alpha
+
 
     const titleName = document.createElement("span");
     titleName.textContent = selectedDivision;
