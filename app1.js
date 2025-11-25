@@ -1,5 +1,3 @@
-
-
 // =================================================================
 // app1.js
 //
@@ -500,11 +498,15 @@ function renderDivisionDetailPane() {
         sorted.forEach(bunkName => {
             const chip = document.createElement("span");
             chip.textContent = bunkName;
-            chip.style.padding = "4px 8px";
-            chip.style.borderRadius = "12px";
-            chip.style.border = "1px solid #ccc";
+
+            // NEW: style bunk chips like the field chips (same pill shape / colors)
+            chip.style.padding = "4px 9px";
+            chip.style.borderRadius = "999px";
+            chip.style.border = "1px solid #cbd5e1";
             chip.style.cursor = "pointer";
-            chip.style.background = "#f0f0f0";
+            chip.style.backgroundColor = "#f3f4f6";
+            chip.style.color = "#111827";
+            chip.style.fontSize = "0.8rem";
             chip.style.display = "inline-flex";
             chip.style.alignItems = "center";
             chip.style.gap = "4px";
@@ -521,6 +523,8 @@ function renderDivisionDetailPane() {
             xBtn.style.background = "transparent";
             xBtn.style.cursor = "pointer";
             xBtn.style.fontSize = "14px";
+            xBtn.style.lineHeight = "1";
+            xBtn.style.padding = "0 0 0 2px";
             xBtn.onclick = e => {
                 e.stopPropagation();
                 const idx = divObj.bunks.indexOf(bunkName);
