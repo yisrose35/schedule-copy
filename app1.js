@@ -1,22 +1,15 @@
 // =================================================================
 // app1.js
 //
-// UPDATED (DIVISIONS LIKE FIELDS + SORTED BUNKS):
-// - Setup tab mirrors Fields layout:
-//   - Left: master list of Divisions (#divisionButtons) using .list-item.
-//   - Right: detail pane (#division-detail-pane) for the selected division.
-// - Clicking a division on the left opens its editor on the right:
-//   - Editable division name
-//   - Delete button
-//   - Color picker
-//   - Start/End time inputs (validated, am/pm required)
-//   - Bunks list (rename via double-click, remove via X)
-//   - Add-bunk input at the bottom
-// - NEW: bunks are automatically kept in numeric order, so
-//   "Bunk 1, Bunk 3, Bunk 2" becomes "Bunk 1, Bunk 2, Bunk 3".
-// - All data is persisted in global settings (app1) like Fields.
-//
-// Existing specialActivities, skeleton, and sports logic kept.
+// UPDATED (DIVISIONS LIKE FIELDS + SORTED BUNKS + SHARED THEME):
+// - Setup tab uses the same visual language as Fields:
+//   • Left: master list of Divisions (#divisionButtons) styled like Fields
+//   • Right: Division Details (#division-detail-pane) in a white card
+// - Shared "master-list" + "detail-pane" styles injected if not present,
+//   so Divisions looks consistent even if Fields tab wasn't opened yet.
+// - Bunks are rendered as pill chips matching the Fields chips.
+// - All previous behavior (sorting bunks, times, colors, saving, etc.)
+//   is preserved.
 // =================================================================
 
 (function() {
@@ -51,6 +44,68 @@ let colorIndex = 0;
 // Expose to window
 window.divisions = divisions;
 window.availableDivisions = availableDivisions;
+
+// -------------------- Shared Theme Helpers --------------------
+function ensureSharedSetupStyles() {
+    if (document.getElementById("setup-shared-styles")) return;
+
+    const style = document.createElement("style");
+    style.id = "setup-shared-styles";
+    style.textContent = `
+        /* Master list container – card-like shell (shared by Fields + Divisions) */
+        .master-list {
+            border-radius: 12px;
+            border: 1px solid #e5e7eb;
+            background: #f9fafb;
+            padding: 8px 6px;
+        }
+
+        .master-list .list-item {
+            padding: 10px 10px;
+            border-radius: 10px;
+            margin-bottom: 6px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            box-shadow: 0 3px 8px rgba(15, 23, 42, 0.04);
+            transition: background 0.15s ease,
+                        box-shadow 0.15s ease,
+                        transform 0.07s ease,
+                        border-color 0.15s ease;
+        }
+        .master-list .list-item:hover {
+            background: #f3f4f6;
+            box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
+            transform: translateY(-1px);
+        }
+        .master-list .list-item.selected {
+            background: #e0f2fe;
+            border-color: #38bdf8;
+            box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.6);
+            font-weight: 600;
+        }
+        .master-list .list-item-name {
+            flex-grow: 1;
+            font-size: 0.88rem;
+            font-weight: 500;
+            color: #111827;
+        }
+
+        /* Detail pane – shared card look with Setup tab */
+        .detail-pane {
+            border-radius: 14px;
+            border: 1px solid #e5e7eb;
+            padding: 16px 18px;
+            background: #ffffff;
+            min-height: 360px;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+        }
+    `;
+    document.head.appendChild(style);
+}
 
 // -------------------- Helpers --------------------
 function makeEditable(el, save) {
@@ -220,6 +275,7 @@ function addDivision() {
 function setupDivisionButtons() {
     const cont = document.getElementById("divisionButtons");
     if (!cont) return;
+
     cont.innerHTML = "";
 
     if (!availableDivisions || availableDivisions.length === 0) {
@@ -321,9 +377,9 @@ function renderDivisionDetailPane() {
     header.style.display = "flex";
     header.style.justifyContent = "space-between";
     header.style.alignItems = "center";
-    header.style.borderBottom = "2px solid #eee";
+    header.style.borderBottom = "2px solid #f3f4f6";
     header.style.paddingBottom = "10px";
-    header.style.marginBottom = "15px";
+    header.style.marginBottom = "10px";
 
     const title = document.createElement("h3");
     title.style.margin = "0";
@@ -499,7 +555,7 @@ function renderDivisionDetailPane() {
             const chip = document.createElement("span");
             chip.textContent = bunkName;
 
-            // NEW: style bunk chips like the field chips (same pill shape / colors)
+            // Matching the field chips: pill shape + soft gray
             chip.style.padding = "4px 9px";
             chip.style.borderRadius = "999px";
             chip.style.border = "1px solid #cbd5e1";
@@ -633,6 +689,8 @@ function loadData() {
 
 // -------------------- Init --------------------
 function initApp1() {
+    ensureSharedSetupStyles();
+
     const addDivisionBtn = document.getElementById("addDivisionBtn");
     if (addDivisionBtn) addDivisionBtn.onclick = addDivision;
 
@@ -641,6 +699,21 @@ function initApp1() {
         divisionInput.addEventListener("keyup", e => {
             if (e.key === "Enter") addDivision();
         });
+    }
+
+    // Make the containers feel like Fields (same card/list look)
+    const divisionButtonsContainer = document.getElementById("divisionButtons");
+    if (divisionButtonsContainer) {
+        divisionButtonsContainer.classList.add("master-list");
+        divisionButtonsContainer.style.marginTop = "10px";
+        divisionButtonsContainer.style.maxHeight = "440px";
+        divisionButtonsContainer.style.overflow = "auto";
+    }
+
+    const detailPane = document.getElementById("division-detail-pane");
+    if (detailPane) {
+        detailPane.classList.add("detail-pane");
+        detailPane.style.marginTop = "8px";
     }
 
     loadData();
