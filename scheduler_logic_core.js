@@ -1,10 +1,11 @@
 // ============================================================================
 // scheduler_logic_core.js
 //
-// FIXED & VERIFIED:
-// - Syntax errors resolved (Illegal return statements).
-// - "Overlap Logic" implemented for accurate slot blocking.
-// - Leagues are correctly triggered.
+// "SUPER GEMINI" EDITION (Full Restoration):
+// - RESTORED: The complex DFS Sport Optimizer (Smart Balancing).
+// - FIXED: Syntax error (Illegal return) resolved by strictly scoping functions.
+// - FIXED: Overlap Logic ensures 12:20pm blocks register in 12:00pm slots.
+// - FIXED: ProcessLeagues logic fully integrated.
 // ============================================================================
 
 (function () {
@@ -102,6 +103,16 @@
       return (f && typeof f === 'object' && f.name) ? f.name : f; 
   }
 
+  function fmtTime(d) {
+    if (!d) return '';
+    if (typeof d === 'string') d = new Date(d);
+    let h = d.getHours();
+    let m = d.getMinutes().toString().padStart(2, '0');
+    const ap = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return `${h}:${m} ${ap}`;
+  }
+
   function shuffleArray(array) {
     for (let i = array.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -180,13 +191,85 @@
     return pairs;
   }
 
+  // ====== SMART DFS SPORT OPTIMIZER (RESTORED) ======
   function assignSportsMultiRound(matchups, availableLeagueSports, existingTeamCounts) {
     const sports = availableLeagueSports.slice();
     const baseTeamCounts = existingTeamCounts || {};
+    const allTeams = new Set();
+    matchups.forEach(([a, b]) => { if(a && b) { allTeams.add(String(a)); allTeams.add(String(b)); }});
+
+    const workCounts = {};
+    allTeams.forEach(t => workCounts[t] = { ...baseTeamCounts[t] });
     
-    // Simple fallback distribution if optimization is too heavy
-    const assignments = matchups.map((_, i) => ({ sport: sports[i % sports.length] }));
-    return { assignments: assignments, updatedTeamCounts: baseTeamCounts };
+    // Track total usage of each sport to ensure variety
+    const sportTotals = {};
+    sports.forEach(s => sportTotals[s] = 0);
+    for(const t in workCounts) {
+        for(const s in workCounts[t]) sportTotals[s] = (sportTotals[s]||0) + workCounts[t][s];
+    }
+
+    let bestPlan = null;
+    let bestScore = Infinity;
+    let bestCounts = null;
+    let nodesVisited = 0;
+    const MAX_NODES = 5000; // Safety brake
+
+    function dfs(idx, plan, currentCost) {
+        if (currentCost >= bestScore) return;
+        if (nodesVisited > MAX_NODES) return;
+        
+        if (idx === matchups.length) {
+            if (currentCost < bestScore) {
+                bestScore = currentCost;
+                bestPlan = plan.slice();
+                bestCounts = JSON.parse(JSON.stringify(workCounts));
+            }
+            return;
+        }
+        nodesVisited++;
+        const [teamA, teamB] = matchups[idx];
+        
+        // Sort sports by current global usage to try least-used first
+        const orderedSports = sports.slice().sort((a, b) => (sportTotals[a] - sportTotals[b]) || (Math.random() - 0.5));
+
+        for (const sport of orderedSports) {
+            const prevA = workCounts[teamA][sport] || 0;
+            const prevB = workCounts[teamB][sport] || 0;
+            let delta = 0;
+            
+            // High penalty for repeating sports
+            if (prevA > 0) delta += 10 * prevA;
+            if (prevB > 0) delta += 10 * prevB;
+            
+            const avg = Object.values(sportTotals).reduce((a,b)=>a+b,0) / sports.length;
+            if (sportTotals[sport] > avg) delta += 5;
+
+            workCounts[teamA][sport] = prevA + 1;
+            workCounts[teamB][sport] = prevB + 1;
+            sportTotals[sport]++;
+
+            if (currentCost + delta < bestScore) {
+                plan.push({ sport });
+                dfs(idx + 1, plan, currentCost + delta);
+                plan.pop();
+            }
+
+            workCounts[teamA][sport] = prevA;
+            workCounts[teamB][sport] = prevB;
+            sportTotals[sport]--;
+            if(prevA===0) delete workCounts[teamA][sport];
+            if(prevB===0) delete workCounts[teamB][sport];
+        }
+    }
+
+    dfs(0, [], 0);
+
+    // Fallback if DFS finds nothing (rare)
+    if (!bestPlan) {
+        const fallback = matchups.map((_, i) => ({ sport: sports[i % sports.length] }));
+        return { assignments: fallback, updatedTeamCounts: baseTeamCounts };
+    }
+    return { assignments: bestPlan, updatedTeamCounts: bestCounts || baseTeamCounts };
   }
 
   // =====================================================================
@@ -202,7 +285,7 @@
     if (!manualSkeleton || manualSkeleton.length === 0) return false;
 
     const data = loadAndFilterData();
-    if (!data) return false; // Safety check
+    if (!data) return false;
 
     const {
       divisions, availableDivisions, activityProperties, allActivities, h2hActivities,
@@ -216,7 +299,7 @@
 
     const timestamp = Date.now();
 
-    // --- Time Grid Calculation ---
+    // --- Pass 0: Build Unified Time Grid ---
     let earliestMin = null, latestMin = null;
     Object.values(divisions).forEach((div) => {
       const s = parseTimeToMinutes(div.startTime);
@@ -228,7 +311,6 @@
     if (latestMin === null) latestMin = 960; 
     if (latestMin <= earliestMin) latestMin = earliestMin + 60;
 
-    // Populate unifiedTimes
     const baseDate = new Date(1970, 0, 1, 0, 0, 0);
     let currentMin = earliestMin;
     while (currentMin < latestMin) {
@@ -236,7 +318,6 @@
       let dStart = new Date(baseDate.getTime() + currentMin * 60000);
       let dEnd = new Date(baseDate.getTime() + nextMin * 60000);
       
-      // Simple Time Formatter
       const fmt = (d) => {
           let h = d.getHours(), m = d.getMinutes(), ap = h >= 12 ? 'PM' : 'AM';
           h = h % 12 || 12;
@@ -251,14 +332,13 @@
       currentMin = nextMin;
     }
     
-    // Init Arrays
     availableDivisions.forEach((divName) => {
       (divisions[divName]?.bunks || []).forEach((bunk) => {
         window.scheduleAssignments[bunk] = new Array(window.unifiedTimes.length);
       });
     });
 
-    // --- Helpers ---
+    // --- Helper Functions ---
     function findSlotsForRange(startMin, endMin) {
         const slots = [];
         if (!window.unifiedTimes || startMin == null || endMin == null) return slots;
@@ -316,9 +396,36 @@
         }
     }
 
-    // --- PASS 2: Skeletons & Fixed Items ---
+    // --- Pass 1.5: Bunk Overrides (Pinned Activities) ---
+    try {
+        const dailyData = window.loadCurrentDailyData?.() || {};
+        (dailyData.bunkActivityOverrides || []).forEach((override) => {
+            const startMin = parseTimeToMinutes(override.startTime);
+            const endMin = parseTimeToMinutes(override.endTime);
+            const slots = findSlotsForRange(startMin, endMin);
+            const bunk = override.bunk;
+            if (window.scheduleAssignments[bunk] && slots.length > 0) {
+                slots.forEach((slotIndex, idx) => {
+                    if (!window.scheduleAssignments[bunk][slotIndex]) {
+                        window.scheduleAssignments[bunk][slotIndex] = {
+                            field: { name: override.activity },
+                            sport: null,
+                            continuation: idx > 0,
+                            _fixed: true,
+                            _h2h: false,
+                            _activity: override.activity,
+                            _endTime: endMin
+                        };
+                    }
+                });
+                const block = { divName: override.division, bunk, startTime: startMin, endTime: endMin, slots, _activity: override.activity };
+                markFieldUsage(block, override.activity, fieldUsageBySlot);
+            }
+        });
+    } catch(e) { console.error(e); }
+
+    // --- Pass 2: Skeletons (Manual) ---
     const schedulableSlotBlocks = [];
-    
     manualSkeleton.forEach((item) => {
         const allBunks = divisions[item.division]?.bunks || [];
         const startMin = parseTimeToMinutes(item.startTime);
@@ -327,7 +434,6 @@
         
         if (!allBunks.length || !allSlots.length) return;
 
-        // Determine Type
         let eventType = item.event;
         if(eventType.toLowerCase().includes('general')) eventType = 'General Activity Slot';
         else if(eventType.toLowerCase().includes('league') && !eventType.toLowerCase().includes('specialty')) eventType = 'League Game';
@@ -336,7 +442,6 @@
         const isGenerated = GENERATED_EVENTS.includes(eventType);
 
         if (item.type === 'pinned' || !isGenerated) {
-            // Fixed Item
             allBunks.forEach(bunk => {
                 allSlots.forEach((idx, i) => {
                     if (!window.scheduleAssignments[bunk][idx]) {
@@ -351,7 +456,7 @@
                 markFieldUsage({ divName: item.division, bunk, startTime: startMin, endTime: endMin, slots: allSlots }, item.event, fieldUsageBySlot);
             });
         } else if (item.type === 'split') {
-             // Split Logic
+             // Split Logic (Swim / General)
              const midBunk = Math.ceil(allBunks.length/2);
              const midSlot = Math.ceil(allSlots.length/2);
              const bunksTop = allBunks.slice(0, midBunk);
@@ -359,24 +464,19 @@
              const slots1 = allSlots.slice(0, midSlot);
              const slots2 = allSlots.slice(midSlot);
              const midTime = startMin + (midSlot * INCREMENT_MINS);
-             
              const gaName = 'General Activity Slot';
 
-             // Top: Swim -> GA
              bunksTop.forEach(b => {
                  slots1.forEach((s,i) => window.scheduleAssignments[b][s] = { field: {name:'Swim'}, _fixed:true, continuation:i>0, _activity:'Swim' });
                  markFieldUsage({divName:item.division, bunk:b, startTime:startMin, endTime:midTime, slots:slots1}, 'Swim', fieldUsageBySlot);
                  schedulableSlotBlocks.push({divName:item.division, bunk:b, event:gaName, startTime:midTime, endTime:endMin, slots:slots2});
              });
-             // Bot: GA -> Swim
              bunksBot.forEach(b => {
                  schedulableSlotBlocks.push({divName:item.division, bunk:b, event:gaName, startTime:startMin, endTime:midTime, slots:slots1});
                  slots2.forEach((s,i) => window.scheduleAssignments[b][s] = { field: {name:'Swim'}, _fixed:true, continuation:i>0, _activity:'Swim' });
                  markFieldUsage({divName:item.division, bunk:b, startTime:midTime, endTime:endMin, slots:slots2}, 'Swim', fieldUsageBySlot);
              });
-
         } else {
-            // Standard Schedulable Block
             allBunks.forEach(bunk => {
                 schedulableSlotBlocks.push({
                     divName: item.division,
@@ -390,7 +490,7 @@
         }
     });
 
-    // --- PASS 3: LEAGUES ---
+    // --- Pass 3: Leagues (Regular & Specialty) ---
     const processLeagues = (blocks, isSpecialty) => {
         const groups = {};
         blocks.forEach(b => {
@@ -407,21 +507,21 @@
                 l.enabled && !disabledSource.includes(l.name) && l.divisions.includes(group.divName)
             );
             
-            if (!leagueEntry) return; // No league found for this slot
+            if (!leagueEntry) return;
 
             const leagueTeams = (leagueEntry.teams || []).map(String);
             const bunks = Array.from(group.bunks).sort();
             const sports = (leagueEntry.sports || []).filter(s => fieldsBySport[s]);
             
-            // Determine Matchups
             const matchups = isSpecialty 
                 ? pairRoundRobin(leagueTeams) 
                 : coreGetNextLeagueRound(leagueEntry.name, leagueTeams);
             
             const nonBye = matchups.filter(p => p[0] !== 'BYE' && p[1] !== 'BYE');
+            
+            // USE SMART OPTIMIZER
             const { assignments } = assignSportsMultiRound(nonBye, sports, {});
 
-            // Assign Fields
             const localUsedFields = new Set();
             const results = [];
             
@@ -437,7 +537,6 @@
                     const fields = fieldsBySport[s] || [];
                     for (const f of fields) {
                         if (localUsedFields.has(f)) continue;
-                        
                         const props = activityProperties[f];
                         const avail = window.GlobalAvailabilityManager.checkAvailability(
                             f, group.startTime, group.endTime, 
@@ -445,9 +544,8 @@
                             props
                         );
                         
-                        // Check Time Rules
+                        // Simplified time check
                         let isTimeOk = true;
-                        // (Simplified time rule check for brevity/robustness)
                         if(props.timeRules && props.timeRules.length > 0) {
                             const sm=group.startTime, em=group.endTime;
                             let hasAvailRule = props.timeRules.some(r=>r.type==='Available');
@@ -476,7 +574,6 @@
                 }
             });
 
-            // Commit Results
             const assignedMap = {};
             const labels = [];
             
@@ -496,7 +593,13 @@
                 assignedMap[tB] = pick;
             });
             
-            // Assign to Bunks
+            // Assign Bye games to labels so they appear in print
+            matchups.forEach(p => {
+                if (p[0] === 'BYE' || p[1] === 'BYE') {
+                    labels.push(`${p[0]} vs ${p[1]} (BYE)`);
+                }
+            });
+
             bunks.forEach(b => {
                 const base = assignedMap[b] || { field: "No Game", sport: null, _h2h: true, _activity: "League" };
                 fillBlock({ ...group, bunk: b }, { ...base, _allMatchups: labels }, fieldUsageBySlot, yesterdayHistory, true);
@@ -504,14 +607,14 @@
         });
     };
 
-    // EXECUTE LEAGUES
+    // Execute Leagues
     const specialtyBlocks = schedulableSlotBlocks.filter(b => b.event === 'Specialty League');
     if (specialtyBlocks.length > 0) processLeagues(specialtyBlocks, true);
 
     const leagueBlocks = schedulableSlotBlocks.filter(b => b.event === 'League Game');
     if (leagueBlocks.length > 0) processLeagues(leagueBlocks, false);
 
-    // --- PASS 4: FILLERS ---
+    // --- Pass 4: Fillers ---
     const remainingBlocks = schedulableSlotBlocks.filter(b => !b.event.includes('League'));
     remainingBlocks.sort((a, b) => a.startTime - b.startTime);
 
@@ -533,7 +636,7 @@
         else fillBlock(block, { field: "Free", sport: null, _activity: "Free" }, fieldUsageBySlot, yesterdayHistory, false);
     });
 
-    // --- PASS 5: SAVE HISTORY & DATA ---
+    // --- Pass 5: Save & Finish ---
     try {
         availableDivisions.forEach((divName) => {
             (divisions[divName]?.bunks || []).forEach((bunk) => {
@@ -648,8 +751,6 @@
     ];
     const h2hActivities = allActivities.filter(a => a.type === "field" && a.sport);
     const yesterdayHistory = { schedule: window.loadPreviousDailyData?.().scheduleAssignments || {} };
-    
-    // Historical Counts (Simplified)
     const historicalCounts = {};
 
     return { 
