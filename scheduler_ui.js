@@ -553,26 +553,32 @@
 						            tdActivity.style.background = "#fff8e1"; // light yellow for pins
 						            tdActivity.style.fontWeight = "bold";
 						          }
-						          // GENERATED SLOTS (Activity / Sports / Special Activity / Swim / Split)
-						          // -> show whatever the scheduler actually picked
-						          else {
-						            const slotIndex = findFirstSlotForTime(startMin);
-						            const entry = getEntry(bunk, slotIndex);
-						
-						            if (entry) {
-						              cellActivityName = formatEntry(entry);
-						              if (entry._h2h) {
-						                tdActivity.style.background = "#e8f4ff";
-						                tdActivity.style.fontWeight = "bold";
-						              } else if (entry._fixed) {
-						                tdActivity.style.background = "#fff8e1"; // fixed/pinned
-						              }
-						            } else {
-						              // fallback so prompt isn't empty
-						              cellActivityName = rawName;
-						            }
-						            tdActivity.textContent = cellActivityName;
-						          }
+						         else {
+    const slotIndex = findFirstSlotForTime(startMin);
+    const entry = getEntry(bunk, slotIndex);
+
+    if (entry) {
+        // 🔥 Always show actual generated text
+        cellActivityName = formatEntry(entry);
+
+        // Color coding
+        if (entry._h2h) {
+            tdActivity.style.background = "#e8f4ff";
+            tdActivity.style.fontWeight = "bold";
+        } else if (entry._fixed) {
+            tdActivity.style.background = "#fff8e1";
+        }
+
+        // Put full content into the cell
+        tdActivity.textContent = cellActivityName;
+
+    } else {
+        // Fallback: just show raw block name, so the prompt has context
+        tdActivity.textContent = rawName;
+        cellActivityName = rawName;
+    }
+}
+
 						
 						          // Apply the click handler to ALL cells (pins + generated)
 						          tdActivity.style.cursor = "pointer";
