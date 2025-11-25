@@ -221,9 +221,11 @@
 						
 						  const label = fieldLabel(entry.field) || "";
 						
-						  if (entry._h2h) {
-						    // League game, 'sport' holds matchup label
-						    return entry.sport || "League Game";
+						 if (entry._h2h) {
+    // sport contains: "1 vs 5 (Hockey) @ Gym A"
+    return entry.sport || "League Game";
+}
+
 						  } else if (entry._fixed) {
 						    // Fixed/pinned activities (Lunch, Learning, etc.)
 						    return label || entry._activity || "";
