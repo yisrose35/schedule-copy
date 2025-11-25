@@ -433,144 +433,190 @@
         }
     });
 
-    // =================================================================
-    // PASS 3 & 3.5: LEAGUES (Old Slot-Based Logic + Hybrid Features)
-    // =================================================================
-    const processLeagues = (blocks, isSpecialty) => {
-        const groups = {};
-        blocks.forEach(b => {
-            const k = `${b.divName}-${b.startTime}`;
-            if(!groups[k]) groups[k] = { ...b, bunks: new Set() };
-            groups[k].bunks.add(b.bunk);
-        });
+   // =================================================================
+// PASS 3 & 3.5: LEAGUES (Hybrid Logic, with leagueType tagging)
+// =================================================================
+const processLeagues = (blocks, isSpecialty) => {
+    const groups = {};
+    blocks.forEach(b => {
+        const k = `${b.divName}-${b.startTime}`;
+        if (!groups[k]) groups[k] = { ...b, bunks: new Set() };
+        groups[k].bunks.add(b.bunk);
+    });
 
-        Object.values(groups).sort((a,b) => a.startTime - b.startTime).forEach(group => {
-            const masterSource = isSpecialty ? masterSpecialtyLeagues : masterLeagues;
-            const disabledSource = isSpecialty ? disabledSpecialtyLeagues : disabledLeagues;
-            
-            const leagueEntry = Object.values(masterSource).find(l => 
-                l.enabled && !disabledSource.includes(l.name) && l.divisions.includes(group.divName)
-            );
-            if (!leagueEntry) return;
+    Object.values(groups)
+      .sort((a, b) => a.startTime - b.startTime)
+      .forEach(group => {
+        const masterSource = isSpecialty ? masterSpecialtyLeagues : masterLeagues;
+        const disabledSource = isSpecialty ? disabledSpecialtyLeagues : disabledLeagues;
 
-            const leagueTeams = (leagueEntry.teams || []).map(String);
-            const bunks = Array.from(group.bunks).sort();
-            const sports = (leagueEntry.sports || []).filter(s => fieldsBySport[s]);
-            const slotCount = group.slots.length || 1;
-            
-            let bestResult = { successCount: -1, assignments: [] };
-            
-            // 1. Matchups
-            let matchups = isSpecialty ? pairRoundRobin(leagueTeams) : coreGetNextLeagueRound(leagueEntry.name, leagueTeams);
-            
-            // 2. Simulation (Using Old Slot Logic)
-            const simulate = (candidateMatchups) => {
-                const nonBye = candidateMatchups.filter(p => p[0] !== 'BYE' && p[1] !== 'BYE');
-                const { assignments } = assignSportsMultiRound(nonBye, sports, {}, {}, {}); 
-                
-                let successes = 0;
-                // Track usage within this specific simulation run (per slot index)
-                const simUsedFields = Array.from({length: slotCount}, () => new Set());
-                const results = [];
+        const leagueEntry = Object.values(masterSource).find(l =>
+            l.enabled &&
+            !disabledSource.includes(l.name) &&
+            l.divisions.includes(group.divName)
+        );
+        if (!leagueEntry) return;
 
-                nonBye.forEach((pair, idx) => {
-                    const prefSport = assignments[idx]?.sport || sports[0];
-                    const candidateSports = [prefSport, ...sports.filter(s => s !== prefSport)];
-                    let foundField = null;
-                    let foundSport = null;
-                    let slotIdx = idx % slotCount; // Distribute games across available time slots if multiple
+        const leagueTeams = (leagueEntry.teams || []).map(String);
+        const bunks = Array.from(group.bunks).sort();
+        const sports = (leagueEntry.sports || []).filter(s => fieldsBySport[s]);
 
-                    for (const s of candidateSports) {
-                        const fields = fieldsBySport[s] || [];
-                        for (const f of fields) {
-                            // OLD LOGIC: Check if slot is taken in global tracking + local simulation
-                            if (simUsedFields[slotIdx].has(f)) continue;
-                            
-                            const globalCount = fieldUsageBySlot[group.slots[slotIdx]]?.[f]?.count || 0;
-                            if (globalCount > 0) continue; // Slot taken by someone else
+        let bestResult = { successes: -1, results: [], matchups: [] };
 
-                            // Time Rules Check
-                            const props = activityProperties[f];
-                            if (!isTimeAvailable(group.slots[slotIdx], props)) continue;
-                            
-                            // Prop Checks (Divisions/Preferences)
-                            // We assume leagues override "Sharable" but respect "Allowed Divisions"
-                            if (props.allowedDivisions && !props.allowedDivisions.includes(group.divName)) continue;
+        // 1. Matchups
+        let matchups = isSpecialty
+          ? pairRoundRobin(leagueTeams)
+          : coreGetNextLeagueRound(leagueEntry.name, leagueTeams);
 
+        // 2. Simulation
+        const simulate = (candidateMatchups) => {
+            const nonBye = candidateMatchups.filter(p => p[0] !== 'BYE' && p[1] !== 'BYE');
+            const { assignments } = assignSportsMultiRound(nonBye, sports, {}, {}, {});
+
+            let successes = 0;
+            const localUsedFields = new Set();
+            const results = [];
+
+            nonBye.forEach((pair, idx) => {
+                const [teamA, teamB] = pair;
+                const prefSport = assignments[idx]?.sport || sports[0];
+
+                // ITERATIVE FALLBACK: preferred sport, then others
+                const candidateSports = [prefSport, ...sports.filter(s => s !== prefSport)];
+
+                let foundField = null;
+                let foundSport = null;
+
+                for (const s of candidateSports) {
+                    const fields = fieldsBySport[s] || [];
+                    for (const f of fields) {
+                        if (localUsedFields.has(f)) continue;
+                        const props = activityProperties[f];
+
+                        const avail = window.GlobalAvailabilityManager.checkAvailability(
+                            f,
+                            group.startTime,
+                            group.endTime,
+                            {
+                                divName: group.divName,
+                                bunk: "league",
+                                activity: isSpecialty ? "Specialty League" : "League Game",
+                                isLeague: true
+                            },
+                            props
+                        );
+
+                        const isTimeOk = isTimeAvailable({ startTime: group.startTime, endTime: group.endTime }, props);
+
+                        if (avail.valid && isTimeOk) {
                             foundField = f;
                             foundSport = s;
                             break;
                         }
-                        if (foundField) break;
                     }
+                    if (foundField) break;
+                }
 
-                    if (foundField) {
-                        successes++;
-                        simUsedFields[slotIdx].add(foundField);
-                        results.push({ pair, field: foundField, sport: foundSport });
-                    } else {
-                        results.push({ pair, field: null, sport: prefSport }); 
-                    }
-                });
-                return { successes, results, matchups: candidateMatchups };
-            };
+                if (foundField) {
+                    successes++;
+                    localUsedFields.add(foundField);
+                    results.push({ pair, field: foundField, sport: foundSport });
+                } else {
+                    results.push({ pair, field: null, sport: prefSport });
+                }
+            });
 
-            bestResult = simulate(matchups);
+            return { successes, results, matchups: candidateMatchups };
+        };
 
-            // 3. Shuffle (Old Logic Feature)
-            if (!isSpecialty && bestResult.successes < matchups.filter(p=>p[0]!=='BYE'&&p[1]!=='BYE').length) {
-                const teamsCopy = [...leagueTeams];
-                for(let i=0; i<50; i++) {
-                    shuffleArray(teamsCopy);
-                    const shufMatchups = pairRoundRobin(teamsCopy);
-                    const res = simulate(shufMatchups);
-                    if (res.successes > bestResult.successes) {
-                        bestResult = res;
-                        if (res.successes === res.matchups.filter(p=>p[0]!=='BYE'&&p[1]!=='BYE').length) break;
-                    }
+        bestResult = simulate(matchups);
+
+        // 3. Shuffle on failure (regular leagues only)
+        if (!isSpecialty &&
+            bestResult.successes < matchups.filter(p => p[0] !== 'BYE' && p[1] !== 'BYE').length) {
+
+            console.log(`Reshuffling league ${leagueEntry.name}...`);
+            const teamsCopy = [...leagueTeams];
+            for (let i = 0; i < 50; i++) {
+                shuffleArray(teamsCopy);
+                const shufMatchups = pairRoundRobin(teamsCopy);
+                const res = simulate(shufMatchups);
+                if (res.successes > bestResult.successes) {
+                    bestResult = res;
+                    if (res.successes === res.matchups.filter(p => p[0] !== 'BYE' && p[1] !== 'BYE').length) break;
                 }
             }
+        }
 
-            // 4. Commit
-            const allMatchupLabels = [];
-            const assignedMap = {}; 
+        // 4. Commit: tag leagueType = "regular" or "specialty"
+        const leagueActivity = isSpecialty ? "Specialty League" : "League Game";
+        const leagueType = isSpecialty ? "specialty" : "regular";
 
-            bestResult.results.forEach(res => {
-                const [teamA, teamB] = res.pair;
-                let label, pick;
-                
-                if (res.field) {
-                    label = `${teamA} vs ${teamB} (${res.sport}) @ ${res.field}`;
-                    // Write to BOTH systems
-                    markFieldUsage({ ...group, _activity: res.sport }, res.field, fieldUsageBySlot);
-                    pick = { field: res.field, sport: label, _h2h: true, _activity: res.sport };
-                } else {
-                    label = `${teamA} vs ${teamB} (No Field)`;
-                    pick = { field: "No Field", sport: label, _h2h: true, _activity: "League" };
-                }
-                allMatchupLabels.push(label);
-                assignedMap[teamA] = pick;
-                assignedMap[teamB] = pick;
-            });
+        const allMatchupLabels = [];
+        const assignedMap = {};
 
-            bestResult.matchups.forEach(p => {
-                if (p[0]==='BYE' || p[1]==='BYE') allMatchupLabels.push(`${p[0]} vs ${p[1]} (BYE)`);
-            });
+        bestResult.results.forEach(res => {
+            const [teamA, teamB] = res.pair;
+            let label;
+            let pick;
 
-            const noGamePick = { field: "No Game", sport: null, _h2h: true, _activity: "League" };
+            if (res.field) {
+                label = `${teamA} vs ${teamB} (${res.sport}) @ ${res.field}`;
+                // mark field usage as the league block, not the sport
+                markFieldUsage(
+                    { ...group, _activity: leagueActivity, bunk: null, slots: group.slots || [] },
+                    res.field,
+                    fieldUsageBySlot
+                );
+                pick = {
+                    field: res.field,
+                    sport: label,
+                    _h2h: true,
+                    _activity: leagueActivity,
+                    _leagueType: leagueType
+                };
+            } else {
+                label = `${teamA} vs ${teamB} (No Field)`;
+                pick = {
+                    field: "No Field",
+                    sport: label,
+                    _h2h: true,
+                    _activity: leagueActivity,
+                    _leagueType: leagueType
+                };
+            }
 
-            bunks.forEach(bunk => {
-                const p = assignedMap[bunk] || noGamePick;
-                p._allMatchups = allMatchupLabels;
-                fillBlock({ ...group, bunk }, p, fieldUsageBySlot, yesterdayHistory, true);
-            });
+            allMatchupLabels.push(label);
+            assignedMap[teamA] = pick;
+            assignedMap[teamB] = pick;
         });
-    };
 
-    const leagueBlocks = schedulableSlotBlocks.filter(b => b.event === 'League Game');
-    const specialtyBlocks = schedulableSlotBlocks.filter(b => b.event === 'Specialty League');
-    processLeagues(specialtyBlocks, true);
-    processLeagues(leagueBlocks, false);
+        // BYE labels (not assigned to bunks, but shown in list)
+        bestResult.matchups.forEach(p => {
+            if (p[0] === 'BYE' || p[1] === 'BYE') {
+                allMatchupLabels.push(`${p[0]} vs ${p[1]} (BYE)`);
+            }
+        });
+
+        const noGamePick = {
+            field: "No Game",
+            sport: null,
+            _h2h: true,
+            _activity: leagueActivity,
+            _leagueType: leagueType
+        };
+
+        // Assign to each bunk for that division/time
+        bunks.forEach(bunk => {
+            const basePick = assignedMap[bunk] || noGamePick;
+            const p = {
+                ...basePick,
+                _allMatchups: allMatchupLabels
+            };
+            fillBlock({ ...group, bunk }, p, fieldUsageBySlot, yesterdayHistory, true);
+        });
+    });
+};
 
     // =================================================================
     // PASS 4: FILLERS
