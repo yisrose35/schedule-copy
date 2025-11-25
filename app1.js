@@ -4,7 +4,7 @@
 // DIVISIONS UI & EDIT PANEL MATCH MOCK:
 // - Left: division cards (pill + square chip + subline).
 // - Right: Division Details card with:
-//      • Header: green dot + name, plus summary text
+//      • Header: colored dot + name, plus summary text
 //      • Left mini-card: Division Times (+ Schedule grid pill)
 //      • Right mini-card: Bunks in this Division (+ Add per division pill)
 // - Bunks:
@@ -169,20 +169,22 @@
             color: #6b7280;
         }
 
+        /* === EDIT GRID & MINI-CARDS (blue layer only, side-by-side) === */
         .division-edit-grid {
             display: flex;
-            flex-wrap: wrap;
-            gap: 12px;
+            flex-wrap: nowrap;        /* keep Times & Bunks left/right */
+            gap: 16px;
             margin-top: 4px;
         }
 
         .division-mini-card {
-            flex: 1 1 260px;
-            border-radius: 18px;
-            background: #f1f5f9;
-            border: 1px solid #e5e7eb;
-            padding: 10px 12px 12px;
+            flex: 1 1 0;
+            border-radius: 0;          /* visually part of the blue shell */
+            background: transparent;   /* remove extra white layer */
+            border: none;
+            padding: 8px 4px 4px;      /* lighter spacing */
         }
+
         .division-mini-header {
             display: flex;
             justify-content: space-between;
@@ -223,6 +225,7 @@
             font-size: 0.8rem;
             color: #4b5563;
         }
+        /* legacy chip class (no longer used, kept harmless) */
         .division-color-chip {
             width: 20px;
             height: 20px;
@@ -230,13 +233,15 @@
             border: 1px solid #e5e7eb;
             box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
         }
+        /* rounded, clickable color picker pill */
         .division-color-row input[type="color"] {
-            width: 40px;
-            height: 24px;
+            width: 52px;
+            height: 26px;
             padding: 0;
-            border-radius: 6px;
+            border-radius: 999px;
             border: 1px solid #e5e7eb;
             background: #ffffff;
+            cursor: pointer;
         }
 
         /* Bunk pills */
@@ -561,30 +566,25 @@
     header.appendChild(deleteBtn);
     pane.appendChild(header);
 
-    // --- Color row (simple strip) ---
+    // --- Color row (rounded clickable color picker only) ---
     const colorRow = document.createElement("div");
     colorRow.className = "division-color-row";
 
     const colorLabel = document.createElement("span");
     colorLabel.textContent = "Division color";
 
-    const colorPreview = document.createElement("span");
-    colorPreview.className = "division-color-chip";
-    colorPreview.style.backgroundColor = divObj.color || "#007bff";
-
     const colorInput = document.createElement("input");
     colorInput.type = "color";
     colorInput.value = divObj.color || "#007bff";
     colorInput.oninput = (e) => {
       divObj.color = e.target.value;
-      colorPreview.style.backgroundColor = divObj.color;
       saveData();
       setupDivisionButtons();
+      renderDivisionDetailPane();
       window.updateTable?.();
     };
 
     colorRow.appendChild(colorLabel);
-    colorRow.appendChild(colorPreview);
     colorRow.appendChild(colorInput);
     pane.appendChild(colorRow);
 
@@ -593,18 +593,17 @@
     shell.className = "division-edit-shell";
     pane.appendChild(shell);
 
-    // Header inside shell: green dot + division name, summary on right
+    // Header inside shell: colored dot + division name, summary on right
     const innerHeader = document.createElement("div");
     innerHeader.className = "division-edit-header";
 
     const leftSide = document.createElement("div");
     leftSide.className = "division-header-left";
 
-   const dot = document.createElement("span");
-dot.className = "division-status-dot";
-dot.style.backgroundColor = divObj.color || "#16a34a";
-dot.style.boxShadow = `0 0 0 4px ${ (divObj.color || "#16a34a") }33`; // 33 = alpha
-
+    const dot = document.createElement("span");
+    dot.className = "division-status-dot";
+    dot.style.backgroundColor = divObj.color || "#16a34a";
+    dot.style.boxShadow = `0 0 0 4px ${(divObj.color || "#16a34a")}33`;
 
     const titleName = document.createElement("span");
     titleName.textContent = selectedDivision;
