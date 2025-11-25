@@ -1,13 +1,14 @@
 // =================================================================
 // app1.js
 //
-// UPDATED (DIVISIONS LIKE FIELDS + SORTED BUNKS + SHARED THEME):
-// - Divisions list uses the same "card" feel as Fields.
-// - Division color area styled to match the setup theme.
-// - Bunks behavior:
+// UNIFIED THEME (MATCH FIELDS) + BUNK CLICK LOGIC
+// - Divisions list uses same .master-list / .list-item look as Fields.
+// - Division color row is a small labeled chip + color input.
+// - Bunks:
+//     • Styled like field chips (rounded pills, same feel).
 //     • Single click  -> inline edit name
-//     • Double click  -> remove bunk from this division
-//   (with a click timer so the edit doesn't fire before the 2nd click)
+//     • Double click  -> delete bunk from this division
+//       (using a click timer so edit waits for possible 2nd click).
 // =================================================================
 
 (function() {
@@ -593,19 +594,17 @@ function renderDivisionDetailPane() {
             const pill = document.createElement("span");
             pill.textContent = bunkName;
 
-            // pill-style (no X button)
-            pill.style.minWidth = "32px";
-            pill.style.height = "32px";
-            pill.style.borderRadius = "999px";
-            pill.style.border = "1px solid #cbd5e1";
+            // MATCH FIELDS CHIP LOOK: rounded rectangle pill
+            pill.style.padding = "4px 8px";
+            pill.style.borderRadius = "12px";
+            pill.style.border = "1px solid #ccc";
             pill.style.cursor = "pointer";
-            pill.style.backgroundColor = "#f3f4f6";
+            pill.style.backgroundColor = "#f0f0f0";
             pill.style.color = "#111827";
             pill.style.fontSize = "0.8rem";
             pill.style.display = "inline-flex";
             pill.style.alignItems = "center";
             pill.style.justifyContent = "center";
-            pill.style.position = "relative";
 
             let clickTimer = null;
             const clickDelay = 260; // ms – wait this long before treating as "single click"
@@ -617,7 +616,6 @@ function renderDivisionDetailPane() {
                 input.value = bunkName;
                 input.style.minWidth = "60px";
 
-                // swap pill -> input
                 const parent = pill.parentNode;
                 if (!parent) return;
                 parent.replaceChild(input, pill);
@@ -626,10 +624,8 @@ function renderDivisionDetailPane() {
                 function finish() {
                     const val = input.value.trim();
                     if (val && val !== old) {
-                        // rename every place, will re-render the pane
                         renameBunkEverywhere(old, val);
                     } else {
-                        // no change – just re-render to restore the pill
                         renderDivisionDetailPane();
                     }
                 }
@@ -644,7 +640,7 @@ function renderDivisionDetailPane() {
             pill.onclick = (e) => {
                 e.stopPropagation();
                 if (clickTimer) {
-                    // second click within delay -> treat as double-click (delete)
+                    // second click within delay -> double-click = delete
                     clearTimeout(clickTimer);
                     clickTimer = null;
 
@@ -654,10 +650,9 @@ function renderDivisionDetailPane() {
                     renderDivisionDetailPane();
                     window.updateTable?.();
                 } else {
-                    // wait to see if a second click comes in
+                    // start single-click timer (edit)
                     clickTimer = setTimeout(() => {
                         clickTimer = null;
-                        // single-click -> edit
                         startInlineEdit();
                     }, clickDelay);
                 }
