@@ -236,13 +236,27 @@
             box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
         }
         /* rounded, clickable color picker pill */
-        .division-color-row input[type="color"] {
-            width: 52px;
+                .division-color-row input[type="color"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 60px;
             height: 26px;
             padding: 0;
-            border-radius: 999px;
+            border-radius: 999px; /* rounded pill */
             border: 1px solid #e5e7eb;
             background: #ffffff;
+            overflow: hidden;
+        }
+        .division-color-row input[type="color"]::-webkit-color-swatch {
+            border: none;
+            border-radius: 999px;
+            padding: 0;
+        }
+        .division-color-row input[type="color"]::-moz-color-swatch {
+            border: none;
+            border-radius: 999px;
+        }
+
             cursor: pointer;
         }
 
