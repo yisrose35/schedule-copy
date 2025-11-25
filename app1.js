@@ -2,13 +2,12 @@
 // app1.js
 //
 // UPDATED (DIVISIONS LIKE FIELDS + SORTED BUNKS + SHARED THEME):
-// - Setup tab uses the same visual language as Fields:
-//   • Left: master list of Divisions (#divisionButtons) styled with
-//     .master-list and .list-item
-//   • Right: Division Details (#division-detail-pane) using .detail-pane
-// - Bunks are rendered as pill chips similar to field chips.
-// - All previous behavior (sorting bunks, times, colors, saving, etc.)
-//   is preserved.
+// - Divisions list uses the same "card" feel as Fields.
+// - Division color area styled to match the setup theme.
+// - Bunks behavior:
+//     • Single click  -> inline edit name
+//     • Double click  -> remove bunk from this division
+//   (with a click timer so the edit doesn't fire before the 2nd click)
 // =================================================================
 
 (function() {
@@ -100,6 +99,31 @@ function ensureSharedSetupStyles() {
             background: #ffffff;
             min-height: 360px;
             box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+        }
+
+        /* Division color row */
+        .division-color-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 4px;
+            font-size: 0.8rem;
+            color: #4b5563;
+        }
+        .division-color-chip {
+            width: 20px;
+            height: 20px;
+            border-radius: 6px;
+            border: 1px solid #e5e7eb;
+            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+        }
+        .division-color-row input[type="color"] {
+            width: 40px;
+            height: 24px;
+            padding: 0;
+            border-radius: 6px;
+            border: 1px solid #e5e7eb;
+            background: #ffffff;
         }
     `;
     document.head.appendChild(style);
@@ -316,7 +340,7 @@ function setupDivisionButtons() {
             nameEl.style.paddingLeft = "8px";
         }
 
-        // small sub-line: bunk count + times (similar to screenshot)
+        // small sub-line: bunk count + times
         const sub = document.createElement("span");
         sub.style.fontSize = "0.78rem";
         sub.style.color = "#6b7280";
@@ -449,36 +473,39 @@ function renderDivisionDetailPane() {
     header.appendChild(deleteBtn);
     pane.appendChild(header);
 
-    // --- Color picker ---
+    // --- Color picker (themed) ---
     const colorRow = document.createElement("div");
-    colorRow.style.display = "flex";
-    colorRow.style.alignItems = "center";
-    colorRow.style.gap = "10px";
-    colorRow.style.marginBottom = "15px";
+    colorRow.className = "division-color-row";
 
     const colorLabel = document.createElement("span");
-    colorLabel.textContent = "Division Color:";
+    colorLabel.textContent = "Division color";
+
+    const colorPreview = document.createElement("span");
+    colorPreview.className = "division-color-chip";
+    colorPreview.style.backgroundColor = divObj.color || "#007bff";
 
     const colorInput = document.createElement("input");
     colorInput.type = "color";
     colorInput.value = divObj.color || "#007bff";
     colorInput.oninput = e => {
         divObj.color = e.target.value;
+        colorPreview.style.backgroundColor = divObj.color;
         saveData();
         setupDivisionButtons();
         window.updateTable?.();
     };
 
     colorRow.appendChild(colorLabel);
+    colorRow.appendChild(colorPreview);
     colorRow.appendChild(colorInput);
     pane.appendChild(colorRow);
 
     // --- Times ---
     const timeSection = document.createElement("div");
-    timeSection.style.marginBottom = "20px";
+    timeSection.style.margin = "16px 0 20px";
 
     const timeTitle = document.createElement("strong");
-    timeTitle.textContent = "Division Day Times:";
+    timeTitle.textContent = "Division day times:";
     timeSection.appendChild(timeTitle);
 
     const timeForm = document.createElement("div");
@@ -545,7 +572,7 @@ function renderDivisionDetailPane() {
     // --- Bunks list ---
     const bunksSection = document.createElement("div");
     const bunksTitle = document.createElement("strong");
-    bunksTitle.textContent = "Bunks in this Division:";
+    bunksTitle.textContent = "Bunks in this division:";
     bunksSection.appendChild(bunksTitle);
 
     const bunkList = document.createElement("div");
@@ -563,53 +590,80 @@ function renderDivisionDetailPane() {
     } else {
         const sorted = divObj.bunks.slice().sort(compareBunks);
         sorted.forEach(bunkName => {
-            const chip = document.createElement("span");
-            chip.textContent = bunkName;
+            const pill = document.createElement("span");
+            pill.textContent = bunkName;
 
-            // pill-style bunk chips (simple, like the screenshot)
-            chip.style.minWidth = "32px";
-            chip.style.height = "32px";
-            chip.style.borderRadius = "999px";
-            chip.style.border = "1px solid #cbd5e1";
-            chip.style.cursor = "pointer";
-            chip.style.backgroundColor = "#f3f4f6";
-            chip.style.color = "#111827";
-            chip.style.fontSize = "0.8rem";
-            chip.style.display = "inline-flex";
-            chip.style.alignItems = "center";
-            chip.style.justifyContent = "center";
-            chip.style.position = "relative";
+            // pill-style (no X button)
+            pill.style.minWidth = "32px";
+            pill.style.height = "32px";
+            pill.style.borderRadius = "999px";
+            pill.style.border = "1px solid #cbd5e1";
+            pill.style.cursor = "pointer";
+            pill.style.backgroundColor = "#f3f4f6";
+            pill.style.color = "#111827";
+            pill.style.fontSize = "0.8rem";
+            pill.style.display = "inline-flex";
+            pill.style.alignItems = "center";
+            pill.style.justifyContent = "center";
+            pill.style.position = "relative";
 
-            // rename on double-click
-            makeEditable(chip, newName => {
-                renameBunkEverywhere(bunkName, newName);
-            });
+            let clickTimer = null;
+            const clickDelay = 260; // ms – wait this long before treating as "single click"
 
-            // tiny X button (top-right) to remove from this division
-            const xBtn = document.createElement("button");
-            xBtn.textContent = "×";
-            xBtn.style.border = "none";
-            xBtn.style.background = "#fee2e2";
-            xBtn.style.cursor = "pointer";
-            xBtn.style.fontSize = "10px";
-            xBtn.style.lineHeight = "10px";
-            xBtn.style.width = "14px";
-            xBtn.style.height = "14px";
-            xBtn.style.borderRadius = "999px";
-            xBtn.style.position = "absolute";
-            xBtn.style.top = "-5px";
-            xBtn.style.right = "-5px";
-            xBtn.onclick = e => {
+            function startInlineEdit() {
+                const old = bunkName;
+                const input = document.createElement("input");
+                input.type = "text";
+                input.value = bunkName;
+                input.style.minWidth = "60px";
+
+                // swap pill -> input
+                const parent = pill.parentNode;
+                if (!parent) return;
+                parent.replaceChild(input, pill);
+                input.focus();
+
+                function finish() {
+                    const val = input.value.trim();
+                    if (val && val !== old) {
+                        // rename every place, will re-render the pane
+                        renameBunkEverywhere(old, val);
+                    } else {
+                        // no change – just re-render to restore the pill
+                        renderDivisionDetailPane();
+                    }
+                }
+
+                input.onblur = finish;
+                input.onkeyup = e => {
+                    if (e.key === "Enter") finish();
+                    if (e.key === "Escape") renderDivisionDetailPane();
+                };
+            }
+
+            pill.onclick = (e) => {
                 e.stopPropagation();
-                const idx = divObj.bunks.indexOf(bunkName);
-                if (idx !== -1) divObj.bunks.splice(idx, 1);
-                saveData();
-                renderDivisionDetailPane();
-                window.updateTable?.();
+                if (clickTimer) {
+                    // second click within delay -> treat as double-click (delete)
+                    clearTimeout(clickTimer);
+                    clickTimer = null;
+
+                    const idx = divObj.bunks.indexOf(bunkName);
+                    if (idx !== -1) divObj.bunks.splice(idx, 1);
+                    saveData();
+                    renderDivisionDetailPane();
+                    window.updateTable?.();
+                } else {
+                    // wait to see if a second click comes in
+                    clickTimer = setTimeout(() => {
+                        clickTimer = null;
+                        // single-click -> edit
+                        startInlineEdit();
+                    }, clickDelay);
+                }
             };
 
-            chip.appendChild(xBtn);
-            bunkList.appendChild(chip);
+            bunkList.appendChild(pill);
         });
     }
 
