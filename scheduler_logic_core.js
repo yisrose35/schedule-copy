@@ -1,10 +1,10 @@
 // ============================================================================
 // scheduler_logic_core.js
 //
-// UPDATED (Smart Tiles v7 - Fairness Fix):
-// - FIXED Rotation Logic: Now aggregates specific activity history (e.g., "Gameroom", "Art")
-//   when sorting for generic categories like "Special Activity".
-//   This ensures bunks that played *any* special yesterday are deprioritized today.
+// UPDATED (Smart Tiles v8 - Day-Level Fairness):
+// - FIXED Rotation Logic: Normalizes timestamps to the start of the day (Midnight).
+//   This prevents bunks who played in the "First Shift" yesterday from getting
+//   priority over "Second Shift" bunks today. Both are treated equally as "Played Yesterday".
 // ============================================================================
 
 (function() {
@@ -588,18 +588,15 @@
             const priorityAct = (fallbackFor === main2) ? main2 : main1;
             const secondaryAct = (priorityAct === main1) ? main2 : main1;
 
-            // --- FAIRNESS SORT (Enhanced for Generic Categories) ---
-            // Sort bunks so those who have done the "Priority Activity" LEAST or LEAST RECENTLY come first.
+            // --- FAIRNESS SORT (Enhanced for Generic Categories + Day Granularity) ---
             
             const bunkStats = {};
             const isSpecialCategory = (priorityAct === 'Special' || priorityAct === 'Special Activity');
             
             let relevantActivities = [];
             if (isSpecialCategory) {
-                // Aggregate ALL special activities defined in the system
-                // (because history tracks specific names like "Gameroom", not just "Special Activity")
                 relevantActivities = allActivities.filter(a => a.type === 'special').map(a => a.field);
-                relevantActivities.push('Special Activity'); // include generic just in case
+                relevantActivities.push('Special Activity'); 
             } else {
                 relevantActivities = [priorityAct];
             }
@@ -621,11 +618,15 @@
                 const statsA = bunkStats[a];
                 const statsB = bunkStats[b];
                 
-                // 1. Least Played (Counts)
+                // 1. Least Played (Total Counts)
                 if (statsA.count !== statsB.count) return statsA.count - statsB.count;
                 
-                // 2. Least Recently Played (Timestamps)
-                return statsA.lastTime - statsB.lastTime;
+                // 2. Least Recently Played (DAY GRANULARITY)
+                // Normalize timestamp to start of the day to ignore intraday time differences.
+                const dayA = new Date(statsA.lastTime).setHours(0, 0, 0, 0);
+                const dayB = new Date(statsB.lastTime).setHours(0, 0, 0, 0);
+                
+                return dayA - dayB;
             });
 
             const b1 = blocks[0];
