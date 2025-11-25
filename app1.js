@@ -177,13 +177,15 @@
             margin-top: 4px;
         }
 
-        .division-mini-card {
-            flex: 1 1 0;
-            border-radius: 0;          /* visually part of the blue shell */
-            background: transparent;   /* remove extra white layer */
+                .division-mini-card {
+            flex: 1 1 260px;
+            border-radius: 18px;
+            /* merge into the blue shell – no extra white layer */
+            background: transparent;
             border: none;
-            padding: 8px 4px 4px;      /* lighter spacing */
+            padding: 10px 12px 12px;
         }
+
 
         .division-mini-header {
             display: flex;
