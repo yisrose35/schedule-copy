@@ -1,18 +1,19 @@
 // =================================================================
 // scheduler_logic_fillers.js
 //
-// UPDATED (Hierarchical Intelligence):
-// - TIER 1: Perfect Picks (Open + Not Done Today + Under Weekly Limit).
-// - TIER 2: Compromise Picks (Open + Not Done Today + IGNORE Weekly Limit).
-// - TIER 3: Free (Only if Tiers 1 & 2 fail).
-// - STRICT RULE: "Done Today" is never violated.
+// UPDATED (AI Heuristic Scoring Engine):
+// - Replaces binary filtering with weighted scoring.
+// - HARD RULES (Unbreakable): Physics, Done Today.
+// - SOFT RULES (Breakable with Penalty): Weekly Limits, Sharing, Boredom.
+// - RESULT: The system effectively "thinks" to find the best compromise
+//   instead of giving up and assigning "Free".
 // =================================================================
 
 (function() {
 'use strict';
 
 // =================================================================
-// HELPERS
+// 1. DATA GATHERING HELPERS
 // =================================================================
 
 function fieldLabel(f) { return (f && typeof f==='object' && f.name) ? f.name : f; }
@@ -37,7 +38,7 @@ function getBlockTimeRange(block) {
     return { blockStartMin, blockEndMin };
 }
 
-// --- Helper: Check if a field is currently empty ---
+// --- Check if field is physically empty ---
 function isFieldEmpty(fieldName, blockStartMin, blockEndMin) {
     if (!window.GlobalAvailabilityManager || !window.GlobalAvailabilityManager.getReservationsForField) return true;
     const reservations = window.GlobalAvailabilityManager.getReservationsForField(fieldName);
@@ -45,7 +46,7 @@ function isFieldEmpty(fieldName, blockStartMin, blockEndMin) {
     return overlaps.length === 0;
 }
 
-// --- Find Sharable Fields ---
+// --- Find Sharable Fields (Opportunities) ---
 function findJoinableOpportunities(block, activityProperties) {
     if (!window.GlobalAvailabilityManager || !window.GlobalAvailabilityManager.getReservationsForField) return [];
     const { blockStartMin, blockEndMin } = getBlockTimeRange(block);
@@ -60,6 +61,7 @@ function findJoinableOpportunities(block, activityProperties) {
         const reservations = window.GlobalAvailabilityManager.getReservationsForField(fieldName);
         const overlaps = reservations.filter(r => r.start < blockEndMin && r.end > blockStartMin);
 
+        // Found a half-full bucket?
         if (overlaps.length === 1) {
             const match = overlaps[0];
             if (match.div === block.divName && !match.isLeague) {
@@ -75,93 +77,75 @@ function findJoinableOpportunities(block, activityProperties) {
     return joinablePicks;
 }
 
-// --- Usage Limit Check (The Soft Rule) ---
-function isOverUsageLimit(activityName, bunk, activityProperties, historicalCounts, activitiesDoneToday) {
-    const props = activityProperties[activityName];
-    const max = props?.maxUsage || 0;
-    if (max === 0) return false; 
-    const safeHistory = historicalCounts || {};
-    const pastCount = safeHistory[bunk]?.[activityName] || 0;
-    
-    if (pastCount >= max) return true;
-    return false;
-}
-
-// --- Time Availability ---
-function isTimeAvailable(slotIndex, fieldProps) {
-    if (!window.unifiedTimes || !window.unifiedTimes[slotIndex]) return false;
-    const slot = window.unifiedTimes[slotIndex];
-    const slotStartMin = new Date(slot.start).getHours() * 60 + new Date(slot.start).getMinutes();
-    const slotEndMin = slotStartMin + (window.INCREMENT_MINS || 30);
-    
-    const rules = (fieldProps.timeRules || []).map(r => {
-        if (typeof r.startMin === "number") return r;
-        return r; 
-    });
-    if (rules.length === 0) return fieldProps.available;
-    if (!fieldProps.available) return false;
-
-    const hasAvailableRules = rules.some(r => r.type === 'Available');
-    let isAvailable = !hasAvailableRules;
-
-    for (const rule of rules) {
-        if (rule.type === 'Available' && rule.startMin != null && rule.endMin != null) {
-            if (slotStartMin >= rule.startMin && slotEndMin <= rule.endMin) {
-                isAvailable = true; break;
-            }
-        }
-    }
-    for (const rule of rules) {
-        if (rule.type === 'Unavailable' && rule.startMin != null && rule.endMin != null) {
-            if (slotStartMin < rule.endMin && slotEndMin > rule.startMin) {
-                isAvailable = false; break;
-            }
-        }
-    }
-    return isAvailable;
-}
-
 // =================================================================
-// SORTING
+// 2. THE AI BRAIN (SCORING ENGINE)
 // =================================================================
 
-function calculatePreferenceScore(fieldProps, divName) {
-    if (!fieldProps?.preferences?.enabled) return 0;
-    const index = (fieldProps.preferences.list || []).indexOf(divName);
-    return index !== -1 ? 1000 - (index * 100) : -50;
-}
-
-function sortPicksByPriority(possiblePicks, block, bunkHistory, divName, activityProperties) {
+/**
+ * Calculates a "Happiness Score" for a potential move.
+ * Higher is better. Negative is bad, but acceptable if no positive options exist.
+ */
+function calculateAIScore(pick, block, bunkHistory, divName, activityProperties, historicalCounts) {
+    let score = 1000; // Start with a high base score (Optimism)
+    const fieldName = fieldLabel(pick.field);
+    const activityName = pick._activity;
+    const props = activityProperties[fieldName];
     const { blockStartMin, blockEndMin } = getBlockTimeRange(block);
 
-    return possiblePicks.sort((a, b) => {
-        const fieldA = fieldLabel(a.field);
-        const fieldB = fieldLabel(b.field);
-        
-        // 1. Emptiness (Individual Assignment Priority)
-        const emptyA = isFieldEmpty(fieldA, blockStartMin, blockEndMin);
-        const emptyB = isFieldEmpty(fieldB, blockStartMin, blockEndMin);
-        if (emptyA !== emptyB) return emptyA ? -1 : 1; 
+    // --- FACTOR 1: EMPTINESS vs SHARING ---
+    // User preference: "Doubling WHEN NEEDED".
+    // Strategy: Reward Empty, Penalize Sharing slightly.
+    if (isFieldEmpty(fieldName, blockStartMin, blockEndMin)) {
+        score += 500; // BIG BONUS for empty field
+    } else {
+        score -= 200; // Penalty for having to share (Survival mode)
+    }
 
-        // 2. Preferences
-        const propsA = activityProperties[fieldA];
-        const propsB = activityProperties[fieldB];
-        const prefA = calculatePreferenceScore(propsA, divName);
-        const prefB = calculatePreferenceScore(propsB, divName);
-        if (prefA !== prefB) return prefB - prefA;
+    // --- FACTOR 2: WEEKLY LIMITS (The "Smart" Compromise) ---
+    // We hate breaking limits, but we hate "Free" more.
+    const max = props?.maxUsage || 0;
+    if (max > 0) {
+        const safeHistory = historicalCounts || {};
+        const pastCount = safeHistory[block.bunk]?.[activityName] || 0;
+        if (pastCount >= max) {
+            // WE ARE BREAKING THE RULE.
+            // Massive penalty, pushing this option to the bottom of the list.
+            // But it remains on the list (unlike filtering).
+            score -= 5000; 
+        }
+    }
 
-        // 3. Freshness (Usage History)
-        // We prefer things played longest ago
-        const lastA = bunkHistory[a._activity] || 0; 
-        const lastB = bunkHistory[b._activity] || 0;
-        if (lastA !== lastB) return lastA - lastB; 
+    // --- FACTOR 3: PREFERENCES ---
+    if (props?.preferences?.enabled) {
+        const index = (props.preferences.list || []).indexOf(divName);
+        if (index !== -1) {
+            score += (1000 - (index * 100)); // Highly desired
+        } else {
+            score -= 50; // Neutral/Meh
+        }
+    }
 
-        return 0.5 - Math.random();
-    });
+    // --- FACTOR 4: HISTORY (Freshness) ---
+    // Look at the rotation history. The longer ago we played this, the better.
+    const lastPlayedTime = bunkHistory[activityName] || 0;
+    if (lastPlayedTime === 0) {
+        score += 300; // Never played? Great!
+    } else {
+        // Add a small bonus for every hour since last played to encourage rotation
+        // This acts as a tie-breaker between two valid fields
+        const hoursSince = (Date.now() - lastPlayedTime) / 3600000; 
+        score += Math.min(hoursSince, 100); 
+    }
+
+    // --- FACTOR 5: RANDOM NOISE ---
+    // Prevents robotic patterns (Always picking Field A before Field B)
+    score += Math.random() * 10;
+
+    return score;
 }
 
 // =================================================================
-// MAIN FILLER LOGIC
+// 3. MAIN LOGIC
 // =================================================================
 
 window.findBestSpecial = function(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts) {
@@ -178,65 +162,71 @@ window.findBestGeneralActivity = function(block, allActivities, h2hActivities, f
     const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
     const activitiesDoneToday = getGeneralActivitiesDoneToday(block.bunk);
 
-    // 1. Gather Candidates
+    // 1. Gather Candidates (Standard + Join Opportunities)
     const joinPicks = findJoinableOpportunities(block, activityProperties);
     const standardPicks = allActivities.map(a => ({ field: a.field, sport: a.sport, _activity: a.sport || a.field }));
     const allCandidates = [...standardPicks, ...joinPicks];
 
-    // 2. PRE-FILTER: Apply HARD Rules (Physics + Done Today)
-    // These rules CANNOT be broken, not even in desperation.
-    const physicallyValidPicks = allCandidates.filter(pick => {
+    // 2. HARD FILTERING (The Laws of Physics & Daily Constraints)
+    // We absolutely remove options that are impossible.
+    const possibleMoves = allCandidates.filter(pick => {
         const name = pick._activity;
 
-        // A. Physical Availability
-        if (!window.findBestGeneralActivity.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, name)) return false;
-
-        // B. Hard Rule: No Doubling in One Day
+        // A. HARD RULE: Done Today?
+        // User requested this is unbreakable.
         if (activitiesDoneToday.has(name)) return false;
 
+        // B. HARD RULE: Physical Availability (Core Check)
+        // Note: For joinPicks, this returns true if we match the existing reservation
+        if (!window.findBestGeneralActivity.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, name)) return false;
+
         return true;
     });
 
-    // 3. TIER 1: The Perfect Picks
-    // Apply Soft Rules (Weekly Limits)
-    let finalCandidates = physicallyValidPicks.filter(pick => {
-        const name = pick._activity;
-        // Check Weekly Limit (Soft Rule)
-        if (pick.field && !pick.sport) { 
-             if (isOverUsageLimit(name, block.bunk, activityProperties, historicalCounts, activitiesDoneToday)) return false;
-        }
-        return true;
+    // 3. SCORING (The "Thinking" Phase)
+    // Map every valid move to a score
+    const scoredMoves = possibleMoves.map(pick => {
+        return {
+            pick: pick,
+            score: calculateAIScore(pick, block, bunkHistory, block.divName, activityProperties, historicalCounts)
+        };
     });
 
-    // 4. TIER 2: The Compromise Picks (Smart Fallback)
-    // If Tier 1 found nothing, we go back to 'physicallyValidPicks'.
-    // We implicitly Accept that we are breaking the Weekly Limit history rule 
-    // because it is better than being Free.
-    if (finalCandidates.length === 0) {
-        finalCandidates = physicallyValidPicks;
+    // 4. SORTING
+    // Sort by Score Descending (Highest score wins)
+    scoredMoves.sort((a, b) => b.score - a.score);
+
+    // 5. SELECTION
+    if (scoredMoves.length > 0) {
+        // Even if the top score is negative (e.g., -4000 due to breaking weekly limit),
+        // we take it because it beat -Infinity (Free).
+        return scoredMoves[0].pick;
     }
 
-    // 5. Sorting & Selection
-    const sortedPicks = sortPicksByPriority(finalCandidates, block, bunkHistory, block.divName, activityProperties);
-
-    return sortedPicks[0] || { field: "Free", sport: null, _activity: "Free" };
+    // 6. FAILURE (Free)
+    return { field: "Free", sport: null, _activity: "Free" };
 };
 
 // =================================================================
-// CONFLICT CHECKER
+// 4. CONFLICT CHECKER
 // =================================================================
 window.findBestGeneralActivity.canBlockFit = function(block, fieldName, activityProperties, fieldUsageBySlot, proposedActivity) {
     const props = activityProperties[fieldName];
     if (!props) return false;
 
+    // Basic Prop Checks (Unbreakable)
     if (props.preferences?.enabled && props.preferences.exclusive && !props.preferences.list.includes(block.divName)) return false;
     if (props.allowedDivisions && props.allowedDivisions.length && !props.allowedDivisions.includes(block.divName)) return false;
+    
+    // NOTE: We moved Limit Usage checks to the SCORING ENGINE (Soft Rules). 
+    // We only check HARD Division restrictions here.
     if (props.limitUsage?.enabled) {
-        if (!props.limitUsage.divisions[block.divName]) return false;
-        const allowedBunks = props.limitUsage.divisions[block.divName];
-        if (allowedBunks.length > 0 && block.bunk && !allowedBunks.includes(block.bunk)) return false;
+         const allowedBunks = props.limitUsage.divisions[block.divName];
+         // If a specific list is provided, and you aren't on it, that's a HARD NO.
+         if (allowedBunks && allowedBunks.length > 0 && block.bunk && !allowedBunks.includes(block.bunk)) return false;
     }
 
+    // Interval Check
     const { blockStartMin, blockEndMin } = getBlockTimeRange(block);
     if (blockStartMin == null || blockEndMin == null) return false;
 
@@ -254,6 +244,7 @@ window.findBestGeneralActivity.canBlockFit = function(block, fieldName, activity
 
     if (!avail.valid) return false;
 
+    // Time Rules (Open/Closed)
     if (props.timeRules && props.timeRules.length > 0) {
         if (!props.available) return false;
         for (const slotIndex of block.slots) {
@@ -266,6 +257,37 @@ window.findBestGeneralActivity.canBlockFit = function(block, fieldName, activity
 
     return true;
 };
+
+// --- Time Helper ---
+function isTimeAvailable(slotIndex, fieldProps) {
+    if (!window.unifiedTimes || !window.unifiedTimes[slotIndex]) return false;
+    const slot = window.unifiedTimes[slotIndex];
+    const slotStartMin = new Date(slot.start).getHours() * 60 + new Date(slot.start).getMinutes();
+    const slotEndMin = slotStartMin + (window.INCREMENT_MINS || 30);
+    const rules = (fieldProps.timeRules || []).map(r => {
+        if (typeof r.startMin === "number") return r;
+        return r; 
+    });
+    if (rules.length === 0) return fieldProps.available;
+    if (!fieldProps.available) return false;
+    const hasAvailableRules = rules.some(r => r.type === 'Available');
+    let isAvailable = !hasAvailableRules;
+    for (const rule of rules) {
+        if (rule.type === 'Available' && rule.startMin != null && rule.endMin != null) {
+            if (slotStartMin >= rule.startMin && slotEndMin <= rule.endMin) {
+                isAvailable = true; break;
+            }
+        }
+    }
+    for (const rule of rules) {
+        if (rule.type === 'Unavailable' && rule.startMin != null && rule.endMin != null) {
+            if (slotStartMin < rule.endMin && slotEndMin > rule.startMin) {
+                isAvailable = false; break;
+            }
+        }
+    }
+    return isAvailable;
+}
 
 function getGeneralActivitiesDoneToday(bunkName) {
     const activities = new Set();
