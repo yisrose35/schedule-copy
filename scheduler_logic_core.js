@@ -379,6 +379,82 @@
 
         const timestamp = Date.now();
         const dailyLeagueSportsUsage = {};
+                // ============================================================
+        // FAIRNESS ENGINE (Global Usage Buckets)
+        // - Tracks usage by bunk + category, e.g. "special:any"
+        // - Can be reused by Smart Tiles, Sports Slots, Specials, etc.
+        // ============================================================
+        const bunkCategoryBaseUsage = {};   // from history + manual offsets
+        const bunkCategoryTodayUsage = {};  // updated as we generate today
+
+        function ensureBunkCategory(bunk) {
+            if (!bunkCategoryBaseUsage[bunk]) bunkCategoryBaseUsage[bunk] = {};
+            if (!bunkCategoryTodayUsage[bunk]) bunkCategoryTodayUsage[bunk] = {};
+        }
+
+        // Build base usage from historicalCounts + known specials
+        (availableDivisions || []).forEach(divName => {
+            const bunksInDiv = divisions[divName]?.bunks || [];
+            bunksInDiv.forEach(bunk => {
+                ensureBunkCategory(bunk);
+
+                const hist = historicalCounts[bunk] || {};
+                let totalSpecials = 0;
+
+                // Aggregate all specials into "special:any"
+                (specialActivityNames || []).forEach(actName => {
+                    const c = hist[actName] || 0;
+                    totalSpecials += c;
+
+                    // Also track per-special category: "special:Gameroom", etc.
+                    if (c > 0) {
+                        const key = `special:${actName}`;
+                        bunkCategoryBaseUsage[bunk][key] =
+                            (bunkCategoryBaseUsage[bunk][key] || 0) + c;
+                    }
+                });
+
+                bunkCategoryBaseUsage[bunk]["special:any"] =
+                    (bunkCategoryBaseUsage[bunk]["special:any"] || 0) + totalSpecials;
+
+                // You can later add other categories, e.g. sport:any, trips, etc.
+                // For now we focus on specials, since that's where fairness pain is.
+            });
+        });
+
+        function getCategoryUsage(bunk, categoryKey) {
+            ensureBunkCategory(bunk);
+            const base = bunkCategoryBaseUsage[bunk][categoryKey] || 0;
+            const today = bunkCategoryTodayUsage[bunk][categoryKey] || 0;
+            return base + today;
+        }
+
+        function bumpCategoryUsage(bunk, categoryKey, amount = 1) {
+            ensureBunkCategory(bunk);
+            bunkCategoryTodayUsage[bunk][categoryKey] =
+                (bunkCategoryTodayUsage[bunk][categoryKey] || 0) + amount;
+        }
+
+        // Helper: when we care about fairness for a category, we can
+        // sort bunks by effective usage:
+        function getFairnessOrderForCategory(categoryKey, bunksList) {
+            const arr = (bunksList || []).slice();
+            arr.sort((a, b) => {
+                const ua = getCategoryUsage(a, categoryKey);
+                const ub = getCategoryUsage(b, categoryKey);
+                if (ua !== ub) return ua - ub; // LOWEST usage first
+
+                // Tie-break: by total specials (keeps global special spread fair)
+                const ta = getCategoryUsage(a, "special:any");
+                const tb = getCategoryUsage(b, "special:any");
+                if (ta !== tb) return ta - tb;
+
+                // Final tie-break: random to prevent fixed patterns
+                return Math.random() - 0.5;
+            });
+            return arr;
+        }
+
 
         // =================================================================
         // PASS 1: DYNAMIC TIME GRID (Atomic Intervals)
