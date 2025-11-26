@@ -120,6 +120,9 @@ function renderUsageTable(divName) {
             });
         });
     });
+        // DEBUG: what the analytics Usage Manager is seeing
+    window.debugAnalyticsRawCounts = rawCounts;
+
 
     let html = `<table class="report-table"><thead><tr><th style="text-align:left;">Bunk</th><th style="text-align:left;">Activity</th><th>History Count</th><th>Manual Adj (+/-)</th><th>Effective Total</th><th>Max Limit</th></tr></thead><tbody>`;
 
