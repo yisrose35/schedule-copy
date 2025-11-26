@@ -4,14 +4,16 @@
 // RESTORED: Original UI layout (Header, Status Box, Chip Pickers).
 // FIXED: Uncaught ReferenceError by correctly accessing window.availableDivisions.
 // ENHANCED: Merged Priority and Restriction UIs into one clean, organized panel.
-// UPDATED (UI REWORK):
+// UPDATED (UI REWORK + THEME):
 // - Field detail pane split into clear "cards":
 //     • Activities
 //     • Sharing Rules
 //     • Who Can Use This Field (Restrictions & Priority)
 //     • Time Rules
 // - Added helper text in each card to make it obvious what to do.
-// - Styling aligned with modern Setup/Config theme.
+// - Styling aligned with Modern Pro Camp theme:
+//     • Emerald primary (#00C896 / #00A67C)
+//     • Light backgrounds, white cards, soft shadows, pill buttons.
 // =================================================================
 
 (function() {
@@ -86,39 +88,41 @@ function initFieldsTab() {
         </div>
         
         <style>
-            /* Master list container – card-like shell */
+            /* Master list container – Modern Pro Camp card shell */
             .master-list {
-                border-radius: 12px;
-                border: 1px solid #e5e7eb;
-                background: #f9fafb;
+                border-radius: 18px;
+                border: 1px solid #E5E7EB;
+                background: #F7F9FA;
                 padding: 8px 6px;
+                box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
             }
 
             .master-list .list-item {
                 padding: 10px 10px;
-                border-radius: 10px;
+                border-radius: 14px;
                 margin-bottom: 6px;
                 cursor: pointer;
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                background: #ffffff;
-                border: 1px solid #e5e7eb;
-                box-shadow: 0 3px 8px rgba(15, 23, 42, 0.04);
-                transition: background 0.15s ease,
-                            box-shadow 0.15s ease,
-                            transform 0.07s ease,
-                            border-color 0.15s ease;
+                background: #FFFFFF;
+                border: 1px solid #E5E7EB;
+                box-shadow: 0 4px 10px rgba(15, 23, 42, 0.05);
+                transition:
+                    background 0.15s ease,
+                    box-shadow 0.15s ease,
+                    transform 0.08s ease,
+                    border-color 0.15s ease;
             }
             .master-list .list-item:hover {
-                background: #f3f4f6;
-                box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
+                background: #F3F4F6;
+                box-shadow: 0 8px 18px rgba(15, 23, 42, 0.10);
                 transform: translateY(-1px);
             }
             .master-list .list-item.selected {
-                background: #e0f2fe;
-                border-color: #38bdf8;
-                box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.6);
+                background: radial-gradient(circle at top left, #ECFDF5 0, #FFFFFF 70%);
+                border-color: #00C896;
+                box-shadow: 0 0 0 1px rgba(0, 200, 150, 0.55);
                 font-weight: 600;
             }
             .master-list .list-item-name {
@@ -131,29 +135,30 @@ function initFieldsTab() {
                 margin-left: 10px;
             }
 
-            /* Detail pane – shared card look with Setup tab */
+            /* Detail pane – align with app1 detail pane theme */
             .detail-pane {
-                border-radius: 14px;
-                border: 1px solid #e5e7eb;
-                padding: 16px 18px;
-                background: #ffffff;
-                min-height: 400px;
-                box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+                border-radius: 18px;
+                border: 1px solid #E5E7EB;
+                padding: 18px 20px;
+                background: linear-gradient(135deg, #F7F9FA 0%, #FFFFFF 55%, #F7F9FA 100%);
+                min-height: 360px;
+                box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
             }
 
             /* Field detail layout */
             .field-detail-grid {
                 display: flex;
                 flex-wrap: wrap;
-                gap: 12px;
+                gap: 18px;
                 margin-top: 12px;
             }
             .field-section-card {
                 flex: 1 1 260px;
-                border-radius: 12px;
-                border: 1px solid #e5e7eb;
-                background: #f9fafb;
-                padding: 10px 12px;
+                border-radius: 16px;
+                border: 1px solid #E5E7EB;
+                background: #FFFFFF;
+                padding: 12px 14px;
+                box-shadow: 0 10px 22px rgba(15, 23, 42, 0.05);
             }
             .field-section-header {
                 display: flex;
@@ -163,7 +168,7 @@ function initFieldsTab() {
                 font-size: 0.78rem;
                 text-transform: uppercase;
                 letter-spacing: 0.06em;
-                color: #6b7280;
+                color: #6B7280;
             }
             .field-section-title {
                 font-weight: 600;
@@ -172,14 +177,15 @@ function initFieldsTab() {
                 font-size: 0.7rem;
                 padding: 2px 8px;
                 border-radius: 999px;
-                background: #e0f2fe;
-                color: #0369a1;
+                background: #ECFDF5;
+                color: #047857;
                 font-weight: 500;
+                box-shadow: 0 3px 8px rgba(16, 185, 129, 0.35);
             }
             .field-section-help {
                 margin: 0 0 8px;
                 font-size: 0.78rem;
-                color: #6b7280;
+                color: #6B7280;
             }
 
             /* Priority list row styling */
@@ -188,25 +194,35 @@ function initFieldsTab() {
                 align-items: center;
                 gap: 10px;
                 padding: 6px 8px;
-                border-radius: 8px;
-                border: 1px solid #e5e7eb;
+                border-radius: 10px;
+                border: 1px solid #E5E7EB;
                 margin-bottom: 4px;
-                background: #f9fafb;
+                background: #F9FAFB;
             }
             .priority-controls button {
-                background: none;
-                border: 1px solid #cbd5e1;
-                border-radius: 6px;
+                background: #FFFFFF;
+                border: 1px solid #CBD5E1;
+                border-radius: 8px;
                 padding: 2px 6px;
                 cursor: pointer;
                 font-size: 0.8rem;
+                box-shadow: 0 2px 5px rgba(15, 23, 42, 0.06);
+            }
+            .priority-controls button:hover:not(:disabled) {
+                border-color: #00C896;
             }
             .priority-controls button:disabled {
                 opacity: 0.4;
                 cursor: default;
+                box-shadow: none;
+            }
+
+            .muted {
+                color: #6B7280;
+                font-size: 0.86rem;
             }
         </style>
-    `;
+    ";
 
     fieldsListEl = document.getElementById("fields-master-list");
     detailPaneEl = document.getElementById("fields-detail-pane");
@@ -318,12 +334,16 @@ function renderDetailPane() {
     header.style.display = 'flex';
     header.style.justifyContent = 'space-between';
     header.style.alignItems = 'center';
-    header.style.borderBottom = '2px solid #f3f4f6';
+    header.style.borderBottom = '2px solid #E5E7EB';
     header.style.paddingBottom = '10px';
     header.style.marginBottom = '10px';
+    header.style.columnGap = '12px';
     
     const title = document.createElement('h3');
     title.style.margin = '0';
+    title.style.fontSize = '1rem';
+    title.style.fontWeight = '600';
+    title.style.color = '#111827';
     title.textContent = item.name;
     makeEditable(title, newName => {
         if (!newName.trim()) return;
@@ -335,11 +355,21 @@ function renderDetailPane() {
     
     const deleteBtn = document.createElement('button');
     deleteBtn.textContent = 'Delete';
-    deleteBtn.style.background = '#c0392b';
-    deleteBtn.style.color = 'white';
-    deleteBtn.style.border = 'none';
-    deleteBtn.style.padding = '6px 10px';
-    deleteBtn.style.borderRadius = '4px';
+    deleteBtn.style.background = '#FFFFFF';
+    deleteBtn.style.color = '#DC2626';
+    deleteBtn.style.border = '1px solid #FECACA';
+    deleteBtn.style.padding = '6px 14px';
+    deleteBtn.style.borderRadius = '999px';
+    deleteBtn.style.cursor = 'pointer';
+    deleteBtn.style.fontWeight = '600';
+    deleteBtn.style.fontSize = '0.85rem';
+    deleteBtn.style.boxShadow = '0 4px 10px rgba(220,38,38,0.18)';
+    deleteBtn.onmouseenter = () => {
+        deleteBtn.style.background = '#FEE2E2';
+    };
+    deleteBtn.onmouseleave = () => {
+        deleteBtn.style.background = '#FFFFFF';
+    };
     deleteBtn.onclick = () => {
         if (confirm(`Are you sure you want to delete "${item.name}"?`)) {
             fields = fields.filter(f => f.name !== item.name);
@@ -355,14 +385,15 @@ function renderDetailPane() {
     
     // --- GLOBAL AVAILABILITY STRIP ---
     const masterToggle = document.createElement('div');
-    masterToggle.style.background = item.available ? '#e8f5e9' : '#fbe9e7';
-    masterToggle.style.padding = '8px 10px';
-    masterToggle.style.borderRadius = '8px';
+    masterToggle.style.background = item.available ? '#ECFDF5' : '#FEF2F2';
+    masterToggle.style.padding = '8px 12px';
+    masterToggle.style.borderRadius = '12px';
     masterToggle.style.marginBottom = '12px';
     masterToggle.style.fontSize = '0.8rem';
     masterToggle.style.display = 'flex';
     masterToggle.style.justifyContent = 'space-between';
     masterToggle.style.alignItems = 'center';
+    masterToggle.style.border = '1px solid ' + (item.available ? '#BBF7D0' : '#FECACA');
     masterToggle.innerHTML = `
         <span>
             This field is currently 
@@ -584,16 +615,17 @@ function renderTimeRulesUI(item, onSave, onRerender) {
         const ruleEl = document.createElement("div");
         ruleEl.style.margin = "4px 0";
         ruleEl.style.padding = "4px 6px";
-        ruleEl.style.background = "#f4f4f4";
-        ruleEl.style.borderRadius = "6px";
+        ruleEl.style.background = "#F9FAFB";
+        ruleEl.style.borderRadius = "8px";
         ruleEl.style.display = "flex";
         ruleEl.style.alignItems = "center";
         ruleEl.style.justifyContent = "space-between";
+        ruleEl.style.border = "1px solid #E5E7EB";
         
         const left = document.createElement("span");
         const ruleType = document.createElement("strong");
         ruleType.textContent = rule.type;
-        ruleType.style.color = rule.type === 'Available' ? 'green' : 'red';
+        ruleType.style.color = rule.type === 'Available' ? '#16A34A' : '#DC2626';
         ruleType.style.textTransform = "capitalize";
         
         const ruleText = document.createElement("span");
@@ -607,6 +639,9 @@ function renderTimeRulesUI(item, onSave, onRerender) {
         removeBtn.style.border = "none";
         removeBtn.style.background = "transparent";
         removeBtn.style.cursor = "pointer";
+        removeBtn.style.color = "#9CA3AF";
+        removeBtn.onmouseenter = () => removeBtn.style.color = "#DC2626";
+        removeBtn.onmouseleave = () => removeBtn.style.color = "#9CA3AF";
         removeBtn.onclick = () => {
             item.timeRules.splice(index, 1);
             onSave();
@@ -632,6 +667,10 @@ function renderTimeRulesUI(item, onSave, onRerender) {
     startInput.placeholder = "e.g., 9:00am";
     startInput.style.width = "100px";
     startInput.style.marginLeft = "5px";
+    startInput.style.padding = "3px 8px";
+    startInput.style.borderRadius = "999px";
+    startInput.style.border = "1px solid #D1D5DB";
+    startInput.style.fontSize = "0.8rem";
 
     const toLabel = document.createElement("span");
     toLabel.textContent = " to ";
@@ -640,10 +679,23 @@ function renderTimeRulesUI(item, onSave, onRerender) {
     const endInput = document.createElement("input");
     endInput.placeholder = "e.g., 10:30am";
     endInput.style.width = "100px";
+    endInput.style.padding = "3px 8px";
+    endInput.style.borderRadius = "999px";
+    endInput.style.border = "1px solid #D1D5DB";
+    endInput.style.fontSize = "0.8rem";
 
     const addBtn = document.createElement("button");
     addBtn.textContent = "Add Rule";
     addBtn.style.marginLeft = "8px";
+    addBtn.style.padding = "4px 12px";
+    addBtn.style.borderRadius = "999px";
+    addBtn.style.border = "none";
+    addBtn.style.background = "#00C896";
+    addBtn.style.color = "#FFFFFF";
+    addBtn.style.fontSize = "0.8rem";
+    addBtn.style.fontWeight = "600";
+    addBtn.style.cursor = "pointer";
+    addBtn.style.boxShadow = "0 3px 8px rgba(0, 200, 150, 0.35)";
     
     addBtn.onclick = () => {
         const type = typeSelect.value;
@@ -739,13 +791,15 @@ function createChipPicker(allItems, selectedItems, onToggle) {
     allItems.forEach(name => {
         const chip = document.createElement("span");
         chip.textContent = name;
-        chip.style.padding = "4px 8px";
-        chip.style.borderRadius = "12px";
+        chip.style.padding = "4px 10px";
+        chip.style.borderRadius = "999px";
         chip.style.cursor = "pointer";
-        chip.style.border = "1px solid #ccc";
+        chip.style.border = "1px solid #CBD5E1";
+        chip.style.fontSize = "0.8rem";
         const isActive = selectedItems.includes(name);
-        chip.style.backgroundColor = isActive ? "#007BFF" : "#f0f0f0";
-        chip.style.color = isActive ? "white" : "black";
+        chip.style.backgroundColor = isActive ? "#00C896" : "#F3F4F6";
+        chip.style.color = isActive ? "#FFFFFF" : "#111827";
+        chip.style.boxShadow = isActive ? "0 3px 8px rgba(0, 200, 150, 0.35)" : "none";
         chip.onclick = () => {
             const idx = selectedItems.indexOf(name);
             if (idx > -1) { selectedItems.splice(idx, 1); } 
@@ -783,8 +837,8 @@ function renderAllowedBunksControls(item, onSave, onRerender) {
     const toggleTrack = document.createElement("span");
     Object.assign(toggleTrack.style, {
         "width": "44px", "height": "24px", "borderRadius": "99px", "position": "relative",
-        "display": "inline-block", "border": "1px solid #ccc",
-        "backgroundColor": rules.enabled ? '#d1d5db' : '#22c55e',
+        "display": "inline-block", "border": "1px solid #CBD5E1",
+        "backgroundColor": rules.enabled ? '#D1D5DB' : '#22C55E',
         "transition": "background-color 0.2s"
     });
     const toggleKnob = document.createElement("span");
@@ -814,11 +868,11 @@ function renderAllowedBunksControls(item, onSave, onRerender) {
     if (rules.enabled) {
         const customPanel = document.createElement("div");
         customPanel.style.padding = "12px 0 0";
-        customPanel.style.borderTop = "1px solid #f0f0f0";
+        customPanel.style.borderTop = "1px solid #F3F4F6";
         
         // --- 2. Priority and Exclusive Toggle ---
         const prioritySettings = document.createElement("div");
-        prioritySettings.style.cssText = "background:#f9fafb; padding:10px; border-radius:8px; border:1px solid #e5e7eb; margin-bottom:12px;";
+        prioritySettings.style.cssText = "background:#F9FAFB; padding:10px; border-radius:12px; border:1px solid #E5E7EB; margin-bottom:12px;";
         
         // Exclusive Mode
         const exclDiv = document.createElement("div");
@@ -857,7 +911,7 @@ function renderAllowedBunksControls(item, onSave, onRerender) {
                 <div class="priority-controls">
                     <button data-action="up" data-div="${divName}" ${idx === 0 ? 'disabled' : ''}>↑</button>
                     <button data-action="down" data-div="${divName}" ${idx === prefs.list.length - 1 ? 'disabled' : ''}>↓</button>
-                    <button data-action="rem" data-div="${divName}" style="color:#b91c1c; border-color:#fecaca;">x</button>
+                    <button data-action="rem" data-div="${divName}" style="color:#B91C1C; border-color:#FECACA;">x</button>
                 </div>
             `;
             
@@ -888,7 +942,7 @@ function renderAllowedBunksControls(item, onSave, onRerender) {
 
         // --- Add to Priority Dropdown ---
         const priorityAddRow = document.createElement("div");
-        priorityAddRow.style.cssText = "margin-top:8px; padding-top:6px; border-top:1px dashed #e5e7eb; display:flex; gap:6px;";
+        priorityAddRow.style.cssText = "margin-top:8px; padding-top:6px; border-top:1px dashed #E5E7EB; display:flex; gap:6px;";
         
         const select = document.createElement("select");
         select.innerHTML = `<option value="">-- Add Division to Priority --</option>`;
@@ -900,6 +954,14 @@ function renderAllowedBunksControls(item, onSave, onRerender) {
 
         const addBtn = document.createElement("button");
         addBtn.textContent = "Add";
+        addBtn.style.padding = "4px 10px";
+        addBtn.style.borderRadius = "999px";
+        addBtn.style.border = "none";
+        addBtn.style.background = "#00C896";
+        addBtn.style.color = "#FFFFFF";
+        addBtn.style.fontSize = "0.8rem";
+        addBtn.style.cursor = "pointer";
+        addBtn.style.boxShadow = "0 3px 8px rgba(0, 200, 150, 0.35)";
         addBtn.onclick = () => {
             if (select.value) {
                 prefs.list.push(select.value);
@@ -959,9 +1021,9 @@ function renderAllowedBunksControls(item, onSave, onRerender) {
 
                 if (allowedBunks.length > 0) {
                     const allBunksChip = createLimitChip(`All ${divName}`, false, false);
-                    allBunksChip.style.backgroundColor = "#f3f4f6";
-                    allBunksChip.style.color = "#2563eb";
-                    allBunksChip.style.borderColor = "#93c5fd";
+                    allBunksChip.style.backgroundColor = "#F3F4F6";
+                    allBunksChip.style.color = "#2563EB";
+                    allBunksChip.style.borderColor = "#93C5FD";
                     allBunksChip.onclick = () => {
                         rules.divisions[divName] = []; 
                         onSave();
@@ -1000,15 +1062,15 @@ function createLimitChip(name, isActive, isDivision = true) {
     chip.style.padding = "4px 9px";
     chip.style.borderRadius = "999px";
     chip.style.cursor = "pointer";
-    chip.style.border = "1px solid #cbd5e1";
+    chip.style.border = "1px solid #CBD5E1";
     chip.style.fontSize = isDivision ? "0.82rem" : "0.78rem";
-    const activeBG = isDivision ? "#2563eb" : "#38bdf8"; 
-    const activeColor = "white";
-    const inactiveBG = isDivision ? "#f3f4f6" : "#f9f9f9";
+    const activeBG = isDivision ? "#00C896" : "#38BDF8"; 
+    const activeColor = "#FFFFFF";
+    const inactiveBG = isDivision ? "#F3F4F6" : "#F9FAFB";
     const inactiveColor = "#111827";
     chip.style.backgroundColor = isActive ? activeBG : inactiveBG;
     chip.style.color = isActive ? activeColor : inactiveColor;
-    chip.style.borderColor = isActive ? activeBG : "#cbd5e1";
+    chip.style.boxShadow = isActive ? "0 3px 8px rgba(0, 200, 150, 0.35)" : "none";
     return chip;
 }
 
