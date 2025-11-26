@@ -1,7 +1,9 @@
 // =================================================================
-// daily_adjustments.js  (UPDATED with SMART TILES v2)
+// daily_adjustments.js  (UPDATED with SMART TILES v3)
 // - Includes "Smart Tile" logic for daily overrides.
-// - Matches master_schedule_builder Smart Tile prompts + smartData.
+// - MATCHES master_schedule_builder Smart Tile prompts + smartData.
+// - NEW: Smart Tiles pre-process into bunkActivityOverrides BEFORE
+//        calling runSkeletonOptimizer, using SmartTilesEngine.
 // =================================================================
 
 (function() {
@@ -18,6 +20,35 @@ let currentOverrides = {
   disabledSpecials: [],
   bunkActivityOverrides: []
 };
+
+// --- Smart Tile history (cross-day fairness) ---
+let smartTileHistory = null;
+const SMART_TILE_HISTORY_KEY = "smartTileHistory_v1";
+
+function loadSmartTileHistory() {
+  try {
+    if (!window.localStorage) return { byBunk: {} };
+    const raw = localStorage.getItem(SMART_TILE_HISTORY_KEY);
+    if (!raw) return { byBunk: {} };
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return { byBunk: {} };
+    if (!parsed.byBunk) parsed.byBunk = {};
+    return parsed;
+  } catch (e) {
+    console.warn("Daily Adjustments: Failed to load smartTileHistory", e);
+    return { byBunk: {} };
+  }
+}
+
+function saveSmartTileHistory(history) {
+  try {
+    if (!window.localStorage) return;
+    const toSave = history && typeof history === "object" ? history : { byBunk: {} };
+    localStorage.setItem(SMART_TILE_HISTORY_KEY, JSON.stringify(toSave));
+  } catch (e) {
+    console.warn("Daily Adjustments: Failed to save smartTileHistory", e);
+  }
+}
 
 // --- Helper containers ---
 let skeletonContainer = null;
@@ -334,6 +365,19 @@ function addDropListeners(gridContainer) {
         );
         if (!fallbackActivity) return;
 
+        // 4. OPTIONAL: Max bunks that can receive the constrained activity per day
+        //    (e.g., how many bunks can get "Special" today across this Smart Tile pair)
+        let maxSpecialBunksPerDay = null;
+        const capStr = prompt(
+          `Optional: Max number of bunks that can receive "${fallbackTarget}" per day (across this Smart Tile pair).\nLeave blank for no limit.`
+        );
+        if (capStr && capStr.trim()) {
+          const n = parseInt(capStr.trim(), 10);
+          if (!Number.isNaN(n) && n > 0) {
+            maxSpecialBunksPerDay = n;
+          }
+        }
+
         newEvent = {
           id: `evt_${Math.random().toString(36).slice(2, 9)}`,
           type: 'smart',
@@ -345,7 +389,8 @@ function addDropListeners(gridContainer) {
             main1: act1,
             main2: act2,
             fallbackFor: fallbackTarget,
-            fallbackActivity: fallbackActivity
+            fallbackActivity: fallbackActivity,
+            maxSpecialBunksPerDay: maxSpecialBunksPerDay
           }
         };
 
@@ -487,6 +532,146 @@ function minutesToTime(min) {
   return `${h}:${m}${ampm}`;
 }
 
+// =================================================================
+// SMART TILE PRE-PROCESSOR HOOK
+// - Build configs from "smart" events in dailyOverrideSkeleton
+// - Use SmartTilesEngine to generate bunkActivityOverrides
+// - Merge into daily data BEFORE running optimizer.
+// =================================================================
+
+function applySmartTileOverridesForToday() {
+  if (!window.SmartTilesEngine) {
+    // SmartTilesEngine not loaded; skip.
+    return;
+  }
+
+  const divisionsCfg = masterSettings.app1.divisions || {};
+  const specialActivitiesCfg = masterSettings.app1.specialActivities || [];
+
+  // Map eventId -> event for quick lookup
+  const eventById = {};
+  dailyOverrideSkeleton.forEach(ev => {
+    if (ev && ev.id) eventById[ev.id] = ev;
+  });
+
+  // Collect "smart" events
+  const smartEvents = dailyOverrideSkeleton.filter(ev => ev && ev.type === 'smart' && ev.smartData);
+  if (smartEvents.length === 0) return;
+
+  // Group smart events by (division + smartData signature)
+  const groups = {};
+  smartEvents.forEach(ev => {
+    const sd = ev.smartData || {};
+    const key = [
+      ev.division || "UNKNOWN_DIV",
+      (sd.main1 || "").toLowerCase(),
+      (sd.main2 || "").toLowerCase(),
+      (sd.fallbackFor || "").toLowerCase(),
+      (sd.fallbackActivity || "").toLowerCase()
+    ].join("||");
+    if (!groups[key]) groups[key] = { division: ev.division, events: [] };
+    groups[key].events.push(ev);
+  });
+
+  const smartTileConfigs = [];
+  Object.values(groups).forEach(group => {
+    const events = group.events;
+    if (!events || events.length < 2) return; // need at least 2 blocks for a pair
+
+    // Use the first TWO events in this group as the Smart Tile pair
+    // (Order = order added to skeleton; typically matching time order.)
+    const ev1 = events[0];
+    const ev2 = events[1];
+
+    const divName = group.division;
+    const divCfg = divisionsCfg[divName] || {};
+    const bunkNames = (divCfg.bunks || []).slice();
+    if (bunkNames.length === 0) return;
+
+    const sd = ev1.smartData || {};
+    const maxSpecial = (typeof sd.maxSpecialBunksPerDay === "number" && sd.maxSpecialBunksPerDay > 0)
+      ? sd.maxSpecialBunksPerDay
+      : bunkNames.length;
+
+    const specialsPool = specialActivitiesCfg.map(s => s.name || s);
+
+    smartTileConfigs.push({
+      id: `${ev1.id}__${ev2.id}`,
+      division: divName,
+      bunkNames: bunkNames,
+      blocks: [
+        { id: ev1.id, label: `${ev1.startTime} - ${ev1.endTime}` },
+        { id: ev2.id, label: `${ev2.startTime} - ${ev2.endTime}` }
+      ],
+      specialsPool: specialsPool,
+      fallbackActivity: sd.fallbackActivity || "Sports Slot",
+      maxSpecialBunksPerDay: maxSpecial
+    });
+  });
+
+  if (smartTileConfigs.length === 0) return;
+
+  // Ensure history is loaded
+  if (!smartTileHistory) {
+    smartTileHistory = loadSmartTileHistory();
+  }
+
+  const result = window.SmartTilesEngine.runSmartTilesForDay(
+    smartTileConfigs,
+    smartTileHistory || { byBunk: {} }
+  );
+
+  smartTileHistory = result.updatedHistory || { byBunk: {} };
+  saveSmartTileHistory(smartTileHistory);
+
+  const smartOverrides = [];
+  const blockEventById = {};
+  smartEvents.forEach(ev => {
+    if (ev && ev.id) blockEventById[ev.id] = ev;
+  });
+
+  (result.overrides || []).forEach(o => {
+    const blockEvent = blockEventById[o.blockId];
+    if (!blockEvent) return;
+
+    let activityName;
+    if (o.activityType === "Swim") {
+      activityName = "Swim";
+    } else if (o.activityType === "Special") {
+      // If we know which special, schedule that; otherwise generic "Special Activity"
+      activityName = o.specialName || "Special Activity";
+    } else if (o.activityType === "Fallback") {
+      const sd = blockEvent.smartData || {};
+      activityName = sd.fallbackActivity || "Sports Slot";
+    } else {
+      // safety fallback
+      activityName = "General Activity Slot";
+    }
+
+    smartOverrides.push({
+      id: uid(),
+      bunk: o.bunkName,
+      activity: activityName,
+      startTime: blockEvent.startTime,
+      endTime: blockEvent.endTime
+    });
+  });
+
+  if (smartOverrides.length === 0) return;
+
+  // Merge with existing bunkActivityOverrides
+  const dailyData = window.loadCurrentDailyData?.() || {};
+  const existing = dailyData.bunkActivityOverrides || [];
+  const merged = existing.concat(smartOverrides);
+
+  window.saveCurrentDailyData?.("bunkActivityOverrides", merged);
+  currentOverrides.bunkActivityOverrides = merged;
+}
+
+// =================================================================
+// RUN OPTIMIZER (now with Smart Tile pre-processing)
+// =================================================================
+
 function runOptimizer() {
   if (!window.runSkeletonOptimizer) {
     alert("Error: 'runSkeletonOptimizer' function not found. Is scheduler_logic_core.js loaded?");
@@ -496,7 +681,17 @@ function runOptimizer() {
     alert("Skeleton is empty. Please add blocks before running the optimizer.");
     return;
   }
+
+  // Save manual skeleton first
   saveDailySkeleton();
+
+  // NEW: Run Smart Tile pre-processor to inject bunkActivityOverrides
+  try {
+    applySmartTileOverridesForToday();
+  } catch (e) {
+    console.error("Error while applying Smart Tile overrides:", e);
+  }
+
   const success = window.runSkeletonOptimizer(dailyOverrideSkeleton);
   if (success) {
     alert("Schedule Generated Successfully!");
@@ -553,6 +748,9 @@ function init() {
   masterSettings.app1 = masterSettings.global.app1 || {};
   masterSettings.leaguesByName = masterSettings.global.leaguesByName || {};
   masterSettings.specialtyLeagues = masterSettings.global.specialtyLeagues || {};
+
+  // Load Smart Tile history once per init
+  smartTileHistory = loadSmartTileHistory();
 
   const dailyData = window.loadCurrentDailyData?.() || {};
   const dailyOverrides = dailyData.overrides || {};
@@ -1296,8 +1494,7 @@ function renderTimeRulesUI(itemName, globalRules, dailyRules, onSave) {
     if (!start || !end) { alert("Please enter a start and end time."); return; }
     if (parseTimeToMinutes(start) == null || parseTimeToMinutes(end) == null) {
       alert("Invalid time format. Use '9:00am' or '2:30pm'.");
-      return;
-    }
+      return; }
     if (parseTimeToMinutes(start) >= parseTimeToMinutes(end)) {
       alert("End time must be after start time.");
       return;
