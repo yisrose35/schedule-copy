@@ -679,7 +679,7 @@
             }
         });
 
-        // =================================================================
+               // =================================================================
         // PASS 2.5 — SMART TILE LOGIC (Fairness for Generated Sides)
         // =================================================================
         Object.entries(smartTileGroups).forEach(([key, blocks]) => {
@@ -696,12 +696,45 @@
             const fallbackFor = smartDataSample.fallbackFor;
             const fallbackAct = smartDataSample.fallbackActivity;
 
-            const cat1 = getFairnessCategoryForSmartLabel(main1);
-            const cat2 = getFairnessCategoryForSmartLabel(main2);
-    // Track, per Smart Tile group, how many times each bunk has gotten
-    // the "generated" side (e.g., Special Activity) within THIS group.
-    const groupGeneratedCount = {};
-    bunks.forEach(b => { groupGeneratedCount[b] = 0; });
+            // --- Figure out which main is the "scarce" one (generated) and which is the paired side ---
+            const toKey = (v) => v ? String(v).trim().toLowerCase() : "";
+            const main1Key = toKey(main1);
+            const main2Key = toKey(main2);
+            const fbKey    = toKey(fallbackFor);
+
+            let generatedLabel = null;   // e.g. "Special Activity" or "Gameroom"
+            let placedLabel    = null;   // e.g. "Swim"
+
+            if (fbKey && fbKey === main1Key) {
+                generatedLabel = main1;
+                placedLabel    = main2;
+            } else if (fbKey && fbKey === main2Key) {
+                generatedLabel = main2;
+                placedLabel    = main1;
+            } else {
+                // If fallbackFor doesn't match either main (typo etc.), fall back to category-based inference
+                const cat1 = getFairnessCategoryForSmartLabel(main1);
+                const cat2 = getFairnessCategoryForSmartLabel(main2);
+                if (cat1 && !cat2) {
+                    generatedLabel = main1;
+                    placedLabel    = main2;
+                } else if (cat2 && !cat1) {
+                    generatedLabel = main2;
+                    placedLabel    = main1;
+                } else {
+                    // Default: treat main1 as generated, main2 as paired
+                    generatedLabel = main1;
+                    placedLabel    = main2;
+                }
+            }
+
+            const generatedCategory = getFairnessCategoryForSmartLabel(generatedLabel);
+            const fallbackCategory  = fallbackAct ? getFairnessCategoryForSmartLabel(fallbackAct) : null;
+
+            // Track, per Smart Tile group, how many times each bunk has gotten
+            // the "generated" side (e.g., Special Activity) within THIS group today.
+            const groupGeneratedCount = {};
+            bunks.forEach(b => { groupGeneratedCount[b] = 0; });
 
             // Helper: schedule a specific activity label inside a Smart block
             const attemptSchedule = (bunk, activity, block) => {
@@ -715,7 +748,7 @@
 
                 // SPORTS side (Sports tile or fallback)
                 if (normAct.toLowerCase() === 'sports' ||
-                    normAct.toLowerCase() === 'sport' ||
+                    normAct.toLowerCase() === 'sport'  ||
                     normAct.toLowerCase() === 'sports slot') {
 
                     const pick = window.findBestSportActivity?.({
@@ -799,30 +832,8 @@
             blocks.forEach((block, blockIndex) => {
                 const isLastBlock = (blockIndex === blocks.length - 1);
 
-                // Determine which label we are *generating* in this block
-                // For now:
-                // - If one main has a fairness category (generated) and the other doesn't,
-                //   that one is "generated", the other is "placed".
-                // - If both have categories, we default to main1 as generated here
-                //   (you can later alternate by blockIndex if you want).
-                let generatedLabel = null;
-                let generatedCategory = null;
-                let placedLabel = null;
-
-                if (cat1 && !cat2) {
-                    generatedLabel = main1;
-                    generatedCategory = cat1;
-                    placedLabel = main2;
-                } else if (cat2 && !cat1) {
-                    generatedLabel = main2;
-                    generatedCategory = cat2;
-                    placedLabel = main1;
-                } else if (cat1 && cat2) {
-                    generatedLabel = main1;
-                    generatedCategory = cat1;
-                    placedLabel = main2;
-                } else {
-                    // Neither side is generated: just place main1 for all bunks
+                // If we somehow don't have a generatedLabel, just dump main1 everywhere and bail.
+                if (!generatedLabel && !placedLabel) {
                     bunks.forEach(bunk => {
                         attemptSchedule(bunk, main1, block);
                     });
@@ -830,37 +841,43 @@
                 }
 
                 // 1) FAIRNESS ORDER: who should get the generatedLabel in THIS block?
-                const fairOrder = getFairnessOrderForCategory(generatedCategory, bunks);
+                const fairOrder = generatedCategory
+                    ? getFairnessOrderForCategory(generatedCategory, bunks)
+                    : bunks.slice();
 
-                       // 2) Try to give generatedLabel (e.g. "Special Activity") to bunks in fairness order.
-        const gotGeneratedHere = {};
-        fairOrder.forEach(bunk => {
-            // 🚫 Don't give the generated side to the same bunk twice
-            // within this Smart Tile group (e.g. they can't get Special twice).
-            if (groupGeneratedCount[bunk] >= 1) return;
-            if (gotGeneratedHere[bunk]) return;
+                // 2) Try to give generatedLabel (e.g. "Special Activity") to bunks in fairness order.
+                const gotGeneratedHere = {};
+                fairOrder.forEach(bunk => {
+                    // 🚫 Don't give the generated side to the same bunk twice
+                    // within this Smart Tile group (e.g. they can't get Special twice).
+                    if (groupGeneratedCount[bunk] >= 1) return;
+                    if (gotGeneratedHere[bunk]) return;
 
-            if (attemptSchedule(bunk, generatedLabel, block)) {
-                gotGeneratedHere[bunk] = true;
-                groupGeneratedCount[bunk] += 1;   // ✅ mark they got the special once
+                    if (attemptSchedule(bunk, generatedLabel, block)) {
+                        gotGeneratedHere[bunk] = true;
+                        groupGeneratedCount[bunk] += 1;   // ✅ mark they got the generated side once
 
-                bumpCategoryUsage(bunk, generatedCategory, 1);
+                        // ✅ Update fairness usage correctly (no double-counting)
+                        if (generatedCategory) {
+                            bumpCategoryUsage(bunk, generatedCategory, 1);
 
-                // Also let it contribute to special:any if it's a specific special
-                if (generatedCategory.startsWith("special:")) {
-                    bumpCategoryUsage(bunk, "special:any", 1);
-                }
-            }
-        });
-
+                            // If this is a specific special like "special:Gameroom",
+                            // also bump the global "special:any" bucket ONCE.
+                            if (generatedCategory !== "special:any" &&
+                                generatedCategory.startsWith("special:")) {
+                                bumpCategoryUsage(bunk, "special:any", 1);
+                            }
+                        }
+                    }
+                });
 
                 // 3) For bunks that did NOT get the generatedLabel here:
-                //    - If we have a fallback (*and* this is the last block), try fallback.
-                //    - Otherwise, place the other side (Swim, etc.) if it isn't generated.
-                //    - If everything fails, they remain open for later filler.
-                // NOTE: we iterate in bunk order; fairness for fallback is less critical,
-                //       but you can upgrade later by using getFairnessOrderForCategory
-                //       with the fallback category as well.
+                //    - If they already got the generatedLabel in a *previous* block,
+                //      they MUST get the placed side (e.g. Swim), never the fallback.
+                //    - If they never got the generatedLabel at all:
+                //         * On the last block: try the fallback first (e.g. Sports),
+                //           since we ran out of Special.
+                //         * Otherwise: give them the placed side.
                 bunks.forEach(bunk => {
                     if (gotGeneratedHere[bunk]) return;
 
@@ -870,13 +887,23 @@
 
                     if (gotSomethingAlready) return;
 
-                    // LAST BLOCK + fallback: treat as generated category (e.g. sport:any)
+                    // 🔒 RULE: If this bunk already got the generated side (e.g. Gameroom)
+                    // in an earlier Smart block, they are *locked* into the placed side
+                    // (e.g. Swim) for any later Smart blocks in this group.
+                    if (groupGeneratedCount[bunk] > 0 && placedLabel) {
+                        // Force Swim (or whatever the placed side is) — NO fallback.
+                        attemptSchedule(bunk, placedLabel, block);
+                        return;
+                    }
+
+                    // Bunks that never got the generatedLabel:
+                    // On the LAST block, we allow the fallback to kick in if Special still didn't happen.
                     if (isLastBlock && fallbackAct) {
                         if (attemptSchedule(bunk, fallbackAct, block)) {
-                            const fbCat = getFairnessCategoryForSmartLabel(fallbackAct);
-                            if (fbCat) {
-                                bumpCategoryUsage(bunk, fbCat, 1);
-                                if (fbCat.startsWith("special:")) {
+                            if (fallbackCategory) {
+                                bumpCategoryUsage(bunk, fallbackCategory, 1);
+                                if (fallbackCategory !== "special:any" &&
+                                    fallbackCategory.startsWith("special:")) {
                                     bumpCategoryUsage(bunk, "special:any", 1);
                                 }
                             }
@@ -884,13 +911,14 @@
                         }
                     }
 
-                    // Otherwise, place the "placed" side if available.
+                    // Otherwise, they just get the placed side (e.g. Swim).
                     if (placedLabel) {
                         attemptSchedule(bunk, placedLabel, block);
                     }
                 });
             });
         });
+
 
         // =================================================================
         // PASS 3 — SPECIALTY LEAGUES
