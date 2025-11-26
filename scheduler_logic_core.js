@@ -1,15 +1,13 @@
 // ============================================================================
 // scheduler_logic_core.js
 //
-// UPDATED (Smart Tiles v17 - Pair Guarantee + Analytics Fairness):
-// - SMART TILE = "pair" instruction: every bunk must get:
-//      • partnerAct (e.g. Swim) once
-//      • priorityAct OR fallbackAct once (e.g. Special OR Sports)
-// - For 2-block Smart Tile groups, we enforce that guarantee per division.
-// - Who gets the PRIORITY special is decided by analytics points:
-//      • Per-activity minimum rule: no bunk can get +2 before others catch up.
-//      • Global specials score: bunks most behind on specials overall go first.
-// - fillBlock now returns a boolean indicating if anything was actually placed.
+// UPDATED (Smart Tiles v16 + Global Fairness Engine):
+// - DYNAMIC RE-CALCULATION: Scores are updated instantly after every block assignment.
+// - ONE SPOT RULE (UPGRADED): Generated specials are handed out to bunks with the
+//   lowest historical+today usage for that category (no doubling before others catch up).
+// - FAIRNESS ENGINE: Re-usable bunk/category usage model (e.g. "special:any").
+// - SMART TILES: Use the fairness engine to decide which bunks get generated
+//   specials/sports first; placed tiles (Swim/Lunch/Snack) just get placed.
 // ============================================================================
 
 (function() {
@@ -379,10 +377,12 @@
 
         const timestamp = Date.now();
         const dailyLeagueSportsUsage = {};
-                // ============================================================
-        // FAIRNESS ENGINE (Global Usage Buckets)
+
+        // ============================================================
+        // FAIRNESS ENGINE (Global Usage Buckets for Generated Stuff)
         // - Tracks usage by bunk + category, e.g. "special:any"
-        // - Can be reused by Smart Tiles, Sports Slots, Specials, etc.
+        // - Used initially for Smart Tiles (specials), and can be reused
+        //   for sports slots, regular Special Activity slots, etc.
         // ============================================================
         const bunkCategoryBaseUsage = {};   // from history + manual offsets
         const bunkCategoryTodayUsage = {};  // updated as we generate today
@@ -416,9 +416,6 @@
 
                 bunkCategoryBaseUsage[bunk]["special:any"] =
                     (bunkCategoryBaseUsage[bunk]["special:any"] || 0) + totalSpecials;
-
-                // You can later add other categories, e.g. sport:any, trips, etc.
-                // For now we focus on specials, since that's where fairness pain is.
             });
         });
 
@@ -455,6 +452,37 @@
             return arr;
         }
 
+        // Map Smart Tile labels / events into fairness categories
+        function getFairnessCategoryForSmartLabel(label) {
+            if (!label) return null;
+            const s = String(label).trim().toLowerCase();
+
+            // Sports tile: all generated sports share "sport:any"
+            if (s === "sports" || s === "sport" || s === "sports slot") {
+                return "sport:any";
+            }
+
+            // Generic "Special Activity" bucket
+            if (s === "special" || s === "special activity") {
+                return "special:any";
+            }
+
+            // If it's one of the named specials, prioritize that specifically
+            const exact = specialActivityNames || [];
+            for (const name of exact) {
+                if (s === String(name).trim().toLowerCase()) {
+                    return `special:${name}`;
+                }
+            }
+
+            // Swim / Lunch / Snack etc → placed, no fairness category
+            if (s === "swim" || s === "lunch" || s === "snack") {
+                return null;
+            }
+
+            // Default: no category (treated as placed-only for now)
+            return null;
+        }
 
         // =================================================================
         // PASS 1: DYNAMIC TIME GRID (Atomic Intervals)
@@ -567,15 +595,10 @@
             const normLeague = normalizeLeague(item.event);
             const normSpecLg = normalizeSpecialtyLeague(item.event);
             const finalEventName = normGA || normSpecLg || normLeague || item.event;
-            const isGeneratedEvent =
-                GENERATED_EVENTS.includes(finalEventName) ||
-                normGA === "General Activity Slot" ||
-                normLeague === "League Game" ||
-                normSpecLg === "Specialty League" ||
-                item.type === 'smart';
+            const isGeneratedEvent = GENERATED_EVENTS.includes(finalEventName) || normGA === "General Activity Slot" || normLeague === "League Game" || normSpecLg === "Specialty League" || item.type === 'smart';
 
             if (item.type === 'pinned' || !isGeneratedEvent) {
-                // Pinned = same activity for all bunks in division
+                // Fully pinned: every bunk, every slot = same fixed tile
                 allBunks.forEach(bunk => {
                     allSlots.forEach((slotIndex, idx) => {
                         if (!window.scheduleAssignments[bunk][slotIndex]) {
@@ -594,7 +617,6 @@
                 });
             }
             else if (item.type === 'split') {
-                // Swim + GA split
                 if (!item.subEvents || item.subEvents.length < 2) return;
                 const swimLabel = "Swim";
                 const rawGAEvent = item.subEvents[1].event;
@@ -624,14 +646,7 @@
                 }
                 function pushGA(bunks, slots) {
                     bunks.forEach(bunk => {
-                        schedulableSlotBlocks.push({
-                            divName: item.division,
-                            bunk: bunk,
-                            event: gaLabel,
-                            startTime: startMin,
-                            endTime: endMin,
-                            slots
-                        });
+                        schedulableSlotBlocks.push({ divName: item.division, bunk: bunk, event: gaLabel, startTime: startMin, endTime: endMin, slots });
                     });
                 }
                 pinSwim(bunksTop, slotsFirst);
@@ -640,7 +655,6 @@
                 pinSwim(bunksBottom, slotsSecond);
             }
             else if (item.type === 'smart' && item.smartData) {
-                // Group Smart Tiles by division + unordered pair (main1/main2)
                 const signature = [item.smartData.main1, item.smartData.main2].sort().join('|');
                 const key = `${item.division}::${signature}`;
                 if (!smartTileGroups[key]) smartTileGroups[key] = [];
@@ -660,109 +674,30 @@
                 else if (normalizeGA(item.event)) normalizedEvent = "General Activity Slot";
                 else normalizedEvent = item.event;
                 allBunks.forEach(bunk => {
-                    schedulableSlotBlocks.push({
-                        divName: item.division,
-                        bunk: bunk,
-                        event: normalizedEvent,
-                        startTime: startMin,
-                        endTime: endMin,
-                        slots: allSlots
-                    });
+                    schedulableSlotBlocks.push({ divName: item.division, bunk: bunk, event: normalizedEvent, startTime: startMin, endTime: endMin, slots: allSlots });
                 });
             }
         });
 
-                       // =================================================================
-        // PASS 2.5 — SMART TILE LOGIC (Strict no-double rule)
         // =================================================================
-        const specialSet = new Set(specialActivityNames || []);
-        // Maps Smart Tile labels to fairness categories
-        function getFairnessCategoryForSmartLabel(label) {
-            if (!label) return null;
-            const s = String(label).trim().toLowerCase();
-
-            // Pure sports tile: all generated sports share "sport:any"
-            if (s === "sports" || s === "sport") return "sport:any";
-
-            // Generic "Special Activity" bucket
-            if (s === "special" || s === "special activity") {
-                return "special:any";
-            }
-
-            // If it's one of the named specials, we can prioritize that specifically
-            // AND it still contributes to "special:any".
-            const exact = specialActivityNames || [];
-            for (const name of exact) {
-                if (s === String(name).trim().toLowerCase()) {
-                    return `special:${name}`;
-                }
-            }
-
-            // Swim / Lunch / Snack etc → treated as placed, no fairness category.
-            if (s === "swim" || s === "lunch" || s === "snack") {
-                return null;
-            }
-
-            // Default: no category (treated as place-only for now)
-            return null;
-        }
-
+        // PASS 2.5 — SMART TILE LOGIC (Fairness for Generated Sides)
+        // =================================================================
         Object.entries(smartTileGroups).forEach(([key, blocks]) => {
-            // All Smart Tile blocks sharing the same (division + mains) signature
+            // All Smart Tile blocks sharing the same (division + main labels)
             blocks.sort((a, b) => a.startTime - b.startTime);
 
             const divName = blocks[0].divName;
             const bunks = divisions[divName]?.bunks || [];
             if (!bunks.length) return;
 
-            const main1 = blocks[0].smartData.main1;
-            const main2 = blocks[0].smartData.main2;
-            const fallbackFor = blocks[0].smartData.fallbackFor;
-            const fallbackAct = blocks[0].smartData.fallbackActivity;
+            const smartDataSample = blocks[0].smartData || {};
+            const main1 = smartDataSample.main1;
+            const main2 = smartDataSample.main2;
+            const fallbackFor = smartDataSample.fallbackFor;
+            const fallbackAct = smartDataSample.fallbackActivity;
 
-            // Which side is the “priority” side (usually special-with-fallback)
-            const priorityAct = (fallbackFor === main2) ? main2 : main1;
-            const secondaryAct = (priorityAct === main1) ? main2 : main1;
-
-            // --- Build base priority counts from analytics (history + offsets) ---
-            // If priorityAct is generic “Special Activity”, we look at ALL specials.
-            const isPrioritySpecialCategory =
-                priorityAct === 'Special' || priorityAct === 'Special Activity';
-
-            const relevantActs = isPrioritySpecialCategory
-                ? Array.from(specialSet)
-                : [priorityAct];
-
-            const priorityBase = {};           // history-based priority counts
-            const priorityAwardedToday = {};   // how many priority Smart tiles we gave today (this group)
-
-            bunks.forEach(b => {
-                let total = 0;
-                const hist = historicalCounts[b] || {};
-                relevantActs.forEach(act => {
-                    total += (hist[act] || 0);
-                });
-                priorityBase[b] = total;
-                priorityAwardedToday[b] = 0;
-            });
-
-            function getPriorityCount(bunk) {
-                return (priorityBase[bunk] || 0) + (priorityAwardedToday[bunk] || 0);
-            }
-
-            function getMinPriorityCount() {
-                let min = Infinity;
-                bunks.forEach(b => {
-                    const c = getPriorityCount(b);
-                    if (c < min) min = c;
-                });
-                return (min === Infinity ? 0 : min);
-            }
-
-            // Track within THIS Smart group: did this bunk already get
-            // its one “priority side” and its one “secondary side”?
-            const gotPriority = {};
-            const gotSecondary = {};
+            const cat1 = getFairnessCategoryForSmartLabel(main1);
+            const cat2 = getFairnessCategoryForSmartLabel(main2);
 
             // Helper: schedule a specific activity label inside a Smart block
             const attemptSchedule = (bunk, activity, block) => {
@@ -774,9 +709,11 @@
                 let finalActivityType = normAct;
                 let success = false;
 
-                // SPORTS side (fallback or partner)
+                // SPORTS side (Sports tile or fallback)
                 if (normAct.toLowerCase() === 'sports' ||
-                    normAct.toLowerCase() === 'sport') {
+                    normAct.toLowerCase() === 'sport' ||
+                    normAct.toLowerCase() === 'sports slot') {
+
                     const pick = window.findBestSportActivity?.({
                         divName,
                         bunk,
@@ -854,59 +791,96 @@
                 return false;
             };
 
-            // --- Process each Smart Tile block in time order ---
+            // Process each Smart Tile block in time order
             blocks.forEach((block, blockIndex) => {
                 const isLastBlock = (blockIndex === blocks.length - 1);
 
-                // We *don’t* need a fancy global score here anymore – the strict rule is:
-                // only bunks at the current MIN priority count may get the priority side.
-                const minPriorityNow = getMinPriorityCount();
+                // Determine which label we are *generating* in this block
+                // For now:
+                // - If one main has a fairness category (generated) and the other doesn't,
+                //   that one is "generated", the other is "placed".
+                // - If both have categories, we default to main1 as generated here
+                //   (you can later alternate by blockIndex if you want).
+                let generatedLabel = null;
+                let generatedCategory = null;
+                let placedLabel = null;
 
-                // Shuffle bunks so ties are random but fair
-                const shuffledBunks = [...bunks];
-                shuffleArray(shuffledBunks);
+                if (cat1 && !cat2) {
+                    generatedLabel = main1;
+                    generatedCategory = cat1;
+                    placedLabel = main2;
+                } else if (cat2 && !cat1) {
+                    generatedLabel = main2;
+                    generatedCategory = cat2;
+                    placedLabel = main1;
+                } else if (cat1 && cat2) {
+                    generatedLabel = main1;
+                    generatedCategory = cat1;
+                    placedLabel = main2;
+                } else {
+                    // Neither side is generated: just place main1 for all bunks
+                    bunks.forEach(bunk => {
+                        attemptSchedule(bunk, main1, block);
+                    });
+                    return;
+                }
 
-                shuffledBunks.forEach(bunk => {
-                    // 1) Try to give PRIORITY side if:
-                    // - they haven't already gotten it in this Smart group
-                    // - their priority count is equal to the current minimum
-                    //   (no-one can go 2 ahead)
-                    if (!gotPriority[bunk]) {
-                        const myCount = getPriorityCount(bunk);
+                // 1) FAIRNESS ORDER: who should get the generatedLabel in THIS block?
+                const fairOrder = getFairnessOrderForCategory(generatedCategory, bunks);
 
-                        if (myCount === minPriorityNow && priorityAct &&
-                            attemptSchedule(bunk, priorityAct, block)) {
+                // 2) Try to give generatedLabel (e.g. "Special Activity") to bunks in fairness order.
+                const gotGeneratedHere = {};
+                fairOrder.forEach(bunk => {
+                    if (gotGeneratedHere[bunk]) return;
 
-                            gotPriority[bunk] = true;
-                            priorityAwardedToday[bunk] =
-                                (priorityAwardedToday[bunk] || 0) + 1;
+                    if (attemptSchedule(bunk, generatedLabel, block)) {
+                        gotGeneratedHere[bunk] = true;
+                        bumpCategoryUsage(bunk, generatedCategory, 1);
+
+                        // Also let it contribute to special:any if it's a specific special
+                        if (generatedCategory.startsWith("special:")) {
+                            bumpCategoryUsage(bunk, "special:any", 1);
+                        }
+                    }
+                });
+
+                // 3) For bunks that did NOT get the generatedLabel here:
+                //    - If we have a fallback (*and* this is the last block), try fallback.
+                //    - Otherwise, place the other side (Swim, etc.) if it isn't generated.
+                //    - If everything fails, they remain open for later filler.
+                // NOTE: we iterate in bunk order; fairness for fallback is less critical,
+                //       but you can upgrade later by using getFairnessOrderForCategory
+                //       with the fallback category as well.
+                bunks.forEach(bunk => {
+                    if (gotGeneratedHere[bunk]) return;
+
+                    const gotSomethingAlready =
+                        window.scheduleAssignments[bunk] &&
+                        block.slots.some(idx => window.scheduleAssignments[bunk][idx]);
+
+                    if (gotSomethingAlready) return;
+
+                    // LAST BLOCK + fallback: treat as generated category (e.g. sport:any)
+                    if (isLastBlock && fallbackAct) {
+                        if (attemptSchedule(bunk, fallbackAct, block)) {
+                            const fbCat = getFairnessCategoryForSmartLabel(fallbackAct);
+                            if (fbCat) {
+                                bumpCategoryUsage(bunk, fbCat, 1);
+                                if (fbCat.startsWith("special:")) {
+                                    bumpCategoryUsage(bunk, "special:any", 1);
+                                }
+                            }
                             return;
                         }
                     }
 
-                    // 2) If priority didn’t happen in this block:
-                    //    try to give them the SECONDARY side (e.g., Swim) if they
-                    //    don’t have it yet for this Smart Tile group.
-                    if (!gotSecondary[bunk] && secondaryAct &&
-                        attemptSchedule(bunk, secondaryAct, block)) {
-                        gotSecondary[bunk] = true;
-                        return;
-                    }
-
-                    // 3) LAST BLOCK ONLY:
-                    //    If they **still** never got the priority side at all,
-                    //    we let them use the FALLBACK here and count it as priority
-                    //    (because we ran out of Smart blocks to place the special).
-                    if (isLastBlock && !gotPriority[bunk] && fallbackAct &&
-                        attemptSchedule(bunk, fallbackAct, block)) {
-                        gotPriority[bunk] = true;
-                        priorityAwardedToday[bunk] =
-                            (priorityAwardedToday[bunk] || 0) + 1;
+                    // Otherwise, place the "placed" side if available.
+                    if (placedLabel) {
+                        attemptSchedule(bunk, placedLabel, block);
                     }
                 });
             });
         });
-
 
         // =================================================================
         // PASS 3 — SPECIALTY LEAGUES
@@ -918,32 +892,15 @@
         const specialtyLeagueGroups = {};
         specialtyLeagueBlocks.forEach(block => {
             const key = `${block.divName}-${block.startTime}`;
-            if (!specialtyLeagueGroups[key]) {
-                specialtyLeagueGroups[key] = {
-                    divName: block.divName,
-                    startTime: block.startTime,
-                    endTime: block.endTime,
-                    slots: block.slots,
-                    bunks: new Set()
-                };
-            }
+            if (!specialtyLeagueGroups[key]) specialtyLeagueGroups[key] = { divName: block.divName, startTime: block.startTime, endTime: block.endTime, slots: block.slots, bunks: new Set() };
             specialtyLeagueGroups[key].bunks.add(block.bunk);
         });
 
         Object.values(specialtyLeagueGroups).forEach(group => {
-            const leagueEntry = Object.values(masterSpecialtyLeagues).find(l =>
-                l.enabled &&
-                !disabledSpecialtyLeagues.includes(l.name) &&
-                l.divisions.includes(group.divName)
-            );
+            const leagueEntry = Object.values(masterSpecialtyLeagues).find(l => l.enabled && !disabledSpecialtyLeagues.includes(l.name) && l.divisions.includes(group.divName));
             if (!leagueEntry) return;
             const allBunksInGroup = Array.from(group.bunks);
-            const blockBase = {
-                slots: group.slots,
-                divName: group.divName,
-                startTime: group.startTime,
-                endTime: group.endTime
-            };
+            const blockBase = { slots: group.slots, divName: group.divName, startTime: group.startTime, endTime: group.endTime };
             const leagueName = leagueEntry.name;
             const leagueHistory = rotationHistory.leagues[leagueName] || {};
             rotationHistory.leagues[leagueName] = leagueHistory;
@@ -955,98 +912,54 @@
 
             if (bestSport) {
                 const leagueFields = leagueEntry.fields || [];
-                const leagueTeams = (leagueEntry.teams || [])
-                    .map(t => String(t).trim())
-                    .filter(Boolean);
+                const leagueTeams = (leagueEntry.teams || []).map(t => String(t).trim()).filter(Boolean);
                 if (leagueFields.length !== 0 && leagueTeams.length >= 2) {
-                    let matchups = [];
-                    if (typeof window.getLeagueMatchups === 'function') {
-                        matchups = window.getLeagueMatchups(leagueEntry.name, leagueTeams) || [];
-                    } else {
-                        matchups = pairRoundRobin(leagueTeams);
-                    }
+                     let matchups = [];
+                     if (typeof window.getLeagueMatchups === 'function') matchups = window.getLeagueMatchups(leagueEntry.name, leagueTeams) || [];
+                     else matchups = pairRoundRobin(leagueTeams);
+                     
+                     const gamesPerField = Math.ceil(matchups.length / leagueFields.length);
+                     const slotCount = group.slots.length || 1;
+                     const usedFieldsInThisBlock = Array.from({ length: slotCount }, () => new Set());
+                     
+                     for (let i = 0; i < matchups.length; i++) {
+                         const [teamA, teamB] = matchups[i];
+                         if (teamA === "BYE" || teamB === "BYE") continue;
+                         const fieldIndex = Math.floor(i / gamesPerField);
+                         const fieldName = leagueFields[fieldIndex % leagueFields.length];
+                         const baseLabel = `${teamA} vs ${teamB} (${bestSport})`;
+                         let isFieldAvailable = true;
+                         const slotIndex = group.slots[i % slotCount];
+                         if (fieldUsageBySlot[slotIndex]?.[fieldName]?.count >= 1) isFieldAvailable = false;
+                         if (usedFieldsInThisBlock[i % slotCount].has(fieldName)) isFieldAvailable = false;
+                         
+                         const props = activityProperties[fieldName];
+                         if (props) {
+                             if (!isTimeAvailable(slotIndex, props)) isFieldAvailable = false;
+                             if (props.preferences?.enabled && props.preferences.exclusive && !props.preferences.list.includes(group.divName)) isFieldAvailable = false;
+                             if (props.limitUsage?.enabled && !props.limitUsage.divisions[group.divName]) isFieldAvailable = false;
+                         }
 
-                    const gamesPerField = Math.ceil(matchups.length / leagueFields.length);
-                    const slotCount = group.slots.length || 1;
-                    const usedFieldsInThisBlock = Array.from({ length: slotCount }, () => new Set());
-
-                    for (let i = 0; i < matchups.length; i++) {
-                        const [teamA, teamB] = matchups[i];
-                        if (teamA === "BYE" || teamB === "BYE") continue;
-                        const fieldIndex = Math.floor(i / gamesPerField);
-                        const fieldName = leagueFields[fieldIndex % leagueFields.length];
-                        const baseLabel = `${teamA} vs ${teamB} (${bestSport})`;
-                        let isFieldAvailable = true;
-                        const slotIndex = group.slots[i % slotCount];
-                        if (fieldUsageBySlot[slotIndex]?.[fieldName]?.count >= 1) {
-                            isFieldAvailable = false;
-                        }
-                        if (usedFieldsInThisBlock[i % slotCount].has(fieldName)) {
-                            isFieldAvailable = false;
-                        }
-
-                        const props = activityProperties[fieldName];
-                        if (props) {
-                            if (!isTimeAvailable(slotIndex, props)) isFieldAvailable = false;
-                            if (props.preferences?.enabled &&
-                                props.preferences.exclusive &&
-                                !props.preferences.list.includes(group.divName)) {
-                                isFieldAvailable = false;
-                            }
-                            if (props.limitUsage?.enabled &&
-                                !props.limitUsage.divisions[group.divName]) {
-                                isFieldAvailable = false;
-                            }
-                        }
-
-                        let pick;
-                        if (fieldName && isFieldAvailable) {
-                            pick = {
-                                field: fieldName,
-                                sport: baseLabel,
-                                _h2h: true,
-                                vs: null,
-                                _activity: bestSport
-                            };
-                            markFieldUsage(
-                                { ...blockBase, _activity: bestSport, bunk: 'league' },
-                                fieldName,
-                                fieldUsageBySlot
-                            );
-                            usedFieldsInThisBlock[i % slotCount].add(fieldName);
-                            allMatchupLabels.push(`${baseLabel} @ ${fieldName}`);
-                        } else {
-                            pick = {
-                                field: "No Field",
-                                sport: baseLabel,
-                                _h2h: true,
-                                vs: null,
-                                _activity: bestSport
-                            };
-                            allMatchupLabels.push(`${baseLabel} (No Field)`);
-                        }
-                        picksByTeam[teamA] = pick;
-                        picksByTeam[teamB] = pick;
-                    }
+                         let pick;
+                         if (fieldName && isFieldAvailable) {
+                             pick = { field: fieldName, sport: baseLabel, _h2h: true, vs: null, _activity: bestSport };
+                             markFieldUsage({ ...blockBase, _activity: bestSport, bunk: 'league' }, fieldName, fieldUsageBySlot);
+                             usedFieldsInThisBlock[i % slotCount].add(fieldName);
+                             allMatchupLabels.push(`${baseLabel} @ ${fieldName}`);
+                         } else {
+                             pick = { field: "No Field", sport: baseLabel, _h2h: true, vs: null, _activity: bestSport };
+                             allMatchupLabels.push(`${baseLabel} (No Field)`);
+                         }
+                         picksByTeam[teamA] = pick;
+                         picksByTeam[teamB] = pick;
+                     }
                 }
             }
-            const noGamePick = {
-                field: "No Game",
-                sport: null,
-                _h2h: true,
-                _activity: bestSport || "Specialty League",
-                _allMatchups: allMatchupLabels
-            };
+            const noGamePick = { field: "No Game", sport: null, _h2h: true, _activity: bestSport || "Specialty League", _allMatchups: allMatchupLabels };
             allBunksInGroup.forEach(bunk => {
                 const pickToAssign = picksByTeam[bunk] || noGamePick;
                 pickToAssign._allMatchups = allMatchupLabels;
-                fillBlock(
-                    { ...blockBase, bunk },
-                    pickToAssign,
-                    fieldUsageBySlot,
-                    yesterdayHistory,
-                    true
-                );
+                fillBlock({ ...blockBase, bunk }, pickToAssign, fieldUsageBySlot, yesterdayHistory, true);
             });
         });
 
@@ -1055,56 +968,32 @@
         // =================================================================
         const leagueGroups = {};
         leagueBlocks.forEach(block => {
-            const leagueEntry = Object.entries(masterLeagues).find(([name, l]) =>
-                l.enabled &&
-                !disabledLeagues.includes(name) &&
-                l.divisions.includes(block.divName)
-            );
+            const leagueEntry = Object.entries(masterLeagues).find(([name, l]) => l.enabled && !disabledLeagues.includes(name) && l.divisions.includes(block.divName));
             if (!leagueEntry) return;
             const leagueName = leagueEntry[0];
             const key = `${leagueName}-${block.startTime}`;
-            if (!leagueGroups[key]) {
-                leagueGroups[key] = {
-                    leagueName,
-                    league: leagueEntry[1],
-                    startTime: block.startTime,
-                    endTime: block.endTime,
-                    slots: block.slots,
-                    bunks: new Set()
-                };
-            }
+            if (!leagueGroups[key]) leagueGroups[key] = { leagueName, league: leagueEntry[1], startTime: block.startTime, endTime: block.endTime, slots: block.slots, bunks: new Set() };
             leagueGroups[key].bunks.add(block.bunk);
         });
-
         const sortedLeagueGroups = Object.values(leagueGroups).sort((a, b) => a.startTime - b.startTime);
         sortedLeagueGroups.forEach(group => {
             const { leagueName, league, slots } = group;
-            const leagueTeams = (league.teams || [])
-                .map(t => String(t).trim())
-                .filter(Boolean);
+            const leagueTeams = (league.teams || []).map(t => String(t).trim()).filter(Boolean);
             if (leagueTeams.length < 2) return;
             const allBunksInGroup = Array.from(group.bunks).sort();
             if (allBunksInGroup.length === 0) return;
-
             let baseDivName = null;
             const firstBunk = allBunksInGroup[0];
-            baseDivName = Object.keys(divisions).find(div =>
-                (divisions[div].bunks || []).includes(firstBunk)
-            );
+            baseDivName = Object.keys(divisions).find(div => (divisions[div].bunks || []).includes(firstBunk));
             if (!baseDivName) return;
-
-            const blockBase = {
-                slots,
-                divName: baseDivName,
-                endTime: group.endTime
-            };
+            const blockBase = { slots, divName: baseDivName, endTime: group.endTime };
             const sports = (league.sports || []).filter(s => fieldsBySport[s]);
             if (sports.length === 0) return;
-
+            
             const usedToday = dailyLeagueSportsUsage[leagueName] || new Set();
             let optimizerSports = sports.filter(s => !usedToday.has(s));
             if (optimizerSports.length === 0) optimizerSports = sports;
-
+            
             const leagueHistory = rotationHistory.leagues[leagueName] || {};
             rotationHistory.leagues[leagueName] = leagueHistory;
             const leagueTeamCounts = rotationHistory.leagueTeamSports[leagueName] || {};
@@ -1114,60 +1003,34 @@
             rotationHistory.leagueTeamLastSport[leagueName] = leagueTeamLastSport;
 
             let standardMatchups = [];
-            if (typeof window.getLeagueMatchups === "function") {
-                standardMatchups = window.getLeagueMatchups(leagueName, leagueTeams) || [];
-            } else {
-                standardMatchups = coreGetNextLeagueRound(leagueName, leagueTeams) || [];
-            }
-
+            if (typeof window.getLeagueMatchups === "function") standardMatchups = window.getLeagueMatchups(leagueName, leagueTeams) || [];
+            else standardMatchups = coreGetNextLeagueRound(leagueName, leagueTeams) || [];
+            
             const slotCount = slots.length || 1;
-
+            
             const evaluateMatchups = (candidateMatchups) => {
                 const nonBye = candidateMatchups.filter(p => p && p[0] !== "BYE" && p[1] !== "BYE");
-                const { assignments } = assignSportsMultiRound(
-                    nonBye,
-                    optimizerSports,
-                    leagueTeamCounts,
-                    leagueHistory,
-                    leagueTeamLastSport
-                );
+                const { assignments } = assignSportsMultiRound(nonBye, optimizerSports, leagueTeamCounts, leagueHistory, leagueTeamLastSport);
                 const simUsedFields = Array.from({ length: slotCount }, () => new Set());
                 let successCount = 0;
                 const results = [];
-
                 nonBye.forEach((pair, idx) => {
-                    const [teamA, teamB] = pair;
-                    const preferredSport =
-                        assignments[idx]?.sport || optimizerSports[idx % optimizerSports.length];
-                    const candidateSports = [
-                        preferredSport,
-                        ...sports.filter(s => s !== preferredSport && !usedToday.has(s)),
-                        ...sports.filter(s => s !== preferredSport && usedToday.has(s))
-                    ];
-                    let foundField = null;
-                    let foundSport = preferredSport;
-                    const slotIdx = idx % slotCount;
-
-                    for (const s of candidateSports) {
-                        const possibleFields = fieldsBySport[s] || [];
-                        let found = null;
-                        for (const f of possibleFields) {
-                            if (!simUsedFields[slotIdx].has(f) &&
-                                (fieldUsageBySlot[slots[slotIdx]]?.[f]?.count || 0) === 0 &&
-                                canLeagueGameFit(blockBase, f, fieldUsageBySlot, activityProperties)) {
-                                found = f;
-                                break;
-                            }
-                        }
-                        if (found) {
-                            foundField = found;
-                            foundSport = s;
-                            simUsedFields[slotIdx].add(found);
-                            break;
-                        }
-                    }
-                    if (foundField) successCount++;
-                    results.push({ pair, sport: foundSport, field: foundField, assignments: assignments[idx] });
+                     const [teamA, teamB] = pair;
+                     const preferredSport = assignments[idx]?.sport || optimizerSports[idx % optimizerSports.length];
+                     const candidateSports = [preferredSport, ...sports.filter(s => s !== preferredSport && !usedToday.has(s)), ...sports.filter(s => s !== preferredSport && usedToday.has(s))];
+                     let foundField = null, foundSport = preferredSport, slotIdx = idx % slotCount;
+                     for (const s of candidateSports) {
+                         const possibleFields = fieldsBySport[s] || [];
+                         let found = null;
+                         for (const f of possibleFields) {
+                             if (!simUsedFields[slotIdx].has(f) && (fieldUsageBySlot[slots[slotIdx]]?.[f]?.count || 0) === 0 && canLeagueGameFit(blockBase, f, fieldUsageBySlot, activityProperties)) {
+                                 found = f; break;
+                             }
+                         }
+                         if (found) { foundField = found; foundSport = s; simUsedFields[slotIdx].add(found); break; }
+                     }
+                     if (foundField) successCount++;
+                     results.push({ pair, sport: foundSport, field: foundField, assignments: assignments[idx] });
                 });
                 return { successCount, results, matchups: candidateMatchups, assignments };
             };
@@ -1175,184 +1038,74 @@
             let bestResult = evaluateMatchups(standardMatchups);
             const nonByeCount = standardMatchups.filter(p => p && p[0] !== "BYE" && p[1] !== "BYE").length;
             if (bestResult.successCount < nonByeCount) {
-                const teamListCopy = [...leagueTeams];
-                for (let i = 0; i < 50; i++) {
-                    shuffleArray(teamListCopy);
-                    const shuffledMatchups = pairRoundRobin(teamListCopy);
-                    const res = evaluateMatchups(shuffledMatchups);
-                    if (res.successCount > bestResult.successCount) {
-                        bestResult = res;
-                        if (res.successCount === nonByeCount) break;
-                    }
-                }
+                 const teamListCopy = [...leagueTeams];
+                 for (let i = 0; i < 50; i++) {
+                     shuffleArray(teamListCopy);
+                     const shuffledMatchups = pairRoundRobin(teamListCopy);
+                     const res = evaluateMatchups(shuffledMatchups);
+                     if (res.successCount > bestResult.successCount) {
+                         bestResult = res; if (res.successCount === nonByeCount) break;
+                     }
+                 }
             }
 
             const { assignments } = bestResult;
             const winningMatchups = bestResult.matchups.filter(p => p && p[0] !== "BYE" && p[1] !== "BYE");
-            const finalOpt = assignSportsMultiRound(
-                winningMatchups,
-                optimizerSports,
-                leagueTeamCounts,
-                leagueHistory,
-                leagueTeamLastSport
-            );
+            const finalOpt = assignSportsMultiRound(winningMatchups, optimizerSports, leagueTeamCounts, leagueHistory, leagueTeamLastSport);
             rotationHistory.leagueTeamSports[leagueName] = finalOpt.updatedTeamCounts;
             rotationHistory.leagueTeamLastSport[leagueName] = finalOpt.updatedLastSports;
 
-            const allMatchupLabels = [];
-            const usedForAssignments = [];
-            const usedFieldsPerSlot = Array.from({ length: slotCount }, () => new Set());
-
+            const allMatchupLabels = [], usedForAssignments = [], usedFieldsPerSlot = Array.from({ length: slotCount }, () => new Set());
             winningMatchups.forEach((pair, idx) => {
-                const [teamA, teamB] = pair;
-                const preferredSport =
-                    finalOpt.assignments[idx]?.sport || optimizerSports[idx % optimizerSports.length];
-                const candidateSports = [
-                    preferredSport,
-                    ...sports.filter(s => s !== preferredSport && !usedToday.has(s)),
-                    ...sports.filter(s => s !== preferredSport && usedToday.has(s))
-                ];
-                let finalSport = preferredSport;
-                let finalField = null;
-                const slotIdx = idx % slotCount;
-
-                for (const s of candidateSports) {
-                    const possibleFields = fieldsBySport[s] || [];
-                    let found = null;
-                    for (const f of possibleFields) {
-                        if (!usedFieldsPerSlot[slotIdx].has(f) &&
-                            canLeagueGameFit(blockBase, f, fieldUsageBySlot, activityProperties)) {
-                            found = f;
-                            break;
-                        }
-                    }
-                    if (!found && possibleFields.length > 0) {
-                        const f = possibleFields[usedFieldsPerSlot[slotIdx].size % possibleFields.length];
-                        if (canLeagueGameFit(blockBase, f, fieldUsageBySlot, activityProperties)) {
-                            found = f;
-                        }
-                    }
-                    if (found) {
-                        finalSport = s;
-                        finalField = found;
-                        usedFieldsPerSlot[slotIdx].add(found);
-                        break;
-                    }
-                }
-
-                let label = finalField
-                    ? `${teamA} vs ${teamB} (${finalSport}) @ ${finalField}`
-                    : `${teamA} vs ${teamB} (No Field)`;
-                if (finalField) {
-                    markFieldUsage(
-                        { ...blockBase, _activity: finalSport, bunk: 'league' },
-                        finalField,
-                        fieldUsageBySlot
-                    );
-                    if (!dailyLeagueSportsUsage[leagueName]) {
-                        dailyLeagueSportsUsage[leagueName] = new Set();
-                    }
-                    dailyLeagueSportsUsage[leagueName].add(finalSport);
-                }
-                leagueHistory[finalSport] = Date.now();
-                usedForAssignments.push({
-                    label,
-                    sport: finalSport,
-                    field: finalField || "No Field",
-                    teamA,
-                    teamB
-                });
-                allMatchupLabels.push(label);
+                 const [teamA, teamB] = pair;
+                 const preferredSport = finalOpt.assignments[idx]?.sport || optimizerSports[idx % optimizerSports.length];
+                 const candidateSports = [preferredSport, ...sports.filter(s => s !== preferredSport && !usedToday.has(s)), ...sports.filter(s => s !== preferredSport && usedToday.has(s))];
+                 let finalSport = preferredSport, finalField = null, slotIdx = idx % slotCount;
+                 for (const s of candidateSports) {
+                     const possibleFields = fieldsBySport[s] || [];
+                     let found = null;
+                     for (const f of possibleFields) {
+                         if (!usedFieldsPerSlot[slotIdx].has(f) && canLeagueGameFit(blockBase, f, fieldUsageBySlot, activityProperties)) {
+                             found = f; break;
+                         }
+                     }
+                     if (!found && possibleFields.length > 0) {
+                         const f = possibleFields[usedFieldsPerSlot[slotIdx].size % possibleFields.length];
+                         if (canLeagueGameFit(blockBase, f, fieldUsageBySlot, activityProperties)) found = f;
+                     }
+                     if (found) { finalSport = s; finalField = found; usedFieldsPerSlot[slotIdx].add(found); break; }
+                 }
+                 let label = finalField ? `${teamA} vs ${teamB} (${finalSport}) @ ${finalField}` : `${teamA} vs ${teamB} (No Field)`;
+                 if (finalField) {
+                     markFieldUsage({ ...blockBase, _activity: finalSport, bunk: 'league' }, finalField, fieldUsageBySlot);
+                     if (!dailyLeagueSportsUsage[leagueName]) dailyLeagueSportsUsage[leagueName] = new Set();
+                     dailyLeagueSportsUsage[leagueName].add(finalSport);
+                 }
+                 leagueHistory[finalSport] = Date.now();
+                 usedForAssignments.push({ label, sport: finalSport, field: finalField || "No Field", teamA, teamB });
+                 allMatchupLabels.push(label);
             });
-
+            
             bestResult.matchups.forEach(pair => {
-                if (!pair) return;
-                const [teamA, teamB] = pair;
-                if (teamA === "BYE" || teamB === "BYE") {
-                    allMatchupLabels.push(`${teamA} vs ${teamB} (BYE)`);
-                }
+                 if (!pair) return;
+                 const [teamA, teamB] = pair;
+                 if (teamA === "BYE" || teamB === "BYE") allMatchupLabels.push(`${teamA} vs ${teamB} (BYE)`);
             });
-
-            const noGamePick = {
-                field: "No Game",
-                sport: null,
-                _h2h: true,
-                _activity: "League",
-                _allMatchups: allMatchupLabels
-            };
+            const noGamePick = { field: "No Game", sport: null, _h2h: true, _activity: "League", _allMatchups: allMatchupLabels };
             let bunkPtr = 0;
-
             usedForAssignments.forEach(game => {
-                if (bunkPtr + 1 >= allBunksInGroup.length) return;
-                const bunkA = allBunksInGroup[bunkPtr];
-                const bunkB = allBunksInGroup[bunkPtr + 1];
-                bunkPtr += 2;
-
-                const pick = {
-                    field: game.field,
-                    sport: game.label,
-                    _h2h: true,
-                    vs: null,
-                    _activity: game.sport,
-                    _allMatchups: allMatchupLabels
-                };
-
-                const bunkADiv =
-                    Object.keys(divisions).find(div =>
-                        (divisions[div].bunks || []).includes(bunkA)
-                    ) || baseDivName;
-                const bunkBDiv =
-                    Object.keys(divisions).find(div =>
-                        (divisions[div].bunks || []).includes(bunkB)
-                    ) || baseDivName;
-
-                fillBlock(
-                    {
-                        slots,
-                        bunk: bunkA,
-                        divName: bunkADiv,
-                        startTime: group.startTime,
-                        endTime: group.endTime + INCREMENT_MINS * slots.length
-                    },
-                    pick,
-                    fieldUsageBySlot,
-                    yesterdayHistory,
-                    true
-                );
-                fillBlock(
-                    {
-                        slots,
-                        bunk: bunkB,
-                        divName: bunkBDiv,
-                        startTime: group.startTime,
-                        endTime: group.endTime + INCREMENT_MINS * slots.length
-                    },
-                    pick,
-                    fieldUsageBySlot,
-                    yesterdayHistory,
-                    true
-                );
+                 if (bunkPtr + 1 >= allBunksInGroup.length) return;
+                 const bunkA = allBunksInGroup[bunkPtr], bunkB = allBunksInGroup[bunkPtr+1]; bunkPtr += 2;
+                 const pick = { field: game.field, sport: game.label, _h2h: true, vs: null, _activity: game.sport, _allMatchups: allMatchupLabels };
+                 const bunkADiv = Object.keys(divisions).find(div => (divisions[div].bunks || []).includes(bunkA)) || baseDivName;
+                 const bunkBDiv = Object.keys(divisions).find(div => (divisions[div].bunks || []).includes(bunkB)) || baseDivName;
+                 fillBlock({ slots, bunk: bunkA, divName: bunkADiv, startTime: group.startTime, endTime: group.endTime + INCREMENT_MINS * slots.length }, pick, fieldUsageBySlot, yesterdayHistory, true);
+                 fillBlock({ slots, bunk: bunkB, divName: bunkBDiv, startTime: group.startTime, endTime: group.endTime + INCREMENT_MINS * slots.length }, pick, fieldUsageBySlot, yesterdayHistory, true);
             });
-
             while (bunkPtr < allBunksInGroup.length) {
-                const leftoverBunk = allBunksInGroup[bunkPtr++];
-                const bunkDivName =
-                    Object.keys(divisions).find(div =>
-                        (divisions[div].bunks || []).includes(leftoverBunk)
-                    ) || baseDivName;
-                fillBlock(
-                    {
-                        slots,
-                        bunk: leftoverBunk,
-                        divName: bunkDivName,
-                        startTime: group.startTime,
-                        endTime: group.endTime + INCREMENT_MINS * slots.length
-                    },
-                    noGamePick,
-                    fieldUsageBySlot,
-                    yesterdayHistory,
-                    true
-                );
+                 const leftoverBunk = allBunksInGroup[bunkPtr++];
+                 const bunkDivName = Object.keys(divisions).find(div => (divisions[div].bunks || []).includes(leftoverBunk)) || baseDivName;
+                 fillBlock({ slots, bunk: leftoverBunk, divName: bunkDivName, startTime: group.startTime, endTime: group.endTime + INCREMENT_MINS * slots.length }, noGamePick, fieldUsageBySlot, yesterdayHistory, true);
             }
         });
 
@@ -1369,54 +1122,16 @@
             if (block.event === 'League Game' || block.event === 'Specialty League') {
                 pick = { field: "Unassigned League", sport: null, _activity: "Free" };
             } else if (block.event === 'Special Activity') {
-                pick = window.findBestSpecial?.(
-                    block,
-                    allActivities,
-                    fieldUsageBySlot,
-                    yesterdayHistory,
-                    activityProperties,
-                    rotationHistory,
-                    divisions,
-                    historicalCounts
-                );
+                pick = window.findBestSpecial?.(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
             } else if (block.event === 'Sports Slot') {
-                pick = window.findBestSportActivity?.(
-                    block,
-                    allActivities,
-                    fieldUsageBySlot,
-                    yesterdayHistory,
-                    activityProperties,
-                    rotationHistory,
-                    divisions,
-                    historicalCounts
-                );
+                pick = window.findBestSportActivity?.(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
             }
             if (!pick) {
-                pick = window.findBestGeneralActivity?.(
-                    block,
-                    allActivities,
-                    h2hActivities,
-                    fieldUsageBySlot,
-                    yesterdayHistory,
-                    activityProperties,
-                    rotationHistory,
-                    divisions,
-                    historicalCounts
-                );
+                pick = window.findBestGeneralActivity?.(block, allActivities, h2hActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
             }
-            if (pick && !isPickValidForBlock(block, pick, activityProperties, fieldUsageBySlot)) {
-                pick = null;
-            }
-            if (pick) {
-                fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, false);
-            } else {
-                fillBlock(
-                    block,
-                    { field: "Free", sport: null, _activity: "Free" },
-                    fieldUsageBySlot,
-                    false
-                );
-            }
+            if (pick && !isPickValidForBlock(block, pick, activityProperties, fieldUsageBySlot)) pick = null;
+            if (pick) fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, false);
+            else fillBlock(block, { field: "Free", sport: null, _activity: "Free" }, fieldUsageBySlot, false);
         }
 
         // =================================================================
@@ -1434,30 +1149,21 @@
                             lastActivity = activityName;
                             historyToSave.bunks[bunk] = historyToSave.bunks[bunk] || {};
                             historyToSave.bunks[bunk][activityName] = timestamp;
-                            if (entry._h2h &&
-                                entry._activity !== "League" &&
-                                entry._activity !== "No Game") {
-                                const leagueEntry = Object.entries(masterLeagues).find(
-                                    ([name, l]) => l.enabled && l.divisions.includes(divName)
-                                );
+                            if (entry._h2h && entry._activity !== "League" && entry._activity !== "No Game") {
+                                const leagueEntry = Object.entries(masterLeagues).find(([name, l]) => l.enabled && l.divisions.includes(divName));
                                 if (leagueEntry) {
                                     const lgName = leagueEntry[0];
-                                    historyToSave.leagues[lgName] =
-                                        historyToSave.leagues[lgName] || {};
+                                    historyToSave.leagues[lgName] = historyToSave.leagues[lgName] || {};
                                     historyToSave.leagues[lgName][entry._activity] = timestamp;
                                 }
                             }
-                        } else if (entry && !entry.continuation) {
-                            lastActivity = null;
-                        }
+                        } else if (entry && !entry.continuation) lastActivity = null;
                     }
                 });
             });
             window.saveRotationHistory?.(historyToSave);
             console.log("Smart Scheduler: Rotation history updated.");
-        } catch (e) {
-            console.error("Smart Scheduler: Failed to update rotation history.", e);
-        }
+        } catch (e) { console.error("Smart Scheduler: Failed to update rotation history.", e); }
 
         window.saveCurrentDailyData?.("unifiedTimes", window.unifiedTimes);
         window.updateTable?.();
@@ -1473,35 +1179,22 @@
         if (!window.unifiedTimes || startMin == null || endMin == null) return slots;
         for (let i = 0; i < window.unifiedTimes.length; i++) {
             const slot = window.unifiedTimes[i];
-            const slotStart =
-                new Date(slot.start).getHours() * 60 +
-                new Date(slot.start).getMinutes();
+            const slotStart = new Date(slot.start).getHours() * 60 + new Date(slot.start).getMinutes();
             if (slotStart >= startMin && slotStart < endMin) slots.push(i);
         }
         return slots;
     }
 
     function markFieldUsage(block, fieldName, fieldUsageBySlot) {
-        if (!fieldName ||
-            fieldName === "No Field" ||
-            !window.allSchedulableNames.includes(fieldName)) return;
+        if (!fieldName || fieldName === "No Field" || !window.allSchedulableNames.includes(fieldName)) return;
         for (const slotIndex of block.slots || []) {
             if (slotIndex === undefined) continue;
             fieldUsageBySlot[slotIndex] = fieldUsageBySlot[slotIndex] || {};
-            const usage =
-                fieldUsageBySlot[slotIndex][fieldName] ||
-                { count: 0, divisions: [], bunks: {} };
+            const usage = fieldUsageBySlot[slotIndex][fieldName] || { count: 0, divisions: [], bunks: {} };
             usage.count++;
-            if (!usage.divisions.includes(block.divName)) {
-                usage.divisions.push(block.divName);
-            }
-            const blockActivity =
-                block._activity ||
-                block.sport ||
-                (block.event === 'League Game' ? 'League' : block.event);
-            if (block.bunk && blockActivity) {
-                usage.bunks[block.bunk] = blockActivity;
-            }
+            if (!usage.divisions.includes(block.divName)) usage.divisions.push(block.divName);
+            const blockActivity = block._activity || block.sport || (block.event === 'League Game' ? 'League' : block.event);
+            if (block.bunk && blockActivity) usage.bunks[block.bunk] = blockActivity;
             fieldUsageBySlot[slotIndex][fieldName] = usage;
         }
     }
@@ -1509,17 +1202,11 @@
     function isTimeAvailable(slotIndex, fieldProps) {
         if (!window.unifiedTimes || !window.unifiedTimes[slotIndex]) return false;
         const slot = window.unifiedTimes[slotIndex];
-        const slotStartMin =
-            new Date(slot.start).getHours() * 60 +
-            new Date(slot.start).getMinutes();
+        const slotStartMin = new Date(slot.start).getHours() * 60 + new Date(slot.start).getMinutes();
         const slotEndMin = slotStartMin + INCREMENT_MINS;
         const rules = (fieldProps.timeRules || []).map(r => {
             if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
-            return {
-                ...r,
-                startMin: parseTimeToMinutes(r.start),
-                endMin: parseTimeToMinutes(r.end)
-            };
+            return { ...r, startMin: parseTimeToMinutes(r.start), endMin: parseTimeToMinutes(r.end) };
         });
         if (rules.length === 0) return fieldProps.available;
         if (!fieldProps.available) return false;
@@ -1528,33 +1215,22 @@
         for (const rule of rules) {
             if (rule.type === 'Available') {
                 if (rule.startMin == null || rule.endMin == null) continue;
-                if (slotStartMin >= rule.startMin && slotEndMin <= rule.endMin) {
-                    isAvailable = true;
-                    break;
-                }
+                if (slotStartMin >= rule.startMin && slotEndMin <= rule.endMin) { isAvailable = true; break; }
             }
         }
         for (const rule of rules) {
             if (rule.type === 'Unavailable') {
                 if (rule.startMin == null || rule.endMin == null) continue;
-                if (slotStartMin < rule.endMin && slotEndMin > rule.startMin) {
-                    isAvailable = false;
-                    break;
-                }
+                if (slotStartMin < rule.endMin && slotEndMin > rule.startMin) { isAvailable = false; break; }
             }
         }
         return isAvailable;
     }
 
     function getBlockTimeRange(block) {
-        let blockStartMin =
-            (typeof block.startTime === "number") ? block.startTime : null;
-        let blockEndMin =
-            (typeof block.endTime === "number") ? block.endTime : null;
-        if ((blockStartMin == null || blockEndMin == null) &&
-            window.unifiedTimes &&
-            Array.isArray(block.slots) &&
-            block.slots.length > 0) {
+        let blockStartMin = (typeof block.startTime === "number") ? block.startTime : null;
+        let blockEndMin = (typeof block.endTime === "number") ? block.endTime : null;
+        if ((blockStartMin == null || blockEndMin == null) && window.unifiedTimes && Array.isArray(block.slots) && block.slots.length > 0) {
             const minIndex = Math.min(...block.slots);
             const maxIndex = Math.max(...block.slots);
             const firstSlot = window.unifiedTimes[minIndex];
@@ -1562,12 +1238,8 @@
             if (firstSlot && lastSlot) {
                 const firstStart = new Date(firstSlot.start);
                 const lastStart = new Date(lastSlot.start);
-                blockStartMin =
-                    firstStart.getHours() * 60 + firstStart.getMinutes();
-                blockEndMin =
-                    lastStart.getHours() * 60 +
-                    lastStart.getMinutes() +
-                    INCREMENT_MINS;
+                blockStartMin = firstStart.getHours() * 60 + firstStart.getMinutes();
+                blockEndMin = lastStart.getHours() * 60 + lastStart.getMinutes() + INCREMENT_MINS;
             }
         }
         return { blockStartMin, blockEndMin };
@@ -1576,42 +1248,24 @@
     function canBlockFit(block, fieldName, activityProperties, fieldUsageBySlot, proposedActivity) {
         if (!fieldName) return false;
         const props = activityProperties[fieldName];
-
+        
         // --- VIRTUAL ACTIVITY FIX ---
         if (!props) return true;
 
         const limit = (props && props.sharable) ? 2 : 1;
-        if (props.preferences &&
-            props.preferences.enabled &&
-            props.preferences.exclusive &&
-            !props.preferences.list.includes(block.divName)) {
-            return false;
-        }
-        if (props &&
-            Array.isArray(props.allowedDivisions) &&
-            props.allowedDivisions.length > 0 &&
-            !props.allowedDivisions.includes(block.divName)) {
-            return false;
-        }
+        if (props.preferences && props.preferences.enabled && props.preferences.exclusive && !props.preferences.list.includes(block.divName)) return false;
+        if (props && Array.isArray(props.allowedDivisions) && props.allowedDivisions.length > 0 && !props.allowedDivisions.includes(block.divName)) return false;
         const limitRules = props.limitUsage;
         if (limitRules && limitRules.enabled) {
             if (!limitRules.divisions[block.divName]) return false;
             const allowedBunks = limitRules.divisions[block.divName];
-            if (allowedBunks.length > 0 &&
-                block.bunk &&
-                !allowedBunks.includes(block.bunk)) {
-                return false;
-            }
+            if (allowedBunks.length > 0 && block.bunk && !allowedBunks.includes(block.bunk)) return false;
         }
 
         const { blockStartMin, blockEndMin } = getBlockTimeRange(block);
         const rules = (props.timeRules || []).map(r => {
             if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
-            return {
-                ...r,
-                startMin: parseTimeToMinutes(r.start),
-                endMin: parseTimeToMinutes(r.end)
-            };
+            return { ...r, startMin: parseTimeToMinutes(r.start), endMin: parseTimeToMinutes(r.end) };
         });
 
         if (rules.length > 0) {
@@ -1621,47 +1275,25 @@
                 if (hasAvailableRules) {
                     let insideAvailable = false;
                     for (const rule of rules) {
-                        if (rule.type !== 'Available' ||
-                            rule.startMin == null ||
-                            rule.endMin == null) continue;
-                        if (blockStartMin >= rule.startMin &&
-                            blockEndMin <= rule.endMin) {
-                            insideAvailable = true;
-                            break;
-                        }
+                        if (rule.type !== 'Available' || rule.startMin == null || rule.endMin == null) continue;
+                        if (blockStartMin >= rule.startMin && blockEndMin <= rule.endMin) { insideAvailable = true; break; }
                     }
                     if (!insideAvailable) return false;
                 }
                 for (const rule of rules) {
-                    if (rule.type !== 'Unavailable' ||
-                        rule.startMin == null ||
-                        rule.endMin == null) continue;
-                    if (blockStartMin < rule.endMin &&
-                        blockEndMin > rule.startMin) {
-                        return false;
-                    }
+                    if (rule.type !== 'Unavailable' || rule.startMin == null || rule.endMin == null) continue;
+                    if (blockStartMin < rule.endMin && blockEndMin > rule.startMin) return false;
                 }
             }
             for (const slotIndex of block.slots || []) {
                 if (slotIndex === undefined) return false;
-                const usage =
-                    fieldUsageBySlot[slotIndex]?.[fieldName] ||
-                    { count: 0, divisions: [], bunks: {} };
+                const usage = fieldUsageBySlot[slotIndex]?.[fieldName] || { count: 0, divisions: [], bunks: {} };
                 if (usage.count >= limit) return false;
                 if (usage.count > 0) {
                     if (!usage.divisions.includes(block.divName)) return false;
                     let existingActivity = null;
-                    for (const bunkName in usage.bunks) {
-                        if (usage.bunks[bunkName]) {
-                            existingActivity = usage.bunks[bunkName];
-                            break;
-                        }
-                    }
-                    if (existingActivity &&
-                        proposedActivity &&
-                        existingActivity !== proposedActivity) {
-                        return false;
-                    }
+                    for (const bunkName in usage.bunks) { if (usage.bunks[bunkName]) { existingActivity = usage.bunks[bunkName]; break; } }
+                    if (existingActivity && proposedActivity && existingActivity !== proposedActivity) return false;
                 }
                 if (!isTimeAvailable(slotIndex, props)) return false;
             }
@@ -1669,24 +1301,13 @@
             if (!props.available) return false;
             for (const slotIndex of block.slots || []) {
                 if (slotIndex === undefined) return false;
-                const usage =
-                    fieldUsageBySlot[slotIndex]?.[fieldName] ||
-                    { count: 0, divisions: [], bunks: {} };
+                const usage = fieldUsageBySlot[slotIndex]?.[fieldName] || { count: 0, divisions: [], bunks: {} };
                 if (usage.count >= limit) return false;
                 if (usage.count > 0) {
                     if (!usage.divisions.includes(block.divName)) return false;
                     let existingActivity = null;
-                    for (const bunkName in usage.bunks) {
-                        if (usage.bunks[bunkName]) {
-                            existingActivity = usage.bunks[bunkName];
-                            break;
-                        }
-                    }
-                    if (existingActivity &&
-                        proposedActivity &&
-                        existingActivity !== proposedActivity) {
-                        return false;
-                    }
+                    for (const bunkName in usage.bunks) { if (usage.bunks[bunkName]) { existingActivity = usage.bunks[bunkName]; break; } }
+                    if (existingActivity && proposedActivity && existingActivity !== proposedActivity) return false;
                 }
             }
         }
@@ -1698,30 +1319,14 @@
         const props = activityProperties[fieldName];
         if (!props) return false;
         const limit = 1;
-        if (props.preferences &&
-            props.preferences.enabled &&
-            props.preferences.exclusive &&
-            !props.preferences.list.includes(block.divName)) {
-            return false;
-        }
-        if (props &&
-            Array.isArray(props.allowedDivisions) &&
-            props.allowedDivisions.length > 0 &&
-            !props.allowedDivisions.includes(block.divName)) {
-            return false;
-        }
+        if (props.preferences && props.preferences.enabled && props.preferences.exclusive && !props.preferences.list.includes(block.divName)) return false;
+        if (props && Array.isArray(props.allowedDivisions) && props.allowedDivisions.length > 0 && !props.allowedDivisions.includes(block.divName)) return false;
         const limitRules = props.limitUsage;
-        if (limitRules && limitRules.enabled) {
-            if (!limitRules.divisions[block.divName]) return false;
-        }
+        if (limitRules && limitRules.enabled) { if (!limitRules.divisions[block.divName]) return false; }
         const { blockStartMin, blockEndMin } = getBlockTimeRange(block);
         const rules = (props.timeRules || []).map(r => {
             if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
-            return {
-                ...r,
-                startMin: parseTimeToMinutes(r.start),
-                endMin: parseTimeToMinutes(r.end)
-            };
+            return { ...r, startMin: parseTimeToMinutes(r.start), endMin: parseTimeToMinutes(r.end) };
         });
         if (rules.length > 0) {
             if (!props.available) return false;
@@ -1730,32 +1335,19 @@
                 if (hasAvailableRules) {
                     let insideAvailable = false;
                     for (const rule of rules) {
-                        if (rule.type !== 'Available' ||
-                            rule.startMin == null ||
-                            rule.endMin == null) continue;
-                        if (blockStartMin >= rule.startMin &&
-                            blockEndMin <= rule.endMin) {
-                            insideAvailable = true;
-                            break;
-                        }
+                        if (rule.type !== 'Available' || rule.startMin == null || rule.endMin == null) continue;
+                        if (blockStartMin >= rule.startMin && blockEndMin <= rule.endMin) { insideAvailable = true; break; }
                     }
                     if (!insideAvailable) return false;
                 }
                 for (const rule of rules) {
-                    if (rule.type !== 'Unavailable' ||
-                        rule.startMin == null ||
-                        rule.endMin == null) continue;
-                    if (blockStartMin < rule.endMin &&
-                        blockEndMin > rule.startMin) {
-                        return false;
-                    }
+                    if (rule.type !== 'Unavailable' || rule.startMin == null || rule.endMin == null) continue;
+                    if (blockStartMin < rule.endMin && blockEndMin > rule.startMin) return false;
                 }
             }
             for (const slotIndex of block.slots || []) {
                 if (slotIndex === undefined) return false;
-                const usage =
-                    fieldUsageBySlot[slotIndex]?.[fieldName] ||
-                    { count: 0, divisions: [] };
+                const usage = fieldUsageBySlot[slotIndex]?.[fieldName] || { count: 0, divisions: [] };
                 if (usage.count >= limit) return false;
                 if (!isTimeAvailable(slotIndex, props)) return false;
             }
@@ -1763,9 +1355,7 @@
             if (!props.available) return false;
             for (const slotIndex of block.slots || []) {
                 if (slotIndex === undefined) return false;
-                const usage =
-                    fieldUsageBySlot[slotIndex]?.[fieldName] ||
-                    { count: 0, divisions: [] };
+                const usage = fieldUsageBySlot[slotIndex]?.[fieldName] || { count: 0, divisions: [] };
                 if (usage.count >= limit) return false;
             }
         }
@@ -1776,22 +1366,15 @@
         if (!pick) return false;
         const fname = fieldLabel(pick.field);
         if (!fname) return true;
-        if (!window.allSchedulableNames ||
-            !window.allSchedulableNames.includes(fname)) {
-            return true;
-        }
+        if (!window.allSchedulableNames || !window.allSchedulableNames.includes(fname)) return true;
         return canBlockFit(block, fname, activityProperties, fieldUsageBySlot, pick._activity);
     }
 
-    // UPDATED: returns boolean if anything was actually placed
     function fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, isLeagueFill = false) {
         const fieldName = fieldLabel(pick.field);
         const sport = pick.sport;
-        let placed = false;
-
         (block.slots || []).forEach((slotIndex, idx) => {
-            if (slotIndex === undefined ||
-                slotIndex >= (window.unifiedTimes || []).length) return;
+            if (slotIndex === undefined || slotIndex >= (window.unifiedTimes || []).length) return;
             if (!window.scheduleAssignments[block.bunk]) return;
             if (!window.scheduleAssignments[block.bunk][slotIndex]) {
                 window.scheduleAssignments[block.bunk][slotIndex] = {
@@ -1804,29 +1387,16 @@
                     _activity: pick._activity || null,
                     _allMatchups: pick._allMatchups || null
                 };
-                placed = true;
-
-                if (!isLeagueFill &&
-                    fieldName &&
-                    window.allSchedulableNames.includes(fieldName)) {
-                    fieldUsageBySlot[slotIndex] =
-                        fieldUsageBySlot[slotIndex] || {};
-                    const usage =
-                        fieldUsageBySlot[slotIndex][fieldName] ||
-                        { count: 0, divisions: [], bunks: {} };
+                if (!isLeagueFill && fieldName && window.allSchedulableNames.includes(fieldName)) {
+                    fieldUsageBySlot[slotIndex] = fieldUsageBySlot[slotIndex] || {};
+                    const usage = fieldUsageBySlot[slotIndex][fieldName] || { count: 0, divisions: [], bunks: {} };
                     usage.count++;
-                    if (!usage.divisions.includes(block.divName)) {
-                        usage.divisions.push(block.divName);
-                    }
-                    if (block.bunk && pick._activity) {
-                        usage.bunks[block.bunk] = pick._activity;
-                    }
+                    if (!usage.divisions.includes(block.divName)) usage.divisions.push(block.divName);
+                    if (block.bunk && pick._activity) usage.bunks[block.bunk] = pick._activity;
                     fieldUsageBySlot[slotIndex][fieldName] = usage;
                 }
             }
         });
-
-        return placed;
     }
 
     function loadAndFilterData() {
@@ -1861,21 +1431,18 @@
             const allDaily = window.loadAllDailyData?.() || {};
             const manualOffsets = globalSettings.manualUsageOffsets || {};
             
-            // Build Historical Counts
             Object.values(allDaily).forEach(day => {
                 const sched = day.scheduleAssignments || {};
                 Object.keys(sched).forEach(b => {
                     if (!historicalCounts[b]) historicalCounts[b] = {};
                     (sched[b] || []).forEach(e => {
                         if (e && e._activity && !e.continuation) {
-                            historicalCounts[b][e._activity] =
-                                (historicalCounts[b][e._activity] || 0) + 1;
+                            historicalCounts[b][e._activity] = (historicalCounts[b][e._activity] || 0) + 1;
                         }
                     });
                 });
             });
             
-            // Apply Manual Offsets
             Object.keys(manualOffsets).forEach(b => {
                 if (!historicalCounts[b]) historicalCounts[b] = {};
                 Object.keys(manualOffsets[b]).forEach(act => {
@@ -1885,35 +1452,22 @@
                 });
             });
             
-            // Populate known special names
             masterSpecials.forEach(s => specialActivityNames.push(s.name));
 
-        } catch (e) {
-            console.error("Error calculating historical counts:", e);
-        }
+        } catch (e) { console.error("Error calculating historical counts:", e); }
 
-        const overrides = {
-            bunks: dailyOverrides.bunks || [],
-            leagues: disabledLeagues
-        };
-        const availableDivisions = masterAvailableDivs.filter(divName =>
-            !overrides.bunks.includes(divName)
-        );
+        const overrides = { bunks: dailyOverrides.bunks || [], leagues: disabledLeagues };
+        const availableDivisions = masterAvailableDivs.filter(divName => !overrides.bunks.includes(divName));
         const divisions = {};
         for (const divName of availableDivisions) {
             if (!masterDivisions[divName]) continue;
             divisions[divName] = JSON.parse(JSON.stringify(masterDivisions[divName]));
-            divisions[divName].bunks = (divisions[divName].bunks || []).filter(
-                bunkName => !overrides.bunks.includes(bunkName)
-            );
+            divisions[divName].bunks = (divisions[divName].bunks || []).filter(bunkName => !overrides.bunks.includes(bunkName));
         }
 
         function parseTimeRule(rule) {
             if (!rule || !rule.type) return null;
-            if (typeof rule.startMin === "number" &&
-                typeof rule.endMin === "number") {
-                return { type: rule.type, startMin: rule.startMin, endMin: rule.endMin };
-            }
+            if (typeof rule.startMin === "number" && typeof rule.endMin === "number") return { type: rule.type, startMin: rule.startMin, endMin: rule.endMin };
             const startMin = parseTimeToMinutes(rule.start);
             const endMin = parseTimeToMinutes(rule.end);
             if (startMin == null || endMin == null) return null;
@@ -1930,19 +1484,13 @@
         allMasterActivities.forEach(f => {
             let finalRules;
             const dailyRules = dailyFieldAvailability[f.name];
-            if (dailyRules && dailyRules.length > 0) {
-                finalRules = dailyRules.map(parseTimeRule).filter(Boolean);
-            } else {
-                finalRules = (f.timeRules || []).map(parseTimeRule).filter(Boolean);
-            }
+            if (dailyRules && dailyRules.length > 0) finalRules = dailyRules.map(parseTimeRule).filter(Boolean);
+            else finalRules = (f.timeRules || []).map(parseTimeRule).filter(Boolean);
             const isMasterAvailable = f.available !== false;
-            const hasCustomDivList =
-                Array.isArray(f.sharableWith?.divisions) &&
-                f.sharableWith.divisions.length > 0;
+            const hasCustomDivList = Array.isArray(f.sharableWith?.divisions) && f.sharableWith.divisions.length > 0;
             activityProperties[f.name] = {
                 available: isMasterAvailable,
-                sharable: f.sharableWith?.type === 'all' ||
-                          f.sharableWith?.type === 'custom',
+                sharable: f.sharableWith?.type === 'all' || f.sharableWith?.type === 'custom',
                 allowedDivisions: hasCustomDivList ? f.sharableWith.divisions.slice() : null,
                 limitUsage: f.limitUsage || { enabled: false, divisions: {} },
                 preferences: f.preferences || { enabled: false, exclusive: false, list: [] },
@@ -1969,30 +1517,14 @@
 
         const allActivities = [
             ...availFields
-                .flatMap(f =>
-                    (f.activities || []).map(act => ({
-                        type: "field",
-                        field: f.name,
-                        sport: act
-                    }))
-                )
-                .filter(a =>
-                    !a.field ||
-                    !a.sport ||
-                    !dailyDisabledSportsByField[a.field]?.includes(a.sport)
-                ),
-            ...availSpecials.map(sa => ({
-                type: "special",
-                field: sa.name,
-                sport: null
-            }))
+                .flatMap(f => (f.activities || [])
+                    .map(act => ({ type: "field", field: f.name, sport: act })))
+                .filter(a => !a.field || !a.sport || !dailyDisabledSportsByField[a.field]?.includes(a.sport)),
+            ...availSpecials.map(sa => ({ type: "special", field: sa.name, sport: null }))
         ];
         const h2hActivities = allActivities.filter(a => a.type === "field" && a.sport);
         const yesterdayData = window.loadPreviousDailyData?.() || {};
-        const yesterdayHistory = {
-            schedule: yesterdayData.scheduleAssignments || {},
-            leagues: yesterdayData.leagueAssignments || {}
-        };
+        const yesterdayHistory = { schedule: yesterdayData.scheduleAssignments || {}, leagues: yesterdayData.leagueAssignments || {} };
 
         return {
             divisions,
@@ -2011,4 +1543,5 @@
             specialActivityNames
         };
     }
+
 })();
