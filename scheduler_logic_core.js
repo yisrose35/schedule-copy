@@ -1,12 +1,15 @@
 // ============================================================================
 // scheduler_logic_core.js
 //
-// UPDATED (Smart Tiles v10 - History Aggregation):
-// - FIXED Rotation Logic: "Special Activity" fairness now aggregates history
-//   from ALL defined special activities (e.g. Gameroom, Art).
-// - LOGIC: If a bunk did "Gameroom" yesterday, they are marked as having done a Special.
-//   If a bunk did "Sports" (Fallback) yesterday, they are marked as 0 Specials.
-//   This ensures the "Sports" bunk gets priority today.
+// UPDATED (Smart Tiles v14 - Dual-Layer Fairness - FINAL):
+// - LAYER 1 (Overall): Bunks are ranked by TOTAL special usage to determine
+//   priority. Tier N must be filled before Tier N+1.
+// - LAYER 2 (Specific): When assigning a "Special Activity", the system sorts
+//   available options (e.g., Gameroom vs Canteen) based on the bunk's SPECIFIC
+//   history to ensure variety.
+// - TIE-BREAKING: Random shuffle within tiers.
+// - GRID FIX: Atomic intervals for clean time rows.
+// - VIRTUAL FIX: Infinite capacity for undefined activities like "Swim".
 // ============================================================================
 
 (function() {
@@ -367,7 +370,7 @@
             disabledLeagues,
             disabledSpecialtyLeagues,
             historicalCounts,
-            specialActivityNames // <--- NEW: Used for fairness filtering
+            specialActivityNames 
         } = loadAndFilterData();
 
         let fieldUsageBySlot = {};
@@ -397,8 +400,6 @@
         for (let i = 0; i < sortedPoints.length - 1; i++) {
             const start = sortedPoints[i];
             const end = sortedPoints[i + 1];
-            
-            // Avoid tiny slivers < 5 mins
             if (end - start >= 5) {
                 window.unifiedTimes.push({
                     start: minutesToDate(start),
@@ -574,7 +575,7 @@
         });
 
         // =================================================================
-        // PASS 2.5 — SMART TILE LOGIC (Swap, Squeeze & Rotate)
+        // PASS 2.5 — SMART TILE LOGIC (Strict Tiered Leveling)
         // =================================================================
         Object.entries(smartTileGroups).forEach(([key, blocks]) => {
             blocks.sort((a, b) => a.startTime - b.startTime);
@@ -591,53 +592,39 @@
             const priorityAct = (fallbackFor === main2) ? main2 : main1;
             const secondaryAct = (priorityAct === main1) ? main2 : main1;
 
-            // --- FAIRNESS SORT (Enhanced with History Aggregation) ---
-            const bunkStats = {};
+            // --- LAYER 1: OVERALL FAIRNESS SCORE ---
+            const bunkScores = {};
             const isSpecialCategory = (priorityAct === 'Special' || priorityAct === 'Special Activity');
             
+            let relevantActivities = [];
+            if (isSpecialCategory) {
+                // Count ALL known specials + "Special Activity" generic
+                relevantActivities = allActivities.filter(a => a.type === 'special').map(a => a.field);
+                relevantActivities.push('Special Activity'); 
+            } else {
+                relevantActivities = [priorityAct];
+            }
+
             bunks.forEach(b => {
-                let count = 0;
-                let lastTime = 0;
-                
-                if (isSpecialCategory) {
-                    // Aggregate ALL history, but EXCLUDE non-specials (Sports, Swim, Leagues)
-                    const history = historicalCounts[b] || {};
-                    Object.keys(history).forEach(actName => {
-                        // If name is in the defined specials list -> COUNT IT
-                        // OR if it's "Special Activity" -> COUNT IT
-                        // Otherwise, if it's likely a sport/swim -> IGNORE IT
-                        if (specialActivityNames.includes(actName) || actName === 'Special Activity') {
-                            count += history[actName];
-                            const t = rotationHistory.bunks[b]?.[actName] || 0;
-                            if (t > lastTime) lastTime = t;
-                        }
-                    });
-                } else {
-                    // Specific Activity (e.g. "Tennis")
-                    count = (historicalCounts[b]?.[priorityAct] || 0);
-                    lastTime = rotationHistory.bunks[b]?.[priorityAct] || 0;
-                }
-                bunkStats[b] = { count, lastTime };
+                let score = 0;
+                relevantActivities.forEach(actName => {
+                    // Historical count (matches analytics logic)
+                    score += (historicalCounts[b]?.[actName] || 0);
+                });
+                bunkScores[b] = score;
             });
 
-            // 1. SHUFFLE BUNKS RANDOMLY FIRST (Breaks ties cleanly)
-            shuffleArray(bunks);
-
-            // 2. THEN SORT BY FAIRNESS
-            bunks.sort((a, b) => {
-                const statsA = bunkStats[a];
-                const statsB = bunkStats[b];
-                
-                // 1. Least Played (Total Counts)
-                if (statsA.count !== statsB.count) return statsA.count - statsB.count;
-                
-                // 2. Least Recently Played (DAY GRANULARITY)
-                const dayA = new Date(statsA.lastTime).setHours(0, 0, 0, 0);
-                const dayB = new Date(statsB.lastTime).setHours(0, 0, 0, 0);
-                
-                return dayA - dayB;
+            // --- TIERING & SORTING ---
+            const tiers = {};
+            bunks.forEach(b => {
+                const s = bunkScores[b];
+                if(!tiers[s]) tiers[s] = [];
+                tiers[s].push(b);
             });
 
+            const sortedTierScores = Object.keys(tiers).map(Number).sort((a,b)=>a-b);
+
+            // --- EXECUTION ---
             const b1 = blocks[0];
             const b2 = blocks[1]; 
 
@@ -655,11 +642,36 @@
                     else return false;
                 } 
                 else if (normAct === 'Special' || normAct === 'Special Activity') {
-                     const pick = window.findBestSpecial?.({
-                        divName, bunk, slots: block.slots, startTime: block.startTime, endTime: block.endTime
-                    }, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
-                     if (pick) { finalField = pick.field; if (pick._activity) finalActivityType = pick._activity; }
-                     else return false;
+                     // --- LAYER 2: SPECIFIC ACTIVITY VARIETY ---
+                     const candidates = allActivities.filter(a => a.type === 'special');
+                     
+                     // Sort candidates by SPECIFIC history for THIS bunk
+                     // If Bunk 1 has done Canteen(1) and Gameroom(0), Gameroom comes first
+                     candidates.sort((a, b) => {
+                         const countA = (historicalCounts[bunk]?.[a.field] || 0);
+                         const countB = (historicalCounts[bunk]?.[b.field] || 0);
+                         return countA - countB;
+                     });
+                     
+                     for (const cand of candidates) {
+                         if (canBlockFit({ 
+                             divName, bunk, slots: block.slots, startTime: block.startTime, endTime: block.endTime 
+                         }, cand.field, activityProperties, fieldUsageBySlot, cand.field)) {
+                             
+                             const pickObj = {
+                                field: cand.field,
+                                sport: null,
+                                _activity: cand.field,
+                                _fixed: false,
+                                _h2h: false
+                            };
+                            fillBlock({
+                                divName, bunk, slots: block.slots, startTime: block.startTime, endTime: block.endTime
+                            }, pickObj, fieldUsageBySlot, yesterdayHistory, false);
+                            return true;
+                         }
+                     }
+                     return false;
                 }
                 
                 if (canBlockFit({ divName, bunk, slots: block.slots, startTime: block.startTime, endTime: block.endTime }, finalField, activityProperties, fieldUsageBySlot, finalActivityType)) {
@@ -678,42 +690,32 @@
                 return false;
             };
 
-            if (b2) {
-                const bunksAssignedPriorityInB1 = new Set();
-                bunks.forEach(bunk => {
+            sortedTierScores.forEach(score => {
+                const tierBunks = tiers[score];
+                shuffleArray(tierBunks); // Random Tie-Breaking
+
+                tierBunks.forEach(bunk => {
+                    // Try Block 1 for Priority
                     if (attemptSchedule(bunk, b1, priorityAct)) {
-                        bunksAssignedPriorityInB1.add(bunk);
-                    }
-                });
-
-                bunksAssignedPriorityInB1.forEach(bunk => {
-                    if (!attemptSchedule(bunk, b2, secondaryAct)) {
-                        attemptSchedule(bunk, b2, fallbackAct);
-                    }
-                });
-
-                const groupB = bunks.filter(b => !bunksAssignedPriorityInB1.has(b));
-                groupB.forEach(bunk => {
-                    if (attemptSchedule(bunk, b2, priorityAct)) {
-                        if (!attemptSchedule(bunk, b1, secondaryAct)) {
-                             attemptSchedule(bunk, b1, fallbackAct);
+                        if(b2) {
+                            if(!attemptSchedule(bunk, b2, secondaryAct)) attemptSchedule(bunk, b2, fallbackAct);
                         }
-                    } else {
-                        attemptSchedule(bunk, b2, fallbackAct);
-                        if (!attemptSchedule(bunk, b1, secondaryAct)) {
-                             attemptSchedule(bunk, b1, fallbackAct);
+                    } 
+                    // Try Block 2 for Priority (if b2 exists)
+                    else if (b2 && attemptSchedule(bunk, b2, priorityAct)) {
+                        if(!attemptSchedule(bunk, b1, secondaryAct)) attemptSchedule(bunk, b1, fallbackAct);
+                    } 
+                    // No Priority Slot available -> Fallback
+                    else {
+                        if(b2) {
+                            attemptSchedule(bunk, b2, fallbackAct);
+                            if(!attemptSchedule(bunk, b1, secondaryAct)) attemptSchedule(bunk, b1, fallbackAct);
+                        } else {
+                            if(!attemptSchedule(bunk, b1, secondaryAct)) attemptSchedule(bunk, b1, fallbackAct);
                         }
                     }
                 });
-            } else {
-                bunks.forEach(bunk => {
-                    if (!attemptSchedule(bunk, b1, priorityAct)) {
-                         if (!attemptSchedule(bunk, b1, secondaryAct)) {
-                             attemptSchedule(bunk, b1, fallbackAct);
-                         }
-                    }
-                });
-            }
+            });
         });
 
         // =================================================================
@@ -1247,9 +1249,13 @@
         const rotationHistory = { bunks: rotationHistoryRaw.bunks || {}, leagues: rotationHistoryRaw.leagues || {}, leagueTeamSports: rotationHistoryRaw.leagueTeamSports || {}, leagueTeamLastSport: rotationHistoryRaw.leagueTeamLastSport || {} };
 
         const historicalCounts = {};
+        const specialActivityNames = []; // Collect all special activity names
+
         try {
             const allDaily = window.loadAllDailyData?.() || {};
             const manualOffsets = globalSettings.manualUsageOffsets || {};
+            
+            // Build Historical Counts (mirroring analytics.js)
             Object.values(allDaily).forEach(day => {
                 const sched = day.scheduleAssignments || {};
                 Object.keys(sched).forEach(b => {
@@ -1261,6 +1267,8 @@
                     });
                 });
             });
+            
+            // Apply Manual Offsets
             Object.keys(manualOffsets).forEach(b => {
                 if (!historicalCounts[b]) historicalCounts[b] = {};
                 Object.keys(manualOffsets[b]).forEach(act => {
@@ -1269,6 +1277,10 @@
                     historicalCounts[b][act] = Math.max(0, current + offset);
                 });
             });
+            
+            // Populate known special names for aggregation later
+            masterSpecials.forEach(s => specialActivityNames.push(s.name));
+
         } catch (e) { console.error("Error calculating historical counts:", e); }
 
         const overrides = { bunks: dailyOverrides.bunks || [], leagues: disabledLeagues };
@@ -1292,8 +1304,7 @@
         const activityProperties = {};
         const allMasterActivities = [...masterFields.filter(f => !disabledFields.includes(f.name)), ...masterSpecials.filter(s => !disabledSpecials.includes(s.name))];
         const availableActivityNames = [];
-        const specialActivityNames = [];
-
+        
         allMasterActivities.forEach(f => {
             let finalRules;
             const dailyRules = dailyFieldAvailability[f.name];
@@ -1310,11 +1321,6 @@
                 timeRules: finalRules
             };
             if (isMasterAvailable) availableActivityNames.push(f.name);
-            
-            // Collect known specials
-            if (masterSpecials.some(s => s.name === f.name)) {
-                specialActivityNames.push(f.name);
-            }
         });
 
         window.allSchedulableNames = availableActivityNames;
