@@ -1536,21 +1536,47 @@
         allMasterActivities.forEach(f => {
             let finalRules;
             const dailyRules = dailyFieldAvailability[f.name];
-            if (dailyRules && dailyRules.length > 0) finalRules = dailyRules.map(parseTimeRule).filter(Boolean);
-            else finalRules = (f.timeRules || []).map(parseTimeRule).filter(Boolean);
+            if (dailyRules && dailyRules.length > 0) {
+                finalRules = dailyRules.map(parseTimeRule).filter(Boolean);
+            } else {
+                finalRules = (f.timeRules || []).map(parseTimeRule).filter(Boolean);
+            }
+
             const isMasterAvailable = f.available !== false;
-            const hasCustomDivList = Array.isArray(f.sharableWith?.divisions) && f.sharableWith.divisions.length > 0;
+
+            // ---- NEW: unify how we read "which divisions can use this?" ----
+            let allowedDivisions = null;
+
+            // 1) If the object has its own explicit allowedDivisions list, use that.
+            if (Array.isArray(f.allowedDivisions) && f.allowedDivisions.length > 0) {
+                allowedDivisions = f.allowedDivisions.slice();
+            }
+            // 2) If Special Activities uses e.g. divisionAvailability {mode:'specific', divisions:[...]}:
+            else if (f.divisionAvailability &&
+                     f.divisionAvailability.mode === 'specific' &&
+                     Array.isArray(f.divisionAvailability.divisions) &&
+                     f.divisionAvailability.divisions.length > 0) {
+                allowedDivisions = f.divisionAvailability.divisions.slice();
+            }
+            // 3) Fallback to the old sharableWith.divisions (Fields UI)
+            else if (Array.isArray(f.sharableWith?.divisions) &&
+                     f.sharableWith.divisions.length > 0) {
+                allowedDivisions = f.sharableWith.divisions.slice();
+            }
+
             activityProperties[f.name] = {
                 available: isMasterAvailable,
                 sharable: f.sharableWith?.type === 'all' || f.sharableWith?.type === 'custom',
-                allowedDivisions: hasCustomDivList ? f.sharableWith.divisions.slice() : null,
+                allowedDivisions,  // ← now covers fields *and* specials
                 limitUsage: f.limitUsage || { enabled: false, divisions: {} },
                 preferences: f.preferences || { enabled: false, exclusive: false, list: [] },
                 timeRules: finalRules
             };
-            if (isMasterAvailable) availableActivityNames.push(f.name);
-        });
 
+            if (isMasterAvailable) {
+                availableActivityNames.push(f.name);
+            }
+        });
         window.allSchedulableNames = availableActivityNames;
         const availFields = masterFields.filter(f => availableActivityNames.includes(f.name));
         const availSpecials = masterSpecials.filter(s => availableActivityNames.includes(s.name));
