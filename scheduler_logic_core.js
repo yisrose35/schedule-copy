@@ -832,21 +832,27 @@
                 // 1) FAIRNESS ORDER: who should get the generatedLabel in THIS block?
                 const fairOrder = getFairnessOrderForCategory(generatedCategory, bunks);
 
-                // 2) Try to give generatedLabel (e.g. "Special Activity") to bunks in fairness order.
-                const gotGeneratedHere = {};
-                fairOrder.forEach(bunk => {
-                    if (gotGeneratedHere[bunk]) return;
+                       // 2) Try to give generatedLabel (e.g. "Special Activity") to bunks in fairness order.
+        const gotGeneratedHere = {};
+        fairOrder.forEach(bunk => {
+            // 🚫 Don't give the generated side to the same bunk twice
+            // within this Smart Tile group (e.g. they can't get Special twice).
+            if (groupGeneratedCount[bunk] >= 1) return;
+            if (gotGeneratedHere[bunk]) return;
 
-                    if (attemptSchedule(bunk, generatedLabel, block)) {
-                        gotGeneratedHere[bunk] = true;
-                        bumpCategoryUsage(bunk, generatedCategory, 1);
+            if (attemptSchedule(bunk, generatedLabel, block)) {
+                gotGeneratedHere[bunk] = true;
+                groupGeneratedCount[bunk] += 1;   // ✅ mark they got the special once
 
-                        // Also let it contribute to special:any if it's a specific special
-                        if (generatedCategory.startsWith("special:")) {
-                            bumpCategoryUsage(bunk, "special:any", 1);
-                        }
-                    }
-                });
+                bumpCategoryUsage(bunk, generatedCategory, 1);
+
+                // Also let it contribute to special:any if it's a specific special
+                if (generatedCategory.startsWith("special:")) {
+                    bumpCategoryUsage(bunk, "special:any", 1);
+                }
+            }
+        });
+
 
                 // 3) For bunks that did NOT get the generatedLabel here:
                 //    - If we have a fallback (*and* this is the last block), try fallback.
