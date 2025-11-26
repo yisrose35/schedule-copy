@@ -1,12 +1,11 @@
 // ============================================================================
 // scheduler_logic_core.js
 //
-// UPDATED (Smart Tiles v15 - Strict Catch-Up Enforcer):
-// - STRICT LEVELING: Calculates the Division's Minimum Score for the Priority Activity.
-// - BLOCKING: Any bunk with a score > Minimum Score is BLOCKED from the Priority Activity.
-//   They are forced into Secondary/Fallback slots immediately.
-// - PRIORITY: Only bunks with Score === Minimum Score are candidates for Priority slots.
-// - This ensures no bunk can advance to Level N+1 until ALL bunks are at Level N.
+// UPDATED (Smart Tiles v16 - Dynamic Daily Scoring):
+// - DYNAMIC RE-CALCULATION: Scores are updated instantly after every block assignment.
+// - ONE SPOT RULE: If a bunk gets a Priority slot in Block 1, their score increases immediately.
+//   They effectively become ineligible for Block 2 until all other bunks catch up.
+// - STRICTEST LEVELING: Prevents "double dipping" within the same day.
 // ============================================================================
 
 (function() {
@@ -589,10 +588,14 @@
             const priorityAct = (fallbackFor === main2) ? main2 : main1;
             const secondaryAct = (priorityAct === main1) ? main2 : main1;
 
-            // --- 1. CALCULATE SCORES ---
-            const bunkScores = {};
+            // --- 1. INITIALIZE SCORES (History + Manual) ---
+            // We track specific special usage + aggregate
+            const bunkHistoryScores = {}; // Base score from history
+            const dailyUsage = {}; // Track assignments made THIS run
+
             const isSpecialCategory = (priorityAct === 'Special' || priorityAct === 'Special Activity');
             
+            // Get list of special activities to aggregate
             let relevantActivities = [];
             if (isSpecialCategory) {
                 relevantActivities = allActivities.filter(a => a.type === 'special').map(a => a.field);
@@ -601,143 +604,124 @@
                 relevantActivities = [priorityAct];
             }
 
+            // Calculate Base Scores
             bunks.forEach(b => {
                 let score = 0;
                 relevantActivities.forEach(actName => {
-                    // Historical count (matches analytics logic)
                     score += (historicalCounts[b]?.[actName] || 0);
                 });
-                bunkScores[b] = score;
+                bunkHistoryScores[b] = score;
+                dailyUsage[b] = 0; // Reset daily counter
             });
 
-            // --- 2. DETERMINE MINIMUM SCORE ("The Floor") ---
-            let minScore = Infinity;
-            bunks.forEach(b => {
-                if (bunkScores[b] < minScore) minScore = bunkScores[b];
-            });
-
-            // --- 3. SEPARATE INTO "CATCH-UP" vs "WAIT" GROUPS ---
-            const catchUpGroup = [];
-            const waitGroup = [];
-
-            bunks.forEach(b => {
-                if (bunkScores[b] === minScore) {
-                    catchUpGroup.push(b);
-                } else {
-                    waitGroup.push(b); // Score > MinScore -> Blocked from Priority
-                }
-            });
-
-            shuffleArray(catchUpGroup); // Free Game for ties within floor
-            shuffleArray(waitGroup);    // Randomize wait group for fairness in secondary slots
-
-            const b1 = blocks[0];
-            const b2 = blocks[1]; 
-
-            // Helper: Attempt schedule logic
-            const attemptSchedule = (bunk, block, activity) => {
-                const normAct = String(activity).trim();
-                let finalField = normAct;
-                let finalSport = null;
-                let finalActivityType = normAct;
-
-                if (normAct === 'Sports' || normAct === 'Sport') {
-                    const pick = window.findBestSportActivity?.({
-                        divName, bunk, slots: block.slots, startTime: block.startTime, endTime: block.endTime
-                    }, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
-                    if (pick) { finalField = pick.field; finalSport = pick.sport; if (pick._activity) finalActivityType = pick._activity; }
-                    else return false;
-                } 
-                else if (normAct === 'Special' || normAct === 'Special Activity') {
-                     // Layer 2: Specific Variety
-                     const candidates = allActivities.filter(a => a.type === 'special');
-                     candidates.sort((a, b) => {
-                         const countA = (historicalCounts[bunk]?.[a.field] || 0);
-                         const countB = (historicalCounts[bunk]?.[b.field] || 0);
-                         return countA - countB;
-                     });
-                     
-                     for (const cand of candidates) {
-                         if (canBlockFit({ 
-                             divName, bunk, slots: block.slots, startTime: block.startTime, endTime: block.endTime 
-                         }, cand.field, activityProperties, fieldUsageBySlot, cand.field)) {
-                             
-                             const pickObj = {
-                                field: cand.field,
-                                sport: null,
-                                _activity: cand.field,
-                                _fixed: false,
-                                _h2h: false
-                            };
-                            fillBlock({
-                                divName, bunk, slots: block.slots, startTime: block.startTime, endTime: block.endTime
-                            }, pickObj, fieldUsageBySlot, yesterdayHistory, false);
-                            return true;
-                         }
-                     }
-                     return false;
-                }
+            // --- 2. PROCESS BLOCKS SEQUENTIALLY (Dynamic Scoring) ---
+            // Treat all blocks in the group as a sequence.
+            // Score is re-evaluated before EVERY block.
+            
+            blocks.forEach(block => {
                 
-                if (canBlockFit({ divName, bunk, slots: block.slots, startTime: block.startTime, endTime: block.endTime }, finalField, activityProperties, fieldUsageBySlot, finalActivityType)) {
-                     const pickObj = {
-                        field: finalField,
-                        sport: finalSport,
-                        _activity: finalActivityType,
-                        _fixed: false,
-                        _h2h: false
-                    };
-                     fillBlock({
-                        divName, bunk, slots: block.slots, startTime: block.startTime, endTime: block.endTime
-                    }, pickObj, fieldUsageBySlot, yesterdayHistory, false);
-                    return true;
-                }
-                return false;
-            };
+                // A. Calculate EFFECTIVE Score (History + Today)
+                const currentScores = {};
+                let minScore = Infinity;
+                
+                bunks.forEach(b => {
+                    const s = bunkHistoryScores[b] + dailyUsage[b];
+                    currentScores[b] = s;
+                    if (s < minScore) minScore = s;
+                });
 
-            // --- EXECUTION: CATCH-UP GROUP ---
-            // Only these bunks get to try for Priority Activity
-            catchUpGroup.forEach(bunk => {
-                // Try Block 1 for Priority
-                if (attemptSchedule(bunk, b1, priorityAct)) {
-                    if(b2) {
-                        if(!attemptSchedule(bunk, b2, secondaryAct)) attemptSchedule(bunk, b2, fallbackAct);
-                    }
-                } 
-                // Try Block 2 for Priority (if b2 exists)
-                else if (b2 && attemptSchedule(bunk, b2, priorityAct)) {
-                    if(!attemptSchedule(bunk, b1, secondaryAct)) attemptSchedule(bunk, b1, fallbackAct);
-                } 
-                // No Priority Slot available -> Fallback
-                else {
-                    if(b2) {
-                        attemptSchedule(bunk, b2, fallbackAct);
-                        if(!attemptSchedule(bunk, b1, secondaryAct)) attemptSchedule(bunk, b1, fallbackAct);
-                    } else {
-                        if(!attemptSchedule(bunk, b1, secondaryAct)) attemptSchedule(bunk, b1, fallbackAct);
-                    }
-                }
-            });
+                // B. Partition Bunks
+                const eligibleBunks = []; // Score == Min
+                const waitBunks = [];     // Score > Min (Blocked)
+                
+                bunks.forEach(b => {
+                    if (currentScores[b] === minScore) eligibleBunks.push(b);
+                    else waitBunks.push(b);
+                });
 
-            // --- EXECUTION: WAIT GROUP ---
-            // These bunks are FORCED to skip Priority Activity (to let others catch up)
-            waitGroup.forEach(bunk => {
-                // Skip Priority. Go straight to Secondary/Fallback logic.
-                if(b2) {
-                    // Put Secondary in B1, Fallback in B2 (or vice versa, doesn't matter much, just fill)
-                    // Try Secondary in B1 first
-                    if(attemptSchedule(bunk, b1, secondaryAct)) {
-                        attemptSchedule(bunk, b2, fallbackAct);
+                shuffleArray(eligibleBunks); // Random tie-break
+                shuffleArray(waitBunks);
+
+                // C. Attempt Scheduling
+                const attemptSchedule = (bunk, activity) => {
+                    const normAct = String(activity).trim();
+                    let finalField = normAct;
+                    let finalSport = null;
+                    let finalActivityType = normAct;
+                    let success = false;
+
+                    if (normAct === 'Sports' || normAct === 'Sport') {
+                        const pick = window.findBestSportActivity?.({
+                            divName, bunk, slots: block.slots, startTime: block.startTime, endTime: block.endTime
+                        }, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
+                        if (pick) { 
+                            finalField = pick.field; finalSport = pick.sport; 
+                            if (pick._activity) finalActivityType = pick._activity; 
+                            success = true;
+                        }
+                    } 
+                    else if (normAct === 'Special' || normAct === 'Special Activity') {
+                         const candidates = allActivities.filter(a => a.type === 'special');
+                         // Sort by specific history for variety
+                         candidates.sort((a, b) => {
+                             const countA = (historicalCounts[bunk]?.[a.field] || 0);
+                             const countB = (historicalCounts[bunk]?.[b.field] || 0);
+                             return countA - countB;
+                         });
+                         
+                         for (const cand of candidates) {
+                             if (canBlockFit({ 
+                                 divName, bunk, slots: block.slots, startTime: block.startTime, endTime: block.endTime 
+                             }, cand.field, activityProperties, fieldUsageBySlot, cand.field)) {
+                                 finalField = cand.field;
+                                 finalActivityType = cand.field;
+                                 success = true;
+                                 break;
+                             }
+                         }
                     } else {
-                        // If Secondary B1 fail, try Fallback B1
-                        attemptSchedule(bunk, b1, fallbackAct);
-                        // Try Secondary B2
-                        if(!attemptSchedule(bunk, b2, secondaryAct)) attemptSchedule(bunk, b2, fallbackAct);
+                        // Direct field check (Swim, Lunch, etc)
+                        if (canBlockFit({ divName, bunk, slots: block.slots, startTime: block.startTime, endTime: block.endTime }, finalField, activityProperties, fieldUsageBySlot, finalActivityType)) {
+                            success = true;
+                        }
                     }
-                } else {
-                    // Single block - force Secondary or Fallback
-                    if(!attemptSchedule(bunk, b1, secondaryAct)) attemptSchedule(bunk, b1, fallbackAct);
-                }
-            });
+                    
+                    if (success) {
+                        const pickObj = {
+                            field: finalField,
+                            sport: finalSport,
+                            _activity: finalActivityType,
+                            _fixed: false,
+                            _h2h: false
+                        };
+                        fillBlock({
+                            divName, bunk, slots: block.slots, startTime: block.startTime, endTime: block.endTime
+                        }, pickObj, fieldUsageBySlot, yesterdayHistory, false);
+                        return true;
+                    }
+                    return false;
+                };
+
+                // D. Execute Assignments
+                
+                // 1. ELIGIBLE BUNKS -> Try Priority Activity
+                eligibleBunks.forEach(bunk => {
+                    if (attemptSchedule(bunk, priorityAct)) {
+                        // SUCCESS: Update daily usage so they are blocked in next block
+                        dailyUsage[bunk]++; 
+                    } else {
+                        // FAIL: Priority Full. Give Secondary or Fallback.
+                        if(!attemptSchedule(bunk, secondaryAct)) attemptSchedule(bunk, fallbackAct);
+                    }
+                });
+
+                // 2. WAIT BUNKS -> Blocked from Priority
+                waitBunks.forEach(bunk => {
+                    // Go straight to Secondary
+                    if(!attemptSchedule(bunk, secondaryAct)) attemptSchedule(bunk, fallbackAct);
+                });
+
+            }); // End Block Loop
         });
 
         // =================================================================
