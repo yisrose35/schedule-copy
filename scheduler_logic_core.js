@@ -676,6 +676,36 @@
         // PASS 2.5 — SMART TILE LOGIC (Strict no-double rule)
         // =================================================================
         const specialSet = new Set(specialActivityNames || []);
+        // Maps Smart Tile labels to fairness categories
+        function getFairnessCategoryForSmartLabel(label) {
+            if (!label) return null;
+            const s = String(label).trim().toLowerCase();
+
+            // Pure sports tile: all generated sports share "sport:any"
+            if (s === "sports" || s === "sport") return "sport:any";
+
+            // Generic "Special Activity" bucket
+            if (s === "special" || s === "special activity") {
+                return "special:any";
+            }
+
+            // If it's one of the named specials, we can prioritize that specifically
+            // AND it still contributes to "special:any".
+            const exact = specialActivityNames || [];
+            for (const name of exact) {
+                if (s === String(name).trim().toLowerCase()) {
+                    return `special:${name}`;
+                }
+            }
+
+            // Swim / Lunch / Snack etc → treated as placed, no fairness category.
+            if (s === "swim" || s === "lunch" || s === "snack") {
+                return null;
+            }
+
+            // Default: no category (treated as place-only for now)
+            return null;
+        }
 
         Object.entries(smartTileGroups).forEach(([key, blocks]) => {
             // All Smart Tile blocks sharing the same (division + mains) signature
