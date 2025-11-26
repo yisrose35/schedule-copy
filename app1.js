@@ -13,6 +13,7 @@
 //      • Single-click = rename
 //      • Double-click (within 260ms) = delete
 // - Shared style helper keeps Setup tab visually consistent with Fields.
+// - THEME: Modern Pro Camp (emerald primary, clean white cards).
 // =================================================================
 
 (function () {
@@ -45,17 +46,18 @@
   let savedSkeletons = {};
   let skeletonAssignments = {}; // { "Monday": "templateName", "Default": "templateName" }
 
+  // Modern Pro Camp accent palette
   const defaultColors = [
-    "#4CAF50",
-    "#2196F3",
-    "#E91E63",
-    "#FF9800",
-    "#9C27B0",
-    "#00BCD4",
-    "#FFC107",
-    "#F44336",
-    "#8BC34A",
-    "#3F51B5",
+    "#00C896", // emerald primary
+    "#0094FF", // electric blue
+    "#FF7C3B", // blaze orange
+    "#8A5DFF", // royal purple
+    "#B5FF3F", // lime punch
+    "#FF4D4D", // athletic red
+    "#00A67C", // darker emerald
+    "#6366F1", // indigo
+    "#F97316", // warm orange
+    "#10B981"  // teal/emerald variant
   ];
   let colorIndex = 0;
 
@@ -70,41 +72,40 @@
     const style = document.createElement("style");
     style.id = "setup-shared-styles";
     style.textContent = `
-        /* Generic detail pane shell (shared with Fields) */
+        /* ===== Global Setup / Detail Pane Shell (Modern Pro Camp) ===== */
         .detail-pane {
             border-radius: 18px;
-            border: 1px solid #e5e7eb;
-            padding: 16px 18px;
-            background:
-              radial-gradient(circle at top left, #eff6ff 0, #ffffff 55%, #f9fafb 100%);
+            border: 1px solid #E5E7EB;
+            padding: 18px 20px;
+            background: linear-gradient(135deg, #F7F9FA 0%, #FFFFFF 55%, #F7F9FA 100%);
             min-height: 360px;
-            box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
+            box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
         }
 
         /* Division list cards (left side) */
         .division-card {
             border-radius: 18px;
-            border: 1px solid #e5e7eb;
-            background: #ffffff;
+            border: 1px solid #E5E7EB;
+            background: #FFFFFF;
             padding: 10px 16px;
             margin: 8px 0;
-            box-shadow: 0 10px 18px rgba(15, 23, 42, 0.07);
+            box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
             cursor: pointer;
             transition:
-                border-color 0.15s ease,
-                box-shadow 0.15s ease,
-                transform 0.07s ease,
-                background-color 0.15s ease;
+                border-color 0.16s ease,
+                box-shadow 0.16s ease,
+                transform 0.08s ease,
+                background-color 0.16s ease;
         }
         .division-card:hover {
-            box-shadow: 0 14px 24px rgba(15, 23, 42, 0.12);
+            box-shadow: 0 12px 26px rgba(15, 23, 42, 0.12);
             transform: translateY(-1px);
-            background-color: #f9fafb;
+            background-color: #F9FAFB;
         }
         .division-card.selected {
-            border-color: #2563eb;
-            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35);
-            background-color: #ffffff;
+            border-color: #00C896;
+            box-shadow: 0 0 0 1px rgba(0, 200, 150, 0.55);
+            background: radial-gradient(circle at top left, #ECFDF5 0, #FFFFFF 65%);
         }
 
         .division-card-top {
@@ -116,14 +117,14 @@
         .division-pill {
             padding: 4px 16px;
             border-radius: 999px;
-            color: #ffffff;
+            color: #FFFFFF;
             font-weight: 600;
             font-size: 0.9rem;
             min-width: 32px;
             display: flex;
             justify-content: center;
             align-items: center;
-            box-shadow: 0 4px 10px rgba(15, 23, 42, 0.25);
+            box-shadow: 0 4px 10px rgba(15, 23, 42, 0.22);
         }
         .division-color-chip-list {
             width: 22px;
@@ -134,23 +135,23 @@
         }
         .division-card-subline {
             font-size: 0.8rem;
-            color: #6b7280;
+            color: #6B7280;
         }
 
-        /* Division detail main inner shell */
+        /* Division detail inner layout (flattened to avoid triple-layer look) */
         .division-edit-shell {
-            border-radius: 26px;
-            border: 1px solid #e0e7ff;
-            background: radial-gradient(circle at top left, #eff6ff 0, #f9fafb 40%, #ffffff 100%);
-            padding: 18px 20px 20px;
-            box-shadow: 0 18px 42px rgba(15, 23, 42, 0.14);
+            padding: 4px 0 0;
+            border-radius: 16px;
+            border: none;
+            background: transparent;
+            box-shadow: none;
         }
         .division-edit-header {
             display: flex;
             justify-content: space-between;
             align-items: baseline;
             padding-bottom: 10px;
-            border-bottom: 1px solid #e5e7eb;
+            border-bottom: 1px solid #E5E7EB;
             margin-bottom: 14px;
         }
         .division-header-left {
@@ -159,7 +160,7 @@
             gap: 8px;
             font-weight: 600;
             font-size: 0.98rem;
-            color: #0f172a;
+            color: #111827;
         }
         .division-header-left .division-name {
             cursor: text;
@@ -168,12 +169,12 @@
             width: 11px;
             height: 11px;
             border-radius: 999px;
-            background: #16a34a;
-            box-shadow: 0 0 0 4px rgba(22, 163, 74, 0.25);
+            background: #00C896;
+            box-shadow: 0 0 0 4px rgba(0, 200, 150, 0.25);
         }
         .division-header-summary {
             font-size: 0.8rem;
-            color: #6b7280;
+            color: #6B7280;
             text-align: right;
             white-space: nowrap;
         }
@@ -181,16 +182,18 @@
         .division-edit-grid {
             display: flex;
             flex-wrap: wrap;
-            gap: 24px;
-            margin-top: 4px;
+            gap: 20px;
+            margin-top: 6px;
         }
 
+        /* Mini cards = second layer (times / bunks) */
         .division-mini-card {
             flex: 1 1 280px;
-            border-radius: 0;
-            background: transparent;
-            border: none;
-            padding: 2px 0 0;
+            border-radius: 16px;
+            background: #FFFFFF;
+            border: 1px solid #E5E7EB;
+            padding: 12px 14px 14px;
+            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
         }
         .division-mini-header {
             display: flex;
@@ -201,29 +204,29 @@
             font-size: 0.78rem;
             text-transform: uppercase;
             letter-spacing: 0.06em;
-            color: #6b7280;
+            color: #6B7280;
             font-weight: 600;
-            border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+            border-bottom: 1px solid rgba(148, 163, 184, 0.4);
         }
         .division-mini-pill {
             padding: 4px 12px;
             border-radius: 999px;
-            background: #e0f2fe;
-            color: #0369a1;
+            background: #ECFDF5;
+            color: #047857;
             font-size: 0.7rem;
             border: none;
             cursor: default;
             font-weight: 500;
-            box-shadow: 0 4px 10px rgba(56, 189, 248, 0.45);
+            box-shadow: 0 4px 10px rgba(16, 185, 129, 0.35);
         }
         .division-mini-pill:disabled {
-            opacity: 0.75;
+            opacity: 0.8;
         }
         .division-mini-help {
             margin: 0 0 10px;
             font-size: 0.78rem;
-            color: #6b7280;
-            max-width: 320px;
+            color: #6B7280;
+            max-width: 340px;
         }
 
         /* Color row for division detail */
@@ -231,19 +234,19 @@
             display: flex;
             align-items: center;
             gap: 10px;
-            margin: 6px 0 14px;
+            margin: 6px 0 16px;
             font-size: 0.8rem;
-            color: #4b5563;
+            color: #4B5563;
         }
         .division-color-row input[type="color"] {
             -webkit-appearance: none;
             appearance: none;
-            width: 64px;
+            width: 68px;
             height: 26px;
             padding: 0;
             border-radius: 999px;
-            border: 1px solid #e5e7eb;
-            background: #ffffff;
+            border: 1px solid #E5E7EB;
+            background: #FFFFFF;
             overflow: hidden;
             box-shadow: 0 4px 10px rgba(15, 23, 42, 0.12);
         }
@@ -261,8 +264,8 @@
         .division-bunk-pill {
             padding: 4px 10px;
             border-radius: 999px;
-            border: 1px solid #d1d5db;
-            background: #ffffff;
+            border: 1px solid #D1D5DB;
+            background: #FFFFFF;
             color: #374151;
             font-size: 0.8rem;
             cursor: pointer;
@@ -271,14 +274,21 @@
             justify-content: center;
             min-width: 28px;
             box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);
-            transition: background-color 0.12s ease,
-                        box-shadow 0.12s ease,
-                        transform 0.06s ease;
+            transition:
+                background-color 0.12s ease,
+                box-shadow 0.12s ease,
+                transform 0.06s ease;
         }
         .division-bunk-pill:hover {
-            background-color: #f3f4f6;
-            box-shadow: 0 3px 6px rgba(15, 23, 42, 0.12);
+            background-color: #F3F4F6;
+            box-shadow: 0 3px 8px rgba(15, 23, 42, 0.14);
             transform: translateY(-0.5px);
+        }
+
+        /* Muted text helper (in case not defined globally) */
+        .muted {
+            color: #6B7280;
+            font-size: 0.86rem;
         }
     `;
     document.head.appendChild(style);
@@ -484,12 +494,12 @@
 
       const pill = document.createElement("div");
       pill.className = "division-pill";
-      pill.style.backgroundColor = obj.color || "#007bff";
+      pill.style.backgroundColor = obj.color || "#00C896";
       pill.textContent = name;
 
       const chip = document.createElement("div");
       chip.className = "division-color-chip-list";
-      chip.style.backgroundColor = obj.color || "#007bff";
+      chip.style.backgroundColor = obj.color || "#00C896";
 
       topRow.appendChild(pill);
       topRow.appendChild(chip);
@@ -537,26 +547,36 @@
     header.style.display = "flex";
     header.style.justifyContent = "space-between";
     header.style.alignItems = "center";
-    header.style.borderBottom = "2px solid #f3f4f6";
+    header.style.borderBottom = "2px solid #E5E7EB";
     header.style.paddingBottom = "8px";
     header.style.marginBottom = "10px";
     header.style.columnGap = "12px";
 
     const title = document.createElement("h3");
     title.style.margin = "0";
+    title.style.fontSize = "1rem";
+    title.style.fontWeight = "600";
+    title.style.color = "#111827";
     title.textContent = "Division Details & Bunks";
     header.appendChild(title);
 
     const deleteBtn = document.createElement("button");
     deleteBtn.textContent = "Delete Division";
-    deleteBtn.style.background = "#dc2626";
-    deleteBtn.style.color = "white";
-    deleteBtn.style.border = "none";
-    deleteBtn.style.padding = "6px 18px";
+    deleteBtn.style.background = "#FFFFFF";
+    deleteBtn.style.color = "#DC2626";
+    deleteBtn.style.border = "1px solid #FECACA";
+    deleteBtn.style.padding = "6px 16px";
     deleteBtn.style.borderRadius = "999px";
     deleteBtn.style.cursor = "pointer";
     deleteBtn.style.fontWeight = "600";
-    deleteBtn.style.boxShadow = "0 6px 14px rgba(220,38,38,0.4)";
+    deleteBtn.style.boxShadow = "0 4px 10px rgba(220,38,38,0.12)";
+    deleteBtn.style.fontSize = "0.85rem";
+    deleteBtn.onmouseenter = () => {
+      deleteBtn.style.background = "#FEE2E2";
+    };
+    deleteBtn.onmouseleave = () => {
+      deleteBtn.style.background = "#FFFFFF";
+    };
     deleteBtn.onclick = () => {
       if (
         !confirm(
@@ -591,7 +611,7 @@
 
     const colorInput = document.createElement("input");
     colorInput.type = "color";
-    colorInput.value = divObj.color || "#007bff";
+    colorInput.value = divObj.color || "#00C896";
     colorInput.oninput = (e) => {
       divObj.color = e.target.value;
       saveData();
@@ -604,7 +624,7 @@
     colorRow.appendChild(colorInput);
     pane.appendChild(colorRow);
 
-    // --- Main inner shell: light rounded card ---
+    // --- Main inner shell: flattened container for header + mini cards ---
     const shell = document.createElement("div");
     shell.className = "division-edit-shell";
     pane.appendChild(shell);
@@ -618,7 +638,7 @@
 
     const dot = document.createElement("span");
     dot.className = "division-status-dot";
-    const dotColor = divObj.color || "#16a34a";
+    const dotColor = divObj.color || "#00C896";
     dot.style.backgroundColor = dotColor;
     dot.style.boxShadow = `0 0 0 4px ${dotColor}33`;
 
@@ -662,7 +682,7 @@
       divObj.startTime && divObj.endTime
         ? `${divObj.startTime} \u2013 ${divObj.endTime}`
         : "Times not set";
-    rightSide.textContent = `${bunkCount} bunks \u2022 ${timesSummary}`;
+    rightSide.textContent = `${bunkCount + " bunk" + (bunkCount === 1 ? "" : "s")} \u2022 ${timesSummary}`;
 
     innerHeader.appendChild(leftSide);
     innerHeader.appendChild(rightSide);
@@ -700,27 +720,51 @@
     const timeForm = document.createElement("div");
     timeForm.style.display = "flex";
     timeForm.style.alignItems = "center";
-    timeForm.style.gap = "6px";
+    timeForm.style.gap = "8px";
     timeForm.style.marginTop = "4px";
 
     const startInput = document.createElement("input");
     startInput.type = "text";
     startInput.placeholder = "11:00am";
     startInput.value = divObj.startTime || "";
-    startInput.style.width = "120px";
+    startInput.style.width = "110px";
+    startInput.style.padding = "4px 8px";
+    startInput.style.borderRadius = "999px";
+    startInput.style.border = "1px solid #D1D5DB";
+    startInput.style.fontSize = "0.85rem";
 
     const toLabel = document.createElement("span");
     toLabel.textContent = "to";
+    toLabel.style.fontSize = "0.8rem";
+    toLabel.style.color = "#6B7280";
 
     const endInput = document.createElement("input");
     endInput.type = "text";
     endInput.placeholder = "4:30pm";
     endInput.value = divObj.endTime || "";
-    endInput.style.width = "120px";
+    endInput.style.width = "110px";
+    endInput.style.padding = "4px 8px";
+    endInput.style.borderRadius = "999px";
+    endInput.style.border = "1px solid #D1D5DB";
+    endInput.style.fontSize = "0.85rem";
 
     const updateBtn = document.createElement("button");
     updateBtn.textContent = "Update";
-    updateBtn.style.padding = "4px 10px";
+    updateBtn.style.padding = "5px 14px";
+    updateBtn.style.borderRadius = "999px";
+    updateBtn.style.border = "none";
+    updateBtn.style.background = "#00C896";
+    updateBtn.style.color = "#FFFFFF";
+    updateBtn.style.fontSize = "0.85rem";
+    updateBtn.style.fontWeight = "600";
+    updateBtn.style.cursor = "pointer";
+    updateBtn.style.boxShadow = "0 4px 10px rgba(0, 200, 150, 0.35)";
+    updateBtn.onmouseenter = () => {
+      updateBtn.style.background = "#00A67C";
+    };
+    updateBtn.onmouseleave = () => {
+      updateBtn.style.background = "#00C896";
+    };
 
     updateBtn.onclick = () => {
       const newStart = startInput.value.trim();
@@ -812,6 +856,10 @@
           input.type = "text";
           input.value = bunkName;
           input.style.minWidth = "60px";
+          input.style.padding = "3px 8px";
+          input.style.borderRadius = "999px";
+          input.style.border = "1px solid #D1D5DB";
+          input.style.fontSize = "0.8rem";
 
           const parent = pill.parentNode;
           if (!parent) return;
@@ -872,9 +920,29 @@
     addInput.type = "text";
     addInput.placeholder = "Add bunk to this division (e.g., 5A)";
     addInput.style.flex = "1";
+    addInput.style.padding = "5px 10px";
+    addInput.style.borderRadius = "999px";
+    addInput.style.border = "1px solid #D1D5DB";
+    addInput.style.fontSize = "0.86rem";
 
     const addBtn = document.createElement("button");
     addBtn.textContent = "Add";
+    addBtn.style.padding = "5px 14px";
+    addBtn.style.borderRadius = "999px";
+    addBtn.style.border = "none";
+    addBtn.style.background = "#00C896";
+    addBtn.style.color = "#FFFFFF";
+    addBtn.style.fontSize = "0.85rem";
+    addBtn.style.fontWeight = "600";
+    addBtn.style.cursor = "pointer";
+    addBtn.style.boxShadow = "0 4px 10px rgba(0, 200, 150, 0.35)";
+    addBtn.onmouseenter = () => {
+      addBtn.style.background = "#00A67C";
+    };
+    addBtn.onmouseleave = () => {
+      addBtn.style.background = "#00C896";
+    };
+
     addBtn.onclick = () => {
       const name = addInput.value.trim();
       if (!name) return;
