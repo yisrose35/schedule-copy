@@ -597,7 +597,17 @@
             const finalEventName = normGA || normSpecLg || normLeague || item.event;
             const isGeneratedEvent = GENERATED_EVENTS.includes(finalEventName) || normGA === "General Activity Slot" || normLeague === "League Game" || normSpecLg === "Specialty League" || item.type === 'smart';
 
-            if (item.type === 'pinned' || !isGeneratedEvent) {
+                       if (item.type === 'pinned' || !isGeneratedEvent) {
+                // If this pinned event is disabled for today, SKIP it.
+                // (Covers both fields and special activities.)
+                const isDisabledField  = disabledFields?.includes?.(item.event);
+                const isDisabledSpecial = disabledSpecials?.includes?.(item.event);
+
+                if (isDisabledField || isDisabledSpecial) {
+                    // Do not place this pinned block at all today
+                    return;
+                }
+
                 // Fully pinned: every bunk, every slot = same fixed tile
                 allBunks.forEach(bunk => {
                     allSlots.forEach((slotIndex, idx) => {
@@ -616,6 +626,7 @@
                     });
                 });
             }
+
             else if (item.type === 'split') {
                 if (!item.subEvents || item.subEvents.length < 2) return;
                 const swimLabel = "Swim";
