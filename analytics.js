@@ -171,6 +171,9 @@ function renderUsageTable(divName) {
         };
     });
 }
+        // DEBUG: what the analytics Usage Manager is seeing
+    window.debugAnalyticsRawCounts = rawCounts;
+
 
 // --- AVAILABILITY GRID (Unchanged but required for file completeness) ---
 function renderFieldAvailabilityGrid() {
