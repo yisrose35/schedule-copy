@@ -596,126 +596,105 @@
             }
         });
 
+                // =================================================================
+        // PASS 2.5 — SMART TILE LOGIC (Pair-aware, late fallback)
         // =================================================================
-        // PASS 2.5 — SMART TILE LOGIC (Pair Guarantee + Analytics Fairness)
-        // =================================================================
+        const specialSet = new Set(specialActivityNames || []);
+
         Object.entries(smartTileGroups).forEach(([key, blocks]) => {
-            // Sort Smart Tile blocks by time
+            // Smart Tile blocks for this division + pair signature
             blocks.sort((a, b) => a.startTime - b.startTime);
 
             const divName = blocks[0].divName;
             const bunks = divisions[divName]?.bunks || [];
-            if (bunks.length === 0) return;
+            if (!bunks.length) return;
 
             const main1 = blocks[0].smartData.main1;
             const main2 = blocks[0].smartData.main2;
-            const fallbackFor = blocks[0].smartData.fallbackFor;  // which option has fallback
+            const fallbackFor = blocks[0].smartData.fallbackFor;
             const fallbackAct = blocks[0].smartData.fallbackActivity;
 
-            // Determine which side is "priority" (special side) and which is "partner"
-            const priorityAct = fallbackFor || main1;
-            const partnerAct = (priorityAct === main1) ? main2 : main1;
+            // Priority = the side that has a fallback (usually the special side)
+            const priorityAct = (fallbackFor === main2) ? main2 : main1;
+            const secondaryAct = (priorityAct === main1) ? main2 : main1;
 
-            // --- SPECIAL FAIRNESS SCORE SETUP (per analytics) ---
-            const specialSet = new Set(specialActivityNames || []);
-            const globalSpecialBase = {};
-            const perActBase = {};
-            const perActDaily = {};
-            const dailySpecialUsage = {};
+            // --- HISTORY-BASED SCORES (same idea as before) ---
+            const bunkHistoryScores = {};
+            const dailyUsage = {}; // how many times they got priority TODAY
 
-            // Initialize per-activity base counts
-            (specialActivityNames || []).forEach(name => {
-                perActBase[name] = {};
-                perActDaily[name] = {};
-            });
+            // If priority is "Special Activity", score all specials; otherwise score just that one
+            const isSpecialCategory =
+                priorityAct === 'Special' || priorityAct === 'Special Activity';
 
-            // Build base counts from analytics
+            let relevantActivities = [];
+            if (isSpecialCategory) {
+                // all specials count together
+                relevantActivities = Array.from(specialSet);
+            } else {
+                relevantActivities = [priorityAct];
+            }
+
             bunks.forEach(b => {
-                dailySpecialUsage[b] = 0;
-                let totalSpecials = 0;
-                const hist = historicalCounts[b] || {};
-
-                if (specialSet.size === 0) {
-                    // Fallback: treat all historicalCounts as special
-                    for (const act in hist) {
-                        if (!Object.prototype.hasOwnProperty.call(hist, act)) continue;
-                        const c = hist[act] || 0;
-                        totalSpecials += c;
-                    }
-                } else {
-                    specialSet.forEach(actName => {
-                        const c = hist[actName] || 0;
-                        totalSpecials += c;
-                        perActBase[actName][b] = c;
-                    });
-                }
-
-                globalSpecialBase[b] = totalSpecials;
+                let score = 0;
+                relevantActivities.forEach(actName => {
+                    score += (historicalCounts[b]?.[actName] || 0);
+                });
+                bunkHistoryScores[b] = score;
+                dailyUsage[b] = 0;
             });
 
-            function getGlobalSpecialScore(b) {
-                return (globalSpecialBase[b] || 0) + (dailySpecialUsage[b] || 0);
-            }
+            // Per-group state: did this bunk already get the priority / secondary side?
+            const gotPriority = {};
+            const gotSecondary = {};
 
-            function getActScore(act, b) {
-                if (!act || !specialSet.has(act)) return 0;
-                const base = perActBase[act]?.[b] || 0;
-                const daily = perActDaily[act]?.[b] || 0;
-                return base + daily;
-            }
-
-            function bumpSpecialUsage(act, b) {
-                if (!act || !specialSet.has(act)) return;
-                dailySpecialUsage[b] = (dailySpecialUsage[b] || 0) + 1;
-                perActDaily[act][b] = (perActDaily[act][b] || 0) + 1;
-            }
-
-            // Raw scheduler for a single activity label (Sports, Special, GA, field)
-            function attemptScheduleRaw(bunk, activity, block) {
-                const normAct = String(activity || "").trim();
+            // Helper: attempt to assign a specific "activity label" into this block for a bunk
+            const attemptSchedule = (bunk, activity) => {
+                if (!activity) return false;
+                const normAct = String(activity).trim();
                 let finalField = normAct;
                 let finalSport = null;
                 let finalActivityType = normAct;
                 let success = false;
 
-                const baseBlock = {
-                    divName,
-                    bunk,
-                    slots: block.slots,
-                    startTime: block.startTime,
-                    endTime: block.endTime
-                };
-
-                // SPORTS => use sports optimizer on fields
-                if (normAct === 'Sports' || normAct === 'Sport') {
-                    const pick = window.findBestSportActivity?.(
-                        baseBlock,
-                        allActivities,
-                        fieldUsageBySlot,
-                        yesterdayHistory,
-                        activityProperties,
-                        rotationHistory,
-                        divisions,
-                        historicalCounts
-                    );
+                // Sports side - use normal sports picker
+                if (normAct.toLowerCase() === 'sports' || normAct.toLowerCase() === 'sport') {
+                    const pick = window.findBestSportActivity?.({
+                        divName,
+                        bunk,
+                        slots: block.slots,
+                        startTime: block.startTime,
+                        endTime: block.endTime
+                    }, allActivities, fieldUsageBySlot, yesterdayHistory,
+                       activityProperties, rotationHistory, divisions, historicalCounts);
                     if (pick) {
                         finalField = pick.field;
                         finalSport = pick.sport;
-                        finalActivityType = pick._activity || normAct;
+                        if (pick._activity) finalActivityType = pick._activity;
                         success = true;
                     }
                 }
-                // "Special" keyword (generic bucket) => pick a special field
-                else if (normAct === 'Special' || normAct === 'Special Activity') {
-                    const candidates = allActivities.filter(a => a.type === 'special');
+                // Generic "Special" bucket – pick the least-used special for this bunk
+                else if (normAct.toLowerCase() === 'special' ||
+                         normAct.toLowerCase() === 'special activity') {
+                    const candidates = allActivities
+                        .filter(a => a.type === 'special')
+                        .slice();
+
+                    // least-used special for this bunk first
                     candidates.sort((a, b) => {
-                        const countA = (historicalCounts[bunk]?.[a.field] || 0);
-                        const countB = (historicalCounts[bunk]?.[b.field] || 0);
-                        return countA - countB;
+                        const ca = historicalCounts[bunk]?.[a.field] || 0;
+                        const cb = historicalCounts[bunk]?.[b.field] || 0;
+                        return ca - cb;
                     });
 
                     for (const cand of candidates) {
-                        if (canBlockFit(baseBlock, cand.field, activityProperties, fieldUsageBySlot, cand.field)) {
+                        if (canBlockFit({
+                            divName,
+                            bunk,
+                            slots: block.slots,
+                            startTime: block.startTime,
+                            endTime: block.endTime
+                        }, cand.field, activityProperties, fieldUsageBySlot, cand.field)) {
                             finalField = cand.field;
                             finalActivityType = cand.field;
                             success = true;
@@ -723,29 +702,15 @@
                         }
                     }
                 }
-                // General Activity Slot => GA optimizer
-                else if (normAct === 'General Activity Slot') {
-                    const pick = window.findBestGeneralActivity?.(
-                        baseBlock,
-                        allActivities,
-                        h2hActivities,
-                        fieldUsageBySlot,
-                        yesterdayHistory,
-                        activityProperties,
-                        rotationHistory,
-                        divisions,
-                        historicalCounts
-                    );
-                    if (pick && isPickValidForBlock(baseBlock, pick, activityProperties, fieldUsageBySlot)) {
-                        finalField = pick.field;
-                        finalSport = pick.sport;
-                        finalActivityType = pick._activity || 'General Activity Slot';
-                        success = true;
-                    }
-                }
-                // Direct field (Swim, Canteen, Gameroom, etc.)
+                // Direct field name (Swim, Gameroom, etc.)
                 else {
-                    if (canBlockFit(baseBlock, finalField, activityProperties, fieldUsageBySlot, finalActivityType)) {
+                    if (canBlockFit({
+                        divName,
+                        bunk,
+                        slots: block.slots,
+                        startTime: block.startTime,
+                        endTime: block.endTime
+                    }, finalField, activityProperties, fieldUsageBySlot, finalActivityType)) {
                         success = true;
                     }
                 }
@@ -758,142 +723,113 @@
                         _fixed: false,
                         _h2h: false
                     };
-                    return fillBlock(baseBlock, pickObj, fieldUsageBySlot, yesterdayHistory, false);
+                    fillBlock({
+                        divName,
+                        bunk,
+                        slots: block.slots,
+                        startTime: block.startTime,
+                        endTime: block.endTime
+                    }, pickObj, fieldUsageBySlot, yesterdayHistory, false);
+                    return true;
                 }
                 return false;
-            }
+            };
 
-            // Assign "Bucket B" (priority + fallback), with fairness
-            function assignBucketB(bunk, block) {
-                const normPriority = String(priorityAct || "").trim();
-                const isPrioritySpecial = specialSet.has(normPriority);
+            // --- PROCESS EACH SMART TILE BLOCK IN ORDER ---
+            blocks.forEach((block, blockIndex) => {
+                const isLastBlock = (blockIndex === blocks.length - 1);
 
-                // If priorityAct is a special, enforce per-activity MIN rule
-                let canTrySpecial = true;
-                if (isPrioritySpecial) {
-                    let minScore = Infinity;
-                    bunks.forEach(b => {
-                        const s = getActScore(normPriority, b);
-                        if (s < minScore) minScore = s;
-                    });
-                    const myScore = getActScore(normPriority, bunk);
-                    // If I'm already ahead on this special, I can't get it now
-                    if (myScore > minScore) {
-                        canTrySpecial = false;
-                    }
-                }
+                // Recalculate effective scores (history + today) before each block
+                const currentScores = {};
+                let minScore = Infinity;
 
-                // 1) Try PRIORITY special if allowed
-                if (canTrySpecial) {
-                    const placedSpecial = attemptScheduleRaw(bunk, priorityAct, block);
-                    if (placedSpecial) {
-                        if (isPrioritySpecial) bumpSpecialUsage(normPriority, bunk);
-                        return true;
-                    }
-                }
-
-                // 2) Try fallback (Sports, another field, etc.)
-                if (fallbackAct) {
-                    const placedFallback = attemptScheduleRaw(bunk, fallbackAct, block);
-                    if (placedFallback) {
-                        // Fallback does NOT increment the special points
-                        return true;
-                    }
-                }
-
-                // 3) As last resort, if priorityAct isn't a special, try it anyway
-                if (!isPrioritySpecial && !fallbackAct) {
-                    return attemptScheduleRaw(bunk, priorityAct, block);
-                }
-
-                return false;
-            }
-
-            // Assign "Bucket A" (partnerAct) – pure field/sports/GA, no special fairness
-            function assignBucketA(bunk, block) {
-                return attemptScheduleRaw(bunk, partnerAct, block);
-            }
-
-            // --- 2-block PAIR LOGIC: guarantee each bunk gets A + (B or fallback) ---
-            if (blocks.length === 2) {
-                const block0 = blocks[0];
-                const block1 = blocks[1];
-
-                // Track what each bunk got in block 0: 'A' or 'B'
-                const bucketChoice = {};
-
-                // Sort bunks by global specials score for fairness
-                const orderedBunks = [...bunks].sort((a, b) => {
-                    const ga = getGlobalSpecialScore(a);
-                    const gb = getGlobalSpecialScore(b);
-                    if (ga !== gb) return ga - gb;
-                    return a.localeCompare(b);
+                bunks.forEach(b => {
+                    const s = bunkHistoryScores[b] + dailyUsage[b];
+                    currentScores[b] = s;
+                    if (s < minScore) minScore = s;
                 });
 
-                // ----- BLOCK 0 -----
-                orderedBunks.forEach(bunk => {
-                    // First, try to give them the "priority side" (B) if we can
-                    const gotB = assignBucketB(bunk, block0);
-                    if (gotB) {
-                        bucketChoice[bunk] = 'B';
-                    } else {
-                        // If we can't give B, give them A in this block
-                        const gotA = assignBucketA(bunk, block0);
-                        bucketChoice[bunk] = gotA ? 'A' : null;
-                    }
+                const eligibleBunks = [];
+                const waitBunks = [];
+
+                bunks.forEach(b => {
+                    if (currentScores[b] === minScore) eligibleBunks.push(b);
+                    else waitBunks.push(b);
                 });
 
-                // ----- BLOCK 1 -----
-                orderedBunks.forEach(bunk => {
-                    const choice = bucketChoice[bunk];
+                shuffleArray(eligibleBunks);
+                shuffleArray(waitBunks);
 
-                    // Check if bunk already has anything in this block's slots
-                    const alreadyHasSomething = (block1.slots || []).some(idx => {
-                        return window.scheduleAssignments[bunk]?.[idx];
-                    });
-                    if (alreadyHasSomething) return;
-
-                    if (choice === 'B') {
-                        // They got B in block 0 => must get A here
-                        assignBucketA(bunk, block1);
-                    } else if (choice === 'A') {
-                        // They got A in block 0 => must get B here
-                        assignBucketB(bunk, block1);
-                    } else {
-                        // Didn't get anything cleanly in block 0; try to give them both sides greedily
-                        // Prefer B first to catch them up on specials, then A.
-                        if (!assignBucketB(bunk, block1)) {
-                            assignBucketA(bunk, block1);
+                // ========= 1) ELIGIBLE BUNKS =========
+                eligibleBunks.forEach(bunk => {
+                    // If they already got the "priority side" earlier in this group,
+                    // just try to give them the secondary side here.
+                    if (gotPriority[bunk]) {
+                        if (!gotSecondary[bunk] && secondaryAct &&
+                            attemptSchedule(bunk, secondaryAct)) {
+                            gotSecondary[bunk] = true;
                         }
+                        return;
+                    }
+
+                    // Try PRIORITY activity first
+                    if (priorityAct && attemptSchedule(bunk, priorityAct)) {
+                        dailyUsage[bunk]++;
+                        gotPriority[bunk] = true;
+                        return;
+                    }
+
+                    // PRIORITY FAILED IN THIS BLOCK
+                    if (!isLastBlock) {
+                        // Don't jump to fallback yet — we still have future Smart blocks.
+                        // Give them the secondary (e.g., Swim) now if they don't have it yet.
+                        if (!gotSecondary[bunk] && secondaryAct &&
+                            attemptSchedule(bunk, secondaryAct)) {
+                            gotSecondary[bunk] = true;
+                        }
+                        // We'll try priority again in a later Smart block.
+                        return;
+                    }
+
+                    // LAST SMART BLOCK:
+                    // One last try for priority for this bunk.
+                    if (priorityAct && attemptSchedule(bunk, priorityAct)) {
+                        dailyUsage[bunk]++;
+                        gotPriority[bunk] = true;
+                        return;
+                    }
+
+                    // If we still can't place priority, NOW we allow fallback
+                    if (fallbackAct && attemptSchedule(bunk, fallbackAct)) {
+                        gotPriority[bunk] = true; // They "used up" their priority side with fallback
+                        return;
+                    }
+
+                    // As a final attempt, at least give them the secondary if possible
+                    if (!gotSecondary[bunk] && secondaryAct &&
+                        attemptSchedule(bunk, secondaryAct)) {
+                        gotSecondary[bunk] = true;
                     }
                 });
 
-            } else {
-                // Fallback: if there aren't exactly 2 Smart Tile blocks,
-                // just apply fairness per block (no "must get both" guarantee).
-                console.warn("Smart Tile group length != 2 for", key, "– applying fairness-only mode.");
+                // ========= 2) WAIT BUNKS (ahead on points) =========
+                waitBunks.forEach(bunk => {
+                    // They shouldn't get more "priority side" until others catch up.
+                    // But we still want to make sure they get the partner (Swim) somewhere.
+                    if (!gotSecondary[bunk] && secondaryAct &&
+                        attemptSchedule(bunk, secondaryAct)) {
+                        gotSecondary[bunk] = true;
+                        return;
+                    }
 
-                blocks.forEach(block => {
-                    const orderedBunks = [...bunks].sort((a, b) => {
-                        const ga = getGlobalSpecialScore(a);
-                        const gb = getGlobalSpecialScore(b);
-                        if (ga !== gb) return ga - gb;
-                        return a.localeCompare(b);
-                    });
-
-                    orderedBunks.forEach(bunk => {
-                        const hasSomething = (block.slots || []).some(idx => {
-                            return window.scheduleAssignments[bunk]?.[idx];
-                        });
-                        if (hasSomething) return;
-
-                        // Try priority side (B) first, then partner (A)
-                        if (!assignBucketB(bunk, block)) {
-                            assignBucketA(bunk, block);
-                        }
-                    });
+                    // Only on the LAST Smart Tile block, if they somehow never got
+                    // the priority side at all, let them take fallback here.
+                    if (isLastBlock && !gotPriority[bunk] && fallbackAct &&
+                        attemptSchedule(bunk, fallbackAct)) {
+                        gotPriority[bunk] = true;
+                    }
                 });
-            }
+            });
         });
 
         // =================================================================
