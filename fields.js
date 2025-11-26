@@ -222,7 +222,8 @@ function initFieldsTab() {
                 font-size: 0.86rem;
             }
         </style>
-    ";
+        `;
+
 
     fieldsListEl = document.getElementById("fields-master-list");
     detailPaneEl = document.getElementById("fields-detail-pane");
