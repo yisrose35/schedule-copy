@@ -1435,6 +1435,9 @@
         };
 
         const historicalCounts = {};
+                // DEBUG: what the generator thinks the long-term usage is
+        window.debugHistoricalCounts = historicalCounts;
+
         const specialActivityNames = [];
 
         try {
