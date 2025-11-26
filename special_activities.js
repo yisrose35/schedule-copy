@@ -1,21 +1,18 @@
-
 // =================================================================
 // special_activities.js
 //
 // UPDATED (CRITICAL SAVE FIX):
-// - Removed the local `specialActivities = []` variable.
-// - Removed the internal `loadData()` and `saveData()` functions.
-// - `initSpecialActivitiesTab` now gets data from
-//   `window.getGlobalSpecialActivities()`.
-// - All functions that need to save (like `addSpecial`,
-//   `renderDetailPane`, etc.) now call
-//   `window.saveGlobalSpecialActivities(specialActivities)`
-//   to safely save the data via app1.js.
+// - Uses window.getGlobalSpecialActivities() / window.saveGlobalSpecialActivities()
+//   so data is owned by app1.js.
 //
 // UPDATED (BUG FIX):
-// - `renderAllowedBunksControls`:
-//   - **FIXED BUG:** Clicking an enabled division chip (in "All" or
-//     "Specific" mode) will now correctly disable (unchoose) it.
+// - renderAllowedBunksControls:
+//   - Clicking an enabled division chip will now correctly disable it.
+//
+// UPDATED (UI THEME):
+// - Matches Modern Pro Camp theme used in Fields:
+//   • setup-grid + setup-card shell
+//   • Emerald master-list + detail-pane styling
 // =================================================================
 
 (function() {
@@ -35,7 +32,7 @@ function initSpecialActivitiesTab() {
     const container = document.getElementById("special_activities");
     if (!container) return;
     
-    // --- UPDATED: Load data from app1.js ---
+    // --- Load data from app1.js ---
     specialActivities = window.getGlobalSpecialActivities?.() || [];
     
     // Ensure all fields have the new structure (still good to do)
@@ -45,64 +42,121 @@ function initSpecialActivitiesTab() {
         s.sharableWith = s.sharableWith || { type: 'not_sharable', divisions: [] };
         s.limitUsage = s.limitUsage || { enabled: false, divisions: {} };
     });
-    // --- END UPDATE ---
 
-    // Create the new UI structure
+    // --- UI shell matching Fields theme ---
     container.innerHTML = `
-        <div style="display: flex; flex-wrap: wrap; gap: 20px;">
-            
-            <div style="flex: 1; min-width: 300px;">
-                
-                <h3>Add New Special Activity</h3>
-                <div style="display: flex; gap: 10px; margin-bottom: 20px;">
-                    <input id="new-special-input" placeholder="New Special (e.g., Canteen)" style="flex: 1;">
-                    <button id="add-special-btn">Add Special</button>
+        <div class="setup-grid">
+            <section class="setup-card setup-card-wide">
+                <div class="setup-card-header">
+                    <span class="setup-step-pill">Specials</span>
+                    <div class="setup-card-text">
+                        <h3>Special Activities &amp; Rotations</h3>
+                        <p>
+                            Add your <strong>canteen, trips, electives, lakes, buses</strong> and more.
+                            Then control which <strong>divisions/bunks</strong> can use each special,
+                            whether it can be <strong>shared</strong>, and any <strong>time rules</strong>.
+                        </p>
+                    </div>
                 </div>
 
-                <h3>All Special Activities</h3>
-                <div id="specials-master-list" class="master-list"></div>
-            </div>
+                <div style="display:flex; flex-wrap:wrap; gap:20px; margin-top:8px;">
+                    <!-- LEFT: Specials list + add -->
+                    <div style="flex:1; min-width:260px;">
+                        <div class="setup-subtitle">All Special Activities</div>
+                        <p style="font-size:0.8rem; color:#6b7280; margin-top:4px;">
+                            Add each special once. Click a special to open its rules.
+                            Toggle availability or rename directly from this list.
+                        </p>
 
-            <div style="flex: 2; min-width: 400px; position: sticky; top: 20px;">
-                <h3>Details</h3>
-                <div id="specials-detail-pane" class="detail-pane">
-                    <p class="muted">Select a special activity from the left to edit its details.</p>
+                        <div class="setup-field-row" style="margin-top:10px;">
+                            <input id="new-special-input"
+                                   placeholder="New Special (e.g., Canteen)">
+                            <button id="add-special-btn">Add Special</button>
+                        </div>
+
+                        <div id="specials-master-list" class="master-list"
+                             style="margin-top:10px; max-height:440px; overflow:auto;"></div>
+                    </div>
+
+                    <!-- RIGHT: Detail pane -->
+                    <div style="flex:1.3; min-width:320px;">
+                        <div class="setup-subtitle">Special Details</div>
+                        <div id="specials-detail-pane" class="detail-pane"
+                             style="margin-top:8px; min-height:360px;">
+                            <p class="muted">
+                                Select a special from the left to edit its details:
+                                <br>• Toggle if it’s <strong>available</strong> to the scheduler
+                                <br>• Choose which <strong>divisions/bunks</strong> can use it
+                                <br>• Decide if it can be <strong>shared</strong> across divisions
+                                <br>• Add <strong>time rules</strong> (e.g. afternoons only)
+                            </p>
+                        </div>
+                    </div>
                 </div>
-            </div>
+            </section>
         </div>
         
         <style>
+            /* Master list container – Modern Pro Camp card shell (same as Fields) */
+            .master-list {
+                border-radius: 18px;
+                border: 1px solid #E5E7EB;
+                background: #F7F9FA;
+                padding: 8px 6px;
+                box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+            }
+
             .master-list .list-item {
-                padding: 12px 10px;
-                border: 1px solid #ddd;
-                border-radius: 5px;
-                margin-bottom: 5px;
+                padding: 10px 10px;
+                border-radius: 14px;
+                margin-bottom: 6px;
                 cursor: pointer;
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                background: #fff;
+                background: #FFFFFF;
+                border: 1px solid #E5E7EB;
+                box-shadow: 0 4px 10px rgba(15, 23, 42, 0.05);
+                transition:
+                    background 0.15s ease,
+                    box-shadow 0.15s ease,
+                    transform 0.08s ease,
+                    border-color 0.15s ease;
             }
             .master-list .list-item:hover {
-                background: #f9f9f9;
+                background: #F3F4F6;
+                box-shadow: 0 8px 18px rgba(15, 23, 42, 0.10);
+                transform: translateY(-1px);
             }
             .master-list .list-item.selected {
-                background: #e7f3ff;
-                border-color: #007bff;
+                background: radial-gradient(circle at top left, #ECFDF5 0, #FFFFFF 70%);
+                border-color: #00C896;
+                box-shadow: 0 0 0 1px rgba(0, 200, 150, 0.55);
                 font-weight: 600;
             }
             .master-list .list-item-name {
                 flex-grow: 1;
+                font-size: 0.88rem;
+                font-weight: 500;
+                color: #111827;
             }
             .master-list .list-item-toggle {
                 margin-left: 10px;
             }
+
+            /* Detail pane – aligned with Fields detail pane theme */
             .detail-pane {
-                border: 1px solid #ccc;
-                border-radius: 8px;
-                padding: 20px;
-                background: #fdfdfd;
-                min-height: 400px;
+                border-radius: 18px;
+                border: 1px solid #E5E7EB;
+                padding: 18px 20px;
+                background: linear-gradient(135deg, #F7F9FA 0%, #FFFFFF 55%, #F7F9FA 100%);
+                min-height: 360px;
+                box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
+            }
+
+            .muted {
+                color: #6B7280;
+                font-size: 0.86rem;
             }
         </style>
     `;
@@ -120,9 +174,6 @@ function initSpecialActivitiesTab() {
     renderMasterLists();
     renderDetailPane();
 }
-
-// --- REMOVED loadData() function ---
-// --- REMOVED saveData() function ---
 
 /**
  * Renders the left-hand list of specials
@@ -152,7 +203,7 @@ function createMasterListItem(type, item) {
     el.onclick = () => {
         selectedItemId = id;
         renderMasterLists(); // Re-render lists to update selection
-        renderDetailPane(); // Re-render detail pane
+        renderDetailPane();  // Re-render detail pane
     };
 
     const nameEl = document.createElement('span');
@@ -172,8 +223,8 @@ function createMasterListItem(type, item) {
     cb.onchange = (e) => { 
         e.stopPropagation();
         item.available = cb.checked; 
-        window.saveGlobalSpecialActivities(specialActivities); // --- UPDATED ---
-        renderDetailPane(); // Re-render details if this item is selected
+        window.saveGlobalSpecialActivities(specialActivities);
+        renderDetailPane(); 
     };
     
     const sl = document.createElement("span"); 
@@ -204,7 +255,6 @@ function renderDetailPane() {
         return;
     }
     
-    // Build the inner HTML for the pane
     detailPaneEl.innerHTML = ""; // Clear
     
     // --- 1. Name & Delete ---
@@ -212,31 +262,48 @@ function renderDetailPane() {
     header.style.display = 'flex';
     header.style.justifyContent = 'space-between';
     header.style.alignItems = 'center';
-    header.style.borderBottom = '2px solid #eee';
+    header.style.borderBottom = '2px solid #E5E7EB';
     header.style.paddingBottom = '10px';
     header.style.marginBottom = '15px';
+    header.style.columnGap = '12px';
     
     const title = document.createElement('h3');
     title.style.margin = '0';
+    title.style.fontSize = '1rem';
+    title.style.fontWeight = '600';
+    title.style.color = '#111827';
     title.textContent = item.name;
     // Allow renaming
     makeEditable(title, newName => {
         if (!newName.trim()) return;
         item.name = newName;
         selectedItemId = `${type}-${newName}`; // Update selected ID
-        window.saveGlobalSpecialActivities(specialActivities); // --- UPDATED ---
-        renderMasterLists(); // Re-render lists to show new name
+        window.saveGlobalSpecialActivities(specialActivities);
+        renderMasterLists();
     });
     
     const deleteBtn = document.createElement('button');
     deleteBtn.textContent = 'Delete';
-    deleteBtn.style.background = '#c0392b';
-    deleteBtn.style.color = 'white';
+    deleteBtn.style.background = '#FFFFFF';
+    deleteBtn.style.color = '#DC2626';
+    deleteBtn.style.border = '1px solid #FECACA';
+    deleteBtn.style.padding = '6px 14px';
+    deleteBtn.style.borderRadius = '999px';
+    deleteBtn.style.cursor = 'pointer';
+    deleteBtn.style.fontWeight = '600';
+    deleteBtn.style.fontSize = '0.85rem';
+    deleteBtn.style.boxShadow = '0 4px 10px rgba(220,38,38,0.18)';
+    deleteBtn.onmouseenter = () => {
+        deleteBtn.style.background = '#FEE2E2';
+    };
+    deleteBtn.onmouseleave = () => {
+        deleteBtn.style.background = '#FFFFFF';
+    };
     deleteBtn.onclick = () => {
         if (confirm(`Are you sure you want to delete "${item.name}"?`)) {
             specialActivities = specialActivities.filter(s => s.name !== item.name);
             selectedItemId = null;
-            window.saveGlobalSpecialActivities(specialActivities); // --- UPDATED ---
+            window.saveGlobalSpecialActivities(specialActivities);
             renderMasterLists();
             renderDetailPane();
         }
@@ -247,19 +314,28 @@ function renderDetailPane() {
     
     // --- 2. Master Toggle (read-only, controlled from list) ---
     const masterToggle = document.createElement('div');
-    masterToggle.style.background = item.available ? '#e8f5e9' : '#fbe9e7';
-    masterToggle.style.padding = '10px';
-    masterToggle.style.borderRadius = '5px';
+    masterToggle.style.background = item.available ? '#ECFDF5' : '#FEF2F2';
+    masterToggle.style.padding = '8px 12px';
+    masterToggle.style.borderRadius = '12px';
     masterToggle.style.marginBottom = '15px';
-    masterToggle.textContent = `This item is globally ${item.available ? 'AVAILABLE' : 'UNAVAILABLE'}. (Toggle in list view)`;
+    masterToggle.style.fontSize = '0.8rem';
+    masterToggle.style.border = '1px solid ' + (item.available ? '#BBF7D0' : '#FECACA');
+    masterToggle.innerHTML = `
+        <span>
+            This special is currently 
+            <strong>${item.available ? 'AVAILABLE' : 'UNAVAILABLE'}</strong>
+            to the scheduler.
+        </span>
+        <span style="opacity:0.75; margin-left:8px;">(Toggle in the list on the left)</span>
+    `;
     detailPaneEl.appendChild(masterToggle);
     
     // --- 3. Sharable, Limit, and Time Rules ---
-    const onSave = () => window.saveGlobalSpecialActivities(specialActivities); // --- UPDATED ---
+    const onSave = () => window.saveGlobalSpecialActivities(specialActivities);
     const onRerender = renderDetailPane;
     
     const sharableControls = renderSharableControls(item, onSave, onRerender);
-    sharableControls.style.borderTop = '1px solid #eee';
+    sharableControls.style.borderTop = '1px solid #E5E7EB';
     sharableControls.style.paddingTop = '15px';
     sharableControls.style.marginTop = '15px';
     detailPaneEl.appendChild(sharableControls);
@@ -270,7 +346,7 @@ function renderDetailPane() {
     const timeRuleControls = renderTimeRulesUI(item, onSave, onRerender);
     timeRuleControls.style.marginTop = "10px";
     timeRuleControls.style.paddingTop = "10px";
-    timeRuleControls.style.borderTop = "1px solid #eee";
+    timeRuleControls.style.borderTop = "1px solid #E5E7EB";
     detailPaneEl.appendChild(timeRuleControls);
 }
 
@@ -290,7 +366,7 @@ function addSpecial() {
         timeRules: []
     });
     addSpecialInput.value = "";
-    window.saveGlobalSpecialActivities(specialActivities); // --- UPDATED ---
+    window.saveGlobalSpecialActivities(specialActivities);
     selectedItemId = `special-${n}`; // Auto-select new item
     renderMasterLists();
     renderDetailPane();
@@ -523,7 +599,7 @@ function createChipPicker(allItems, selectedItems, onToggle) {
 }
 
 // =================================================================
-// ===== NEW: Allowed Bunks Controls (replaces LimitUsage) =====
+// ===== Allowed Bunks Controls (replaces LimitUsage) =====
 // =================================================================
 
 function renderAllowedBunksControls(item, onSave, onRerender) {
@@ -600,26 +676,22 @@ function renderAllowedBunksControls(item, onSave, onRerender) {
             // Division-level chip
             const divChip = createLimitChip(divName, isAllowed, true);
             
-            // --- THIS IS THE FIX ---
+            // Correct enable/disable behavior
             divChip.onclick = () => {
                 if (isAllowed) {
-                    // If it IS allowed (in "All" or "Specific" mode),
-                    // clicking it again will disable (unchoose) it.
+                    // If it IS allowed, clicking it again disables it
                     delete rules.divisions[divName];
                 } else {
-                    // If it's NOT allowed, clicking it
-                    // enables it for ALL bunks in that division
+                    // If it's NOT allowed, clicking enables it for ALL bunks in that division
                     rules.divisions[divName] = []; // Empty array = all bunks
                 }
                 onSave();
                 onRerender();
             };
-            // --- END FIX ---
             
             divWrapper.appendChild(divChip);
 
-            // Bunk-level chips (if in bunk-specific mode, i.e., array exists)
-            // --- THIS LOGIC IS NOW CORRECT, NO CHANGE NEEDED ---
+            // Bunk-level chips (if division is allowed)
             if (isAllowed) {
                 const bunkList = document.createElement("div");
                 bunkList.style.display = "flex";
