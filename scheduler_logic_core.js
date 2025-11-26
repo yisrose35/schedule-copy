@@ -698,6 +698,10 @@
 
             const cat1 = getFairnessCategoryForSmartLabel(main1);
             const cat2 = getFairnessCategoryForSmartLabel(main2);
+    // Track, per Smart Tile group, how many times each bunk has gotten
+    // the "generated" side (e.g., Special Activity) within THIS group.
+    const groupGeneratedCount = {};
+    bunks.forEach(b => { groupGeneratedCount[b] = 0; });
 
             // Helper: schedule a specific activity label inside a Smart block
             const attemptSchedule = (bunk, activity, block) => {
