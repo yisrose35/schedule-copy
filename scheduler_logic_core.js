@@ -1,15 +1,12 @@
 // ============================================================================
 // scheduler_logic_core.js
 //
-// UPDATED (Smart Tiles v14 - Dual-Layer Fairness - FINAL):
-// - LAYER 1 (Overall): Bunks are ranked by TOTAL special usage to determine
-//   priority. Tier N must be filled before Tier N+1.
-// - LAYER 2 (Specific): When assigning a "Special Activity", the system sorts
-//   available options (e.g., Gameroom vs Canteen) based on the bunk's SPECIFIC
-//   history to ensure variety.
-// - TIE-BREAKING: Random shuffle within tiers.
-// - GRID FIX: Atomic intervals for clean time rows.
-// - VIRTUAL FIX: Infinite capacity for undefined activities like "Swim".
+// UPDATED (Smart Tiles v15 - Strict Catch-Up Enforcer):
+// - STRICT LEVELING: Calculates the Division's Minimum Score for the Priority Activity.
+// - BLOCKING: Any bunk with a score > Minimum Score is BLOCKED from the Priority Activity.
+//   They are forced into Secondary/Fallback slots immediately.
+// - PRIORITY: Only bunks with Score === Minimum Score are candidates for Priority slots.
+// - This ensures no bunk can advance to Level N+1 until ALL bunks are at Level N.
 // ============================================================================
 
 (function() {
@@ -575,7 +572,7 @@
         });
 
         // =================================================================
-        // PASS 2.5 — SMART TILE LOGIC (Strict Tiered Leveling)
+        // PASS 2.5 — SMART TILE LOGIC (Strict Catch-Up Enforcer)
         // =================================================================
         Object.entries(smartTileGroups).forEach(([key, blocks]) => {
             blocks.sort((a, b) => a.startTime - b.startTime);
@@ -592,13 +589,12 @@
             const priorityAct = (fallbackFor === main2) ? main2 : main1;
             const secondaryAct = (priorityAct === main1) ? main2 : main1;
 
-            // --- LAYER 1: OVERALL FAIRNESS SCORE ---
+            // --- 1. CALCULATE SCORES ---
             const bunkScores = {};
             const isSpecialCategory = (priorityAct === 'Special' || priorityAct === 'Special Activity');
             
             let relevantActivities = [];
             if (isSpecialCategory) {
-                // Count ALL known specials + "Special Activity" generic
                 relevantActivities = allActivities.filter(a => a.type === 'special').map(a => a.field);
                 relevantActivities.push('Special Activity'); 
             } else {
@@ -614,20 +610,31 @@
                 bunkScores[b] = score;
             });
 
-            // --- TIERING & SORTING ---
-            const tiers = {};
+            // --- 2. DETERMINE MINIMUM SCORE ("The Floor") ---
+            let minScore = Infinity;
             bunks.forEach(b => {
-                const s = bunkScores[b];
-                if(!tiers[s]) tiers[s] = [];
-                tiers[s].push(b);
+                if (bunkScores[b] < minScore) minScore = bunkScores[b];
             });
 
-            const sortedTierScores = Object.keys(tiers).map(Number).sort((a,b)=>a-b);
+            // --- 3. SEPARATE INTO "CATCH-UP" vs "WAIT" GROUPS ---
+            const catchUpGroup = [];
+            const waitGroup = [];
 
-            // --- EXECUTION ---
+            bunks.forEach(b => {
+                if (bunkScores[b] === minScore) {
+                    catchUpGroup.push(b);
+                } else {
+                    waitGroup.push(b); // Score > MinScore -> Blocked from Priority
+                }
+            });
+
+            shuffleArray(catchUpGroup); // Free Game for ties within floor
+            shuffleArray(waitGroup);    // Randomize wait group for fairness in secondary slots
+
             const b1 = blocks[0];
             const b2 = blocks[1]; 
 
+            // Helper: Attempt schedule logic
             const attemptSchedule = (bunk, block, activity) => {
                 const normAct = String(activity).trim();
                 let finalField = normAct;
@@ -642,11 +649,8 @@
                     else return false;
                 } 
                 else if (normAct === 'Special' || normAct === 'Special Activity') {
-                     // --- LAYER 2: SPECIFIC ACTIVITY VARIETY ---
+                     // Layer 2: Specific Variety
                      const candidates = allActivities.filter(a => a.type === 'special');
-                     
-                     // Sort candidates by SPECIFIC history for THIS bunk
-                     // If Bunk 1 has done Canteen(1) and Gameroom(0), Gameroom comes first
                      candidates.sort((a, b) => {
                          const countA = (historicalCounts[bunk]?.[a.field] || 0);
                          const countB = (historicalCounts[bunk]?.[b.field] || 0);
@@ -690,31 +694,49 @@
                 return false;
             };
 
-            sortedTierScores.forEach(score => {
-                const tierBunks = tiers[score];
-                shuffleArray(tierBunks); // Random Tie-Breaking
-
-                tierBunks.forEach(bunk => {
-                    // Try Block 1 for Priority
-                    if (attemptSchedule(bunk, b1, priorityAct)) {
-                        if(b2) {
-                            if(!attemptSchedule(bunk, b2, secondaryAct)) attemptSchedule(bunk, b2, fallbackAct);
-                        }
-                    } 
-                    // Try Block 2 for Priority (if b2 exists)
-                    else if (b2 && attemptSchedule(bunk, b2, priorityAct)) {
-                        if(!attemptSchedule(bunk, b1, secondaryAct)) attemptSchedule(bunk, b1, fallbackAct);
-                    } 
-                    // No Priority Slot available -> Fallback
-                    else {
-                        if(b2) {
-                            attemptSchedule(bunk, b2, fallbackAct);
-                            if(!attemptSchedule(bunk, b1, secondaryAct)) attemptSchedule(bunk, b1, fallbackAct);
-                        } else {
-                            if(!attemptSchedule(bunk, b1, secondaryAct)) attemptSchedule(bunk, b1, fallbackAct);
-                        }
+            // --- EXECUTION: CATCH-UP GROUP ---
+            // Only these bunks get to try for Priority Activity
+            catchUpGroup.forEach(bunk => {
+                // Try Block 1 for Priority
+                if (attemptSchedule(bunk, b1, priorityAct)) {
+                    if(b2) {
+                        if(!attemptSchedule(bunk, b2, secondaryAct)) attemptSchedule(bunk, b2, fallbackAct);
                     }
-                });
+                } 
+                // Try Block 2 for Priority (if b2 exists)
+                else if (b2 && attemptSchedule(bunk, b2, priorityAct)) {
+                    if(!attemptSchedule(bunk, b1, secondaryAct)) attemptSchedule(bunk, b1, fallbackAct);
+                } 
+                // No Priority Slot available -> Fallback
+                else {
+                    if(b2) {
+                        attemptSchedule(bunk, b2, fallbackAct);
+                        if(!attemptSchedule(bunk, b1, secondaryAct)) attemptSchedule(bunk, b1, fallbackAct);
+                    } else {
+                        if(!attemptSchedule(bunk, b1, secondaryAct)) attemptSchedule(bunk, b1, fallbackAct);
+                    }
+                }
+            });
+
+            // --- EXECUTION: WAIT GROUP ---
+            // These bunks are FORCED to skip Priority Activity (to let others catch up)
+            waitGroup.forEach(bunk => {
+                // Skip Priority. Go straight to Secondary/Fallback logic.
+                if(b2) {
+                    // Put Secondary in B1, Fallback in B2 (or vice versa, doesn't matter much, just fill)
+                    // Try Secondary in B1 first
+                    if(attemptSchedule(bunk, b1, secondaryAct)) {
+                        attemptSchedule(bunk, b2, fallbackAct);
+                    } else {
+                        // If Secondary B1 fail, try Fallback B1
+                        attemptSchedule(bunk, b1, fallbackAct);
+                        // Try Secondary B2
+                        if(!attemptSchedule(bunk, b2, secondaryAct)) attemptSchedule(bunk, b2, fallbackAct);
+                    }
+                } else {
+                    // Single block - force Secondary or Fallback
+                    if(!attemptSchedule(bunk, b1, secondaryAct)) attemptSchedule(bunk, b1, fallbackAct);
+                }
             });
         });
 
