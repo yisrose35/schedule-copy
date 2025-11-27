@@ -1592,7 +1592,34 @@
                 (divisions[divName].bunks || [])
                     .filter(bunkName => !overrides.bunks.includes(bunkName));
         }
+// =====================================================================
+    // MISSING HELPER FUNCTIONS (Add these to the bottom of your file)
+    // =====================================================================
 
+    function pairRoundRobin(teams) {
+        // Create a copy to avoid modifying the original array
+        const t = teams.slice();
+        
+        // If odd number of teams, add a BYE
+        if (t.length % 2 !== 0) t.push("BYE");
+        
+        const pairs = [];
+        const half = t.length / 2;
+        
+        // Simple pairing strategy: 
+        // 1st vs Last, 2nd vs 2nd-to-Last, etc.
+        for (let i = 0; i < half; i++) {
+            pairs.push([t[i], t[t.length - 1 - i]]);
+        }
+        return pairs;
+    }
+
+    function shuffleArray(array) {
+        for (let i = array.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [array[i], array[j]] = [array[j], array[i]];
+        }
+    }
         function parseTimeRule(rule) {
             if (!rule || !rule.type) return null;
             if (typeof rule.startMin === "number" &&
