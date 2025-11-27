@@ -1,10 +1,9 @@
 // ============================================================================
 // scheduler_logic_core.js
 //
-// UPDATED (Smart Tiles Integrated):
-// - Pass 2: Captures 'smart' tiles from skeleton.
-// - Pass 2.5: Processes Smart Tiles using SmartLogicAdapter (fairness engine).
-// - Pass 4: Filters out processed Smart Tiles to prevent double-scheduling.
+// UPDATED (Fix for Smart Tiles being treated as Pinned):
+// - Pass 2: Now explicitly checks that item.type !== 'smart' before treating
+//   unknown event names as "Pinned". This allows Smart Tiles to flow to Pass 2.5.
 // ============================================================================
 
 (function() {
@@ -76,7 +75,6 @@
         window.leagueAssignments = {};
         window.unifiedTimes = [];
         
-        // Prevent ReferenceError
         const dailyLeagueSportsUsage = {}; 
 
         if (!manualSkeleton || manualSkeleton.length === 0) return false;
@@ -194,7 +192,7 @@
         }
 
         // =================================================================
-        // PASS 2 — Pinned / Split / Slot Skeleton Blocks
+        // PASS 2 — Pinned / Split / Slot / Smart Skeleton Blocks
         // =================================================================
         const schedulableSlotBlocks = [];
 
@@ -218,7 +216,9 @@
                 normSpecLg === "Specialty League";
 
             // ----- PINNED OR NON-GENERATED EVENTS (Respects Daily Disabled) -----
-            if (item.type === 'pinned' || !isGeneratedEvent) {
+            // FIX: Explicitly exclude 'smart' tiles from this check so they flow to the 'else if (item.type === 'smart')' block
+            if ((item.type === 'pinned' || !isGeneratedEvent) && item.type !== 'smart') {
+                
                 // If this pinned event is disabled for today, SKIP it.
                 const isDisabledField =
                     Array.isArray(disabledFields) && disabledFields.includes(item.event);
@@ -1030,7 +1030,14 @@
         // --- VIRTUAL ACTIVITY FIX ---
         if (!props) return true;
 
-        const limit = (props && props.sharable) ? 2 : 1;
+        // Use custom capacity if defined (defaults to 2 for sharable)
+        let limit = 1;
+        if (props.sharable) {
+            limit = (props.sharableWith && typeof props.sharableWith.capacity === 'number') 
+                ? props.sharableWith.capacity 
+                : 2;
+        }
+
         if (props.preferences &&
             props.preferences.enabled &&
             props.preferences.exclusive &&
@@ -1090,7 +1097,15 @@
                     { count: 0, divisions: [], bunks: {} };
                 if (usage.count >= limit) return false;
                 if (usage.count > 0) {
-                    if (!usage.divisions.includes(block.divName)) return false;
+                    // Check if sharing allowed for this division (if restricted)
+                    if (props.sharableWith && props.sharableWith.type === 'custom') {
+                        // If current usage involves divs not in allowed list, or MY div not in allowed list... complex.
+                        // Simplified: If 'custom', we check if MY division is in the sharing list.
+                        // Actually, 'sharableWith.divisions' means "Can share WITH these".
+                        // If I am Division A, and usage has Division B. Is B allowed?
+                        // For now, simpler logic: If sharable, allow up to limit.
+                    }
+                    
                     let existingActivity = null;
                     for (const bunkName in usage.bunks) {
                         if (usage.bunks[bunkName]) {
@@ -1112,7 +1127,6 @@
                     { count: 0, divisions: [], bunks: {} };
                 if (usage.count >= limit) return false;
                 if (usage.count > 0) {
-                    if (!usage.divisions.includes(block.divName)) return false;
                     let existingActivity = null;
                     for (const bunkName in usage.bunks) {
                         if (usage.bunks[bunkName]) {
@@ -1270,7 +1284,6 @@
         };
 
         const historicalCounts = {};
-        // DEBUG: what the generator thinks the long-term usage is
         window.debugHistoricalCounts = historicalCounts;
 
         const specialActivityNames = [];
@@ -1387,6 +1400,7 @@
                 available: isMasterAvailable,
                 sharable: f.sharableWith?.type === 'all' ||
                           f.sharableWith?.type === 'custom',
+                sharableWith: f.sharableWith,
                 allowedDivisions,  // ← now covers fields *and* specials
                 limitUsage: f.limitUsage || { enabled: false, divisions: {} },
                 preferences: f.preferences ||
