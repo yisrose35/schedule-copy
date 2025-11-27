@@ -602,17 +602,12 @@ function applySmartTileOverridesForToday() {
   });
 
   // 4. Run SmartTilesEngine
-  let results = [];
-  if (configs.length > 0 && window.SmartTilesEngine) {
-   // 4. Run SmartTilesEngine
 let results = [];
 if (configs.length > 0 && window.SmartTilesEngine) {
-  const result = window.SmartTilesEngine.runSmartTilesForDay(configs, smartTileHistory);
-  results = result.overrides || [];
-  smartTileHistory = result.updatedHistory; // ↩ critical for fairness
+  // SmartTilesEngine.run mutates smartTileHistory in place
+  results = window.SmartTilesEngine.run(configs, masterSettings, smartTileHistory) || [];
 }
 
-  }
 
   // 5. Clean items using availability & division rules
   const clean = [];
