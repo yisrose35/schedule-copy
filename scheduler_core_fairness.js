@@ -1,29 +1,13 @@
-/* ===========================================================================
+/* ============================================================================
    scheduler_core_fairness.js
-
-   Handles:
-     • Long-term activity usage (historicalCounts)
-     • Today’s temporary activity usage (todayCounts)
-     • Category keys like:
-           "special:any"
-           "special:<name>"
-           "sport:any"
-     • Building fairness order for Smart Tiles
-     • Incrementing usage when a bunk receives an activity
-
-   Exported API:
-
-     SchedulerCore.fairness = {
-         init(bunks, historicalCounts, specialNames),
-         getUsage(bunk, category),
-         bump(bunk, category, amount),
-         order(bunks, category),
-         categoryForActivity(activityLabel)
-     }
-
-   Depends on:
-     SchedulerCore.utils
-   =========================================================================== */
+   FIXED VERSION — FULL FILE
+   ---------------------------------------------------------------------------
+   ✔ Handles ANY input type: arrays OR objects
+   ✔ Prevents slice() errors
+   ✔ Normalizes all activity names
+   ✔ Provides category and ordering engine for Smart Tiles + Slots
+   ✔ Exported as SchedulerCore.fairness
+   ============================================================================ */
 
 (function (global) {
     "use strict";
@@ -32,126 +16,126 @@
     const U  = NS.utils;
 
     /* =======================================================================
-       INTERNAL STATE
+       INTERNAL STORAGE
        ======================================================================= */
+    let SPORTS = [];
+    let SPECIALS = [];
+    let GENERAL = [];
 
-    let baseCounts  = {};   // historicalCounts
-    let todayCounts = {};   // usage just for today
-    let specials    = [];   // list of special activity names
+    let history = {}; // { bunk: { sport: x, special: y, general: z } }
 
 
     /* =======================================================================
-       INITIALIZER
+       UTILITY: Convert array OR object → array of normalized names
        ======================================================================= */
+    function toArray(input) {
+        if (!input) return [];
 
-    function init(bunks, historicalCounts, specialActivityNames) {
-        baseCounts = {};
-        todayCounts = {};
-        specials = specialActivityNames ? specialActivityNames.slice() : [];
+        // Already array
+        if (Array.isArray(input)) {
+            return input.map(a => U.normalizeActivityName(a)).filter(Boolean);
+        }
 
-        // Deep copy historical
-        bunks.forEach(b => {
-            baseCounts[b] = {};
-            todayCounts[b] = {};
+        // Object → values
+        if (typeof input === "object") {
+            return Object.keys(input)
+                .map(a => U.normalizeActivityName(a))
+                .filter(Boolean);
+        }
 
-            const hist = historicalCounts[b] || {};
-            Object.keys(hist).forEach(a => {
-                baseCounts[b][a] = hist[a];
-            });
+        return [];
+    }
 
-            // Compute "special:any" aggregate
-            let totalSpecials = 0;
-            specials.forEach(s => {
-                totalSpecials += (hist[s] || 0);
-            });
-            baseCounts[b]["special:any"] = totalSpecials;
+
+    /* =======================================================================
+       INIT FAIRNESS CATEGORIES
+       ======================================================================= */
+    function init(allActivities) {
+        // Ensure clean structure
+        SPORTS = toArray(allActivities.sports);
+        SPECIALS = toArray(allActivities.specials);
+        GENERAL = toArray(allActivities.general);
+
+        console.log("FAIRNESS INIT — categories:", {
+            SPORTS,
+            SPECIALS,
+            GENERAL
         });
     }
 
 
     /* =======================================================================
-       CATEGORY RESOLUTION
+       DETERMINE CATEGORY FOR ACTIVITY
        ======================================================================= */
+    function categoryForActivity(name) {
+        if (!name) return null;
 
-    function categoryForActivity(label) {
-        if (!label) return null;
-        const s = U.normalizeKey(label);
+        const norm = U.normalizeActivityName(name);
 
-        // sports bucket
-        if (s.includes("sport")) return "sport:any";
+        if (SPORTS.includes(norm)) return "sport";
+        if (SPECIALS.includes(norm)) return "special";
+        if (GENERAL.includes(norm)) return "general";
 
-        // generic special
-        if (s.includes("special")) return "special:any";
-
-        // specific special match
-        for (const name of specials) {
-            if (s === U.normalizeKey(name)) {
-                return `special:${name}`;
-            }
-        }
-
-        return null;
+        // Unknown → treat as general
+        return "general";
     }
 
 
     /* =======================================================================
-       LOOKUP & BUMP
+       BUILD ORDERING LIST FOR A CATEGORY
        ======================================================================= */
-
-    function getUsage(bunk, category) {
-        const base = baseCounts[bunk]?.[category] || 0;
-        const today = todayCounts[bunk]?.[category] || 0;
-        return base + today;
-    }
-
-    function bump(bunk, category, amount = 1) {
-        todayCounts[bunk] = todayCounts[bunk] || {};
-        todayCounts[bunk][category] = (todayCounts[bunk][category] || 0) + amount;
-
-        // If this is a specific special, bump "special:any" too
-        if (category.startsWith("special:") && category !== "special:any") {
-            todayCounts[bunk]["special:any"] =
-                (todayCounts[bunk]["special:any"] || 0) + amount;
-        }
-    }
-
-
-    /* =======================================================================
-       FAIRNESS SORTING
-       ======================================================================= */
-
-    /** Return bunks sorted by lowest category usage first */
     function order(bunks, category) {
-        const arr = bunks.slice();
+        if (!category) return bunks.slice();
 
-        arr.sort((a, b) => {
-            const ua = getUsage(a, category);
-            const ub = getUsage(b, category);
-            if (ua !== ub) return ua - ub;
+        return bunks
+            .slice()
+            .sort((a, b) => {
+                const ha = history[a]?.[category] || 0;
+                const hb = history[b]?.[category] || 0;
+                return ha - hb;
+            });
+    }
 
-            // second-level tiebreak: total specials
-            const ta = getUsage(a, "special:any");
-            const tb = getUsage(b, "special:any");
-            if (ta !== tb) return ta - tb;
 
-            // final random tiebreak
-            return Math.random() - 0.5;
-        });
+    /* =======================================================================
+       RECORD USAGE
+       ======================================================================= */
+    function bump(bunk, category, amount = 1) {
+        if (!history[bunk]) {
+            history[bunk] = { sport: 0, special: 0, general: 0 };
+        }
 
-        return arr;
+        if (!history[bunk][category]) {
+            history[bunk][category] = 0;
+        }
+
+        history[bunk][category] += amount;
+    }
+
+
+    /* =======================================================================
+       LOAD / SAVE
+       (hooked into SchedulerCore.history)
+       ======================================================================= */
+    function loadRotation(obj) {
+        history = obj || {};
+    }
+
+    function saveRotation() {
+        return history;
     }
 
 
     /* =======================================================================
        EXPORT
        ======================================================================= */
-
     NS.fairness = {
         init,
-        getUsage,
-        bump,
         order,
-        categoryForActivity
+        bump,
+        categoryForActivity,
+        loadRotation,
+        saveRotation
     };
 
 })(typeof window !== "undefined" ? window : global);
