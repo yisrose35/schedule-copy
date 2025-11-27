@@ -638,15 +638,14 @@ function applySmartTileOverridesForToday() {
     });
   });
 
-  // 4. Run SmartTilesEngine (v4) – note: API is `.run`, not `.runSmartTilesForDay`
-  let results = [];
-  if (
-    configs.length > 0 &&
-    window.SmartTilesEngine &&
-    typeof window.SmartTilesEngine.run === "function"
-  ) {
-    results = window.SmartTilesEngine.run(configs, masterSettings, smartTileHistory) || [];
-  }
+  // 4. Run SmartTilesEngine
+let results = [];
+if (configs.length > 0 && window.SmartTilesEngine) {
+  const result = window.SmartTilesEngine.runSmartTilesForDay(configs, smartTileHistory);
+  results = result.overrides || [];
+  smartTileHistory = result.updatedHistory; // ✅ carries over counts day-to-day
+}
+
 
   // 5. Clean items using availability & division rules
   const clean = [];
