@@ -134,50 +134,70 @@
   // --------------------------------------------------------------------------
 
   function assignSpecificSpecials(bunkNames, specialsPool, history) {
-    const assignments = {};
-    const remaining = new Set(bunkNames);
+  const assignments = {};
+  const remaining = new Set(bunkNames);
 
-    if (!specialsPool || specialsPool.length === 0) {
-      bunkNames.forEach((b) => (assignments[b] = null));
-      return assignments;
+  if (!specialsPool || specialsPool.length === 0) {
+    bunkNames.forEach(b => assignments[b] = null);
+    return assignments;
+  }
+
+  // Track global usage of each special across ALL bunks
+  const globalCounts = {};
+  specialsPool.forEach(sp => globalCounts[sp] = 0);
+
+  // Count historical totals globally
+  for (const bunk in history.byBunk) {
+    const h = history.byBunk[bunk];
+    for (const sp of specialsPool) {
+      const c = h.specialsByName?.[sp] || 0;
+      globalCounts[sp] += c;
     }
+  }
 
-    while (remaining.size > 0) {
-      for (let i = 0; i < specialsPool.length; i++) {
-        const specialName = specialsPool[i];
-        if (remaining.size === 0) break;
+  while (remaining.size > 0) {
+    const candidates = Array.from(remaining);
 
-        const candidates = Array.from(remaining);
-        if (!candidates.length) break;
+    // Build all (bunk, special) possible pairs
+    const pairs = [];
+    for (const bunkName of candidates) {
+      const h = ensureHistoryForBunk(history, bunkName);
+      for (const specialName of specialsPool) {
+        const bunkSpecialCount = getSpecialCountForBunk(h, specialName);
+        const bunkTotal = h.totalSpecials || 0;
+        const bunkFallback = h.totalFallbacks || 0;
+        const globalCount = globalCounts[specialName];
 
-        const sortedCandidates = candidates
-          .map((bunkName) => {
-            const h = ensureHistoryForBunk(history, bunkName);
-            return {
-              bunkName,
-              thisSpecialCount: getSpecialCountForBunk(h, specialName),
-              totalSpecials: h.totalSpecials || 0,
-              totalFallbacks: h.totalFallbacks || 0
-            };
-          })
-          .sort((a, b) => {
-            if (a.thisSpecialCount !== b.thisSpecialCount)
-              return a.thisSpecialCount - b.thisSpecialCount;
-            if (a.totalSpecials !== b.totalSpecials)
-              return a.totalSpecials - b.totalSpecials;
-            if (a.totalFallbacks !== b.totalFallbacks)
-              return b.totalFallbacks - a.totalFallbacks;
-            return a.bunkName.localeCompare(b.bunkName);
-          });
-
-        const chosen = sortedCandidates[0];
-        assignments[chosen.bunkName] = specialName;
-        remaining.delete(chosen.bunkName);
+        // Score = fairness metric
+        pairs.push({
+          bunkName,
+          specialName,
+          score: (
+            bunkSpecialCount * 10000 +   // huge weight: avoid repeating specific special
+            bunkTotal * 200 +            // next: avoid repeating specials in general
+            globalCount * 150 +          // next: rotate specials globally
+            (100 - bunkFallback) * 1     // mild bonus for bunks that got fallback often
+          )
+        });
       }
     }
 
-    return assignments;
+    // Sort by lowest score first (best candidate)
+    pairs.sort((a, b) => a.score - b.score);
+
+    const chosen = pairs[0];
+    if (!chosen) break;
+
+    // Assign
+    assignments[chosen.bunkName] = chosen.specialName;
+    remaining.delete(chosen.bunkName);
+
+    // Update global counts
+    globalCounts[chosen.specialName]++;
   }
+
+  return assignments;
+}
 
   // --------------------------------------------------------------------------
   // RUN ONE SMART TILE CONFIG  (fully patched)
