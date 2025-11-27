@@ -1,7 +1,7 @@
 // =================================================================
 // fields.js
 //
-// UPDATED: Added numeric input for sharing capacity.
+// UPDATED: Added numeric input for sharing capacity (Bunks Limit).
 // =================================================================
 
 (function() {
@@ -766,7 +766,7 @@ function renderSharableControls(item, onSave, onRerender) {
         capDiv.style.gap = "8px";
         
         const capLabel = document.createElement("span");
-        capLabel.textContent = "Max Bunks/Divisions at once:";
+        capLabel.textContent = "Max Total Bunks at once:";
         capLabel.style.fontSize = "0.85rem";
         
         const capInput = document.createElement("input");
