@@ -544,35 +544,70 @@ function applySmartTileOverridesForToday() {
 // RUN OPTIMIZER (now with Smart Tile pre-processing DISABLED)
 // =================================================================
 
+// =================================================================
+// RUN OPTIMIZER — NEW ENGINE
+// Uses SchedulerCore.engine.run(blocks, context)
+// =================================================================
+
 function runOptimizer() {
-  if (!window.runSkeletonOptimizer) {
-    alert("Error: 'runSkeletonOptimizer' function not found. Is scheduler_logic_core.js loaded?");
+  if (!window.SchedulerCore || !SchedulerCore.engine || !SchedulerCore.engine.run) {
+    alert("Error: New SchedulerCore engine not found. Did you load the modules correctly?");
     return;
   }
+
   if (dailyOverrideSkeleton.length === 0) {
     alert("Skeleton is empty. Please add blocks before running the optimizer.");
     return;
   }
 
-  // Save manual skeleton first
+  // Save manual skeleton
   saveDailySkeleton();
 
-  // NEW: Run Smart Tile pre-processor to inject bunkActivityOverrides
+  // Build blocks for the new engine
+  const blocks = dailyOverrideSkeleton.map(ev => ({
+    id: ev.id,
+    division: ev.division,
+    start: parseTimeToMinutes(ev.startTime),
+    end: parseTimeToMinutes(ev.endTime),
+    type: ev.type,
+    event: ev.event,
+    smartData: ev.smartData || null,
+    subEvents: ev.subEvents || null
+  }));
+
+  // Build full context for engine
+  if (!window.getFullContext) {
+    alert("Error: getFullContext() missing. Engine cannot run.");
+    return;
+  }
+
+  const context = window.getFullContext();
+
+  let result = null;
   try {
-    applySmartTileOverridesForToday();
+    result = SchedulerCore.engine.run(blocks, context);
+  } catch (err) {
+    console.error("SchedulerCore Engine crashed:", err);
+    alert("Error during schedule generation. See console for details.");
+    return;
+  }
+
+  if (!result || !result.assignments) {
+    alert("Optimizer did not return assignments. Check console.");
+    console.error("Engine returned:", result);
+    return;
+  }
+
+  // Save final schedule
+  try {
+    window.saveCurrentDailyData("finalSchedule", result.assignments);
   } catch (e) {
-    console.error("Error while applying Smart Tile overrides:", e);
+    console.warn("Failed to save generated schedule", e);
   }
 
-  const success = window.runSkeletonOptimizer(dailyOverrideSkeleton);
-  if (success) {
-    alert("Schedule Generated Successfully!");
-    window.showTab?.('schedule');
-  } else {
-    alert("Error during schedule generation. Check console.");
-  }
+  alert("Schedule Generated Successfully!");
+  window.showTab?.("schedule");
 }
-
 function parseTimeToMinutes(str) {
   if (!str || typeof str !== "string") return null;
   let s = str.trim().toLowerCase();
