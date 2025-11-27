@@ -1,16 +1,37 @@
 // ============================================================================
 // smart_tiles_engine.js
 //
-// SmartTilesEngine v4
-// - Hybrid fairness:
-//     • Global: Who gets ANY special today
-//     • Per-special: Which special each bunk gets
-// - For each Smart Tile pair (usually 2 blocks per division):
-//     • Every bunk gets exactly 1 Swim
-//     • Some bunks get 1 Special, others get 1 Fallback
-//     • No bunk gets 2 specials or 2 swims
-// - Uses all specials from `specialsPool` and rotates them fairly
-// - Integrates with daily_adjustments.js applySmartTileOverridesForToday()
+// SmartTilesEngine v5
+//
+// HYBRID FAIRNESS + FULLY GENERIC ACTIVITIES
+// -----------------------------------------
+// - Global fairness: which bunks get ANY constrained "special" today.
+// - Per-special fairness: which specific special (Gameroom, Canteen, etc.)
+//   each bunk gets across days.
+// - Works with generic Smart Tiles configured in master_schedule_builder:
+//
+//   Each cfg:
+//     {
+//       id,
+//       division,
+//       bunkNames: [ "Bunk 1", "Bunk 2", ... ],
+//       blocks: [
+//         { id, startTime, endTime },
+//         { id, startTime, endTime }   // Smart Tile pair
+//       ],
+//       main1: "Swim",                // activity for block A
+//       main2: "Special Activity",    // activity for block B
+//       fallbackFor: "Special Activity",  // which main is constrained
+//       fallbackActivity: "Sports",   // if constrained activity not used
+//       specialsPool: [ "Gameroom", "Canteen", ... ],
+//       maxSpecialBunksPerDay: Number
+//     }
+//
+// For each bunk in a Smart Tile pair:
+//   - One block is the "constrained" block: either a Special or fallbackActivity.
+//   - The other block stays at its base activity (e.g., Swim).
+//   - No hard-coded assumptions about Swim vs Special; it uses whatever you
+//     configured in the Smart Tile prompts.
 // ============================================================================
 
 (function() {
@@ -18,6 +39,10 @@
 
   function genId() {
     return `smart_${Math.random().toString(36).slice(2, 9)}`;
+  }
+
+  function normName(name) {
+    return (name || "").toString().trim().toLowerCase();
   }
 
   const SmartTilesEngine = {
@@ -32,12 +57,15 @@
      *          { id, startTime, endTime },
      *          { id, startTime, endTime }
      *        ],
+     *        main1: "Swim",
+     *        main2: "Special Activity",
+     *        fallbackFor: "Special Activity",      // which of main1/main2 is constrained
      *        specialsPool: [ "Gameroom", "Canteen", ... ],
      *        fallbackActivity: "Sports",
      *        maxSpecialBunksPerDay: Number
      *      }
      *
-     * @param {Object} masterSettings - global settings from app1 etc (not heavily used here)
+     * @param {Object} masterSettings - global settings (currently not heavily used)
      * @param {Object} history - smartTileHistory object (mutated in place)
      *
      * @returns {Array} overrides:
@@ -68,6 +96,88 @@
       const bySpecial = history.bySpecial;
       const today = window.currentScheduleDate || null;
 
+      // Helper: ensure bunk has history record
+      function ensureBunkHist(bunkName) {
+        if (!byBunk[bunkName]) {
+          byBunk[bunkName] = {
+            anySpecialCount: 0,
+            specials: {},
+            lastDate: null
+          };
+        } else if (!byBunk[bunkName].specials) {
+          byBunk[bunkName].specials = {};
+        }
+      }
+
+      // Helper: which special should this bunk get (use all specials fairly)
+      function pickSpecialForBunk(bunk, specialsPool) {
+        if (!specialsPool.length) return null;
+
+        const bunkHist = (byBunk[bunk] && byBunk[bunk].specials) || {};
+        let best = null;
+
+        specialsPool.forEach(name => {
+          const bunkCount   = bunkHist[name] || 0;
+          const globalCount = bySpecial[name] || 0;
+
+          // Personal history is heavily weighted; then global usage
+          const score = bunkCount * 1000 + globalCount;
+
+          if (!best ||
+              score < best.score ||
+              (score === best.score && name < best.name)) {
+            best = { name, score };
+          }
+        });
+
+        return best ? best.name : null;
+      }
+
+      // Helper: decide what each block's activity is for a bunk
+      function resolveActivitiesForBunk(cfg, isSpecialBunk, chosenSpecial) {
+        const main1 = cfg.main1 || "Swim";                         // legacy-safe defaults
+        const main2 = cfg.main2 || cfg.fallbackActivity || "Sports";
+        const fallbackFor = cfg.fallbackFor || null;
+        const fallbackActivity = cfg.fallbackActivity || "Sports";
+
+        let actA = main1;
+        let actB = main2;
+
+        const normFallback = normName(fallbackFor);
+        const normMain1 = normName(main1);
+        const normMain2 = normName(main2);
+
+        // If there's no constrained activity configured, then:
+        // - special bunks: put the special in block B by default (if any)
+        // - others: keep main1/main2 as-is
+        if (!normFallback) {
+          if (isSpecialBunk && chosenSpecial) {
+            actB = chosenSpecial;
+          }
+          return { actA, actB };
+        }
+
+        // Block A is constrained?
+        if (normFallback === normMain1) {
+          if (isSpecialBunk && chosenSpecial) {
+            actA = chosenSpecial;
+          } else {
+            actA = fallbackActivity;
+          }
+        }
+
+        // Block B is constrained?
+        if (normFallback === normMain2) {
+          if (isSpecialBunk && chosenSpecial) {
+            actB = chosenSpecial;
+          } else {
+            actB = fallbackActivity;
+          }
+        }
+
+        return { actA, actB };
+      }
+
       configs.forEach(cfg => {
         const division = cfg.division;
         let bunks = (cfg.bunkNames || []).slice();
@@ -76,17 +186,11 @@
         const blocks = (cfg.blocks || []).slice();
         if (!blocks.length) return;
 
-        // We use the FIRST TWO blocks as the Smart Tile pair
+        // Use the first 2 blocks as the Smart Tile pair
         const blockA = blocks[0];
-        const blockB = blocks[1] || blocks[0]; // if only one, double-use it
+        const blockB = blocks[1] || blocks[0];
 
         const specialsPool = (cfg.specialsPool || []).slice();
-        if (!specialsPool.length) {
-          // If no specials, everyone just gets Swim + fallback
-          assignNoSpecialScenario(bunks, division, blockA, blockB, cfg.fallbackActivity, results);
-          return;
-        }
-
         const fallbackActivity = cfg.fallbackActivity || "Sports";
 
         // --- 1. GLOBAL FAIRNESS: who gets ANY special today? ---
@@ -109,72 +213,56 @@
         const specialBunks = bunks.slice(0, maxSpecial);
         const nonSpecialBunks = bunks.slice(maxSpecial);
 
-        // --- 2. PER-SPECIAL FAIRNESS: which special does each "special bunk" get? ---
-        function pickSpecialForBunk(bunk) {
-          if (!specialsPool.length) return null;
+        // --- 2. PER-SPECIAL FAIRNESS: which special each "special bunk" gets? ---
 
-          const bunkHist = (byBunk[bunk] && byBunk[bunk].specials) || {};
-          let best = null;
-
-          specialsPool.forEach(name => {
-            const bunkCount = bunkHist[name] || 0;
-            const globalCount = bySpecial[name] || 0;
-
-            // Lower is better; weight personal history more heavily
-            const score = bunkCount * 1000 + globalCount;
-
-            if (!best ||
-                score < best.score ||
-                (score === best.score && name < best.name)) {
-              best = { name, score };
-            }
-          });
-
-          return best ? best.name : null;
-        }
-
-        // --- 3. Build per-bunk assignments (2 blocks each) ---
-
-        // Helper: ensure bunk has history record
-        function ensureBunkHist(bunkName) {
-          if (!byBunk[bunkName]) {
-            byBunk[bunkName] = {
-              anySpecialCount: 0,
-              specials: {},
-              lastDate: null
-            };
-          } else if (!byBunk[bunkName].specials) {
-            byBunk[bunkName].specials = {};
-          }
-        }
-
-        // Special bunks: 1 Swim + 1 Special
+        // Special bunks: constrained block = chosenSpecial or fallback
         specialBunks.forEach(bunk => {
           ensureBunkHist(bunk);
 
-          const chosenSpecial = pickSpecialForBunk(bunk);
-          if (!chosenSpecial) {
-            // If somehow no special is available, fall back to "no special" behavior for this bunk.
-            assignBunkPair(bunk, division, blockA, blockB, "Swim", fallbackActivity, results);
-            return;
+          const chosenSpecial = specialsPool.length
+            ? pickSpecialForBunk(bunk, specialsPool)
+            : null;
+
+          // If somehow no special is available, treat like a non-special bunk
+          const effectiveSpecial = chosenSpecial || null;
+
+          const acts = resolveActivitiesForBunk(cfg, !!effectiveSpecial, effectiveSpecial);
+          assignBunkPair(
+            bunk,
+            division,
+            blockA,
+            blockB,
+            acts.actA,
+            acts.actB,
+            results
+          );
+
+          // Update fairness history ONLY if they actually got a real special
+          if (effectiveSpecial) {
+            const rec = byBunk[bunk];
+            rec.anySpecialCount = (rec.anySpecialCount || 0) + 1;
+            rec.specials[effectiveSpecial] =
+              (rec.specials[effectiveSpecial] || 0) + 1;
+            rec.lastDate = today;
+
+            bySpecial[effectiveSpecial] = (bySpecial[effectiveSpecial] || 0) + 1;
           }
-
-          // Rule A: Bunk gets exactly 1 Swim + 1 Special (no double special).
-          // We'll make Block A = Swim, Block B = Special (consistent pattern).
-          assignBunkPair(bunk, division, blockA, blockB, "Swim", chosenSpecial, results);
-
-          // Update fairness history
-          byBunk[bunk].anySpecialCount = (byBunk[bunk].anySpecialCount || 0) + 1;
-          byBunk[bunk].specials[chosenSpecial] =
-            (byBunk[bunk].specials[chosenSpecial] || 0) + 1;
-          byBunk[bunk].lastDate = today;
-
-          bySpecial[chosenSpecial] = (bySpecial[chosenSpecial] || 0) + 1;
         });
 
-        // Non-special bunks: 1 Swim + 1 Fallback (never special)
+        // Non-special bunks: constrained block = fallbackActivity only
         nonSpecialBunks.forEach(bunk => {
-          assignBunkPair(bunk, division, blockA, blockB, "Swim", fallbackActivity, results);
+          ensureBunkHist(bunk);
+
+          const acts = resolveActivitiesForBunk(cfg, false, null);
+          assignBunkPair(
+            bunk,
+            division,
+            blockA,
+            blockB,
+            acts.actA,
+            acts.actB,
+            results
+          );
           // No special history increment (they didn't get a special today)
         });
       });
@@ -203,14 +291,6 @@
       startTime: blockB.startTime,
       endTime: blockB.endTime,
       divName: division
-    });
-  }
-
-  // Helper: scenario where there are no specials (just Swim + fallback)
-  function assignNoSpecialScenario(bunks, division, blockA, blockB, fallbackActivity, results) {
-    const fb = fallbackActivity || "Sports";
-    bunks.forEach(bunk => {
-      assignBunkPair(bunk, division, blockA, blockB, "Swim", fb, results);
     });
   }
 
