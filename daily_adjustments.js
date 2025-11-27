@@ -539,29 +539,95 @@ function minutesToTime(min) {
 // - Merge into daily data BEFORE running optimizer.
 // =================================================================
 
-function applySmartTileOverridesForToday(smartOverrides = []) {
-    // ALWAYS wipe old overrides
-    const clean = [];
+function applySmartTileOverridesForToday() {
 
-    // Validate Smart Tile output before saving
-    smartOverrides.forEach(o => {
-        const props = window.activityProperties?.[o.activity];
-        if (!props || !props.available) return;
+  // 1. Extract smart tiles from skeleton
+  const smartEvents = dailyOverrideSkeleton.filter(
+    ev => ev && ev.type === "smart" && ev.smartData
+  );
 
-        if (props.allowedDivisions &&
-            !props.allowedDivisions.includes(o.divName)) return;
+  if (smartEvents.length === 0) {
+    window.saveCurrentDailyData("bunkActivityOverrides", []);
+    currentOverrides.bunkActivityOverrides = [];
+    return;
+  }
 
-        clean.push(o);
+  const divisionsCfg = masterSettings.app1.divisions || {};
+  const specialActivitiesCfg = masterSettings.app1.specialActivities || [];
+
+  // 2. Group smart tiles by division + signature
+  const groups = {};
+  smartEvents.forEach(ev => {
+    const sd = ev.smartData;
+    const key = [
+      ev.division,
+      (sd.main1 || "").toLowerCase(),
+      (sd.main2 || "").toLowerCase(),
+      (sd.fallbackFor || "").toLowerCase(),
+      (sd.fallbackActivity || "").toLowerCase()
+    ].join("||");
+
+    if (!groups[key]) groups[key] = { division: ev.division, events: [] };
+    groups[key].events.push(ev);
+  });
+
+  // 3. Build Smart Tile Configs for engine
+  const configs = [];
+
+  Object.values(groups).forEach(g => {
+    if (g.events.length !== 2) return; // require pairs
+
+    const divName = g.division;
+    const bunks = (divisionsCfg[divName]?.bunks || []).slice().sort();
+    if (!bunks.length) return;
+
+    const ev1 = g.events[0];
+    const ev2 = g.events[1];
+    const sd = ev1.smartData;
+
+    const maxSpecial = sd.maxSpecialBunksPerDay ?? bunks.length;
+
+    configs.push({
+      id: ev1.id + "__" + ev2.id,
+      division: divName,
+      bunkNames: bunks,
+      blocks: [
+        { id: ev1.id, startTime: ev1.startTime, endTime: ev1.endTime },
+        { id: ev2.id, startTime: ev2.startTime, endTime: ev2.endTime }
+      ],
+      specialsPool: specialActivitiesCfg.map(s => s.name),
+      fallbackActivity: sd.fallbackActivity,
+      maxSpecialBunksPerDay: maxSpecial
     });
+  });
 
-    // Save clean set
-    window.saveCurrentDailyData("bunkActivityOverrides", clean);
+  // 4. Run SmartTilesEngine
+  let results = [];
+  if (configs.length > 0 && window.SmartTilesEngine) {
+    results = window.SmartTilesEngine.run(configs, masterSettings, smartTileHistory);
+  }
 
-    // Also update in-memory overrides
-    if (window.loadCurrentDailyData) {
-        const dd = window.loadCurrentDailyData() || {};
-        dd.bunkActivityOverrides = clean;
-    }
+  // 5. Clean items using availability & division rules
+  const clean = [];
+  const activityProps = window.activityProperties || {};
+
+  results.forEach(r => {
+    const props = activityProps[r.activity];
+    if (!props) return;
+    if (!props.available) return;
+
+    if (props.allowedDivisions &&
+        !props.allowedDivisions.includes(r.divName)) return;
+
+    clean.push(r);
+  });
+
+  // 6. Save & update
+  window.saveCurrentDailyData("bunkActivityOverrides", clean);
+  currentOverrides.bunkActivityOverrides = clean;
+
+  // 7. Update fairness history
+  saveSmartTileHistory(smartTileHistory);
 }
 
 // =================================================================
