@@ -5,8 +5,10 @@
 // - Pass 2: Captures 'smart' tiles and prevents them from being locked as pinned.
 // - Pass 2.5 (The Pre-Processor): 
 //     1. Decides which activity category (Sports, Special, Swim) each bunk gets based on fairness.
-//     2. If it's a generator category (Sports/Special), it CONVERTS the block into a standard slot.
-//     3. If it's a fixed category (Swim), it assigns it immediately.
+//     2. UPDATED: Updates 'historicalCounts' immediately so subsequent smart tiles in the same day 
+//        see the usage (fixing the "Swim twice" issue).
+//     3. If it's a generator category (Sports/Special), it CONVERTS the block into a standard slot.
+//     4. If it's a fixed category (Swim), it assigns it immediately.
 // - Pass 4: The standard generator picks up the converted blocks and assigns specific fields.
 // ============================================================================
 
@@ -334,13 +336,24 @@
         // 2. Group them by tile (so we process all bunks in a division together)
         const smartGroups = {};
         smartBlocks.forEach(b => {
+            // Use time in the key to distinguish between 11:00 and 12:20 blocks
             const key = `${b.divName}_${b.startTime}_${b.event}`;
-            if (!smartGroups[key]) smartGroups[key] = { blocks: [], data: b.smartData };
+            if (!smartGroups[key]) {
+                smartGroups[key] = { 
+                    blocks: [], 
+                    data: b.smartData,
+                    // Capture numeric time for sorting
+                    timeValue: parseTimeToMinutes(b.startTime) 
+                };
+            }
             smartGroups[key].blocks.push(b);
         });
 
-        // 3. Process each group
-        Object.values(smartGroups).forEach(group => {
+        // 3. Sort groups by time to ensure morning activities update history before afternoon
+        const sortedGroups = Object.values(smartGroups).sort((a, b) => a.timeValue - b.timeValue);
+
+        // 4. Process each group
+        sortedGroups.forEach(group => {
             if (!group.data) return;
 
             const bunksInGroup = group.blocks.map(b => b.bunk);
@@ -363,7 +376,14 @@
                 });
             }
 
-            // --- B. Convert the Block based on the Decision ---
+            // --- B. Update History immediately for fairness in later slots ---
+            Object.entries(results).forEach(([bunk, assignedAct]) => {
+                if (!historicalCounts[bunk]) historicalCounts[bunk] = {};
+                // Add +1 to the count so next smart tile sees it
+                historicalCounts[bunk][assignedAct] = (historicalCounts[bunk][assignedAct] || 0) + 1;
+            });
+
+            // --- C. Convert the Block based on the Decision ---
             group.blocks.forEach(block => {
                 const assignedCategory = results[block.bunk]; // e.g. "Special", "Swim", "Sports"
                 
@@ -398,14 +418,9 @@
                     // BUT for the generator to fill it, we usually map it to a slot type.
                     // If it's unknown, we default to "Special Activity".
                     if (specialActivityNames.includes(assignedCategory)) {
-                         // It is a specific special. We can either pin it or hint it.
-                         // Simplest: Pin it immediately if it's specific (e.g. Canteen).
-                         // But if we want generator to respect capacity... 
-                         // Let's assume for now fallback is usually "Sports" or specific.
-                         
-                         // If it matches a specific resource, let's try to pin it?
-                         // Per user request: "Generate a special activity for that bunk".
-                         // So we map to generic special.
+                         // Match found in specific specials list. 
+                         // We set it as "Special Activity" but could theoretically hint preference.
+                         // For now, map to generic special slot.
                          block.event = "Special Activity";
                          block.type = 'slot';
                     } else {
