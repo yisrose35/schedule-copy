@@ -3,49 +3,37 @@
 //
 // Handles the fairness logic for Smart Tiles with REAL-TIME CAPACITY CHECKS.
 //
-// NEW:
-// - For each Smart Tile group (time + division + event), we:
-//   1. Look at all special activities (e.g. Gameroom, Canteen).
-//   2. Use activityProperties (which already includes Daily Adjustments)
-//      to see which specials are available for that time window & division.
-//   3. Read each special's capacity (e.g. Gameroom=2, Canteen=1) and
-//      subtract current usage from fieldUsageBySlot.
-//   4. Sum those remaining capacities to get "how many SPECIAL slots
-//      actually exist for this block" and feed that into maxAct1.
-// - Availability checker also respects time rules, division rules and capacity.
+// FIXED:
+// - Per-activity capacity is enforced *within each Smart Tile group*.
+// - We compute remaining capacity for each special (Gameroom, Canteen, etc.)
+//   by looking at activityProperties + existing fieldUsageBySlot.
+// - availabilityChecker decrements that remaining capacity as it assigns,
+//   so you can never have more Gamerooms than its capacity in that window.
 // =================================================================
 
 (function() {
     'use strict';
 
-    // Small helper: get increment from core
-    const SLOT_MINUTES = typeof window.INCREMENT_MINS === 'number' ? window.INCREMENT_MINS : 30;
-
     const SmartLogicAdapter = {
-        
-        /**
-         * Core function to determine assignments.
-         * constraints.maxAct1 is the total number of "special" (act1) slots
-         * allowed for this Smart Tile block (computed from real capacity).
-         */
+
+        // ---------- CORE ASSIGNMENT ENGINE ----------
         generateAssignments: function(bunks, activities, historicalCounts, constraints, availabilityChecker) {
             const { act1, act2, fallback } = activities;
             
-            // Default to half the bunks if no limit set
+            // Total number of "act1" (special) slots we are allowed to give out
             let maxAct1 = constraints?.maxAct1;
             if (maxAct1 === null || maxAct1 === undefined || maxAct1 === "" || isNaN(maxAct1)) {
-                maxAct1 = Math.ceil(bunks.length / 2); 
+                maxAct1 = Math.ceil(bunks.length / 2);
             } else {
                 maxAct1 = parseInt(maxAct1, 10);
             }
 
-            // 1. Calculate Stats
+            // 1. Stats per bunk
             const stats = {};
             bunks.forEach(bunk => {
                 const bunkCounts = historicalCounts?.[bunk] || {};
                 const count1 = bunkCounts[act1] || 0;
                 const count2 = bunkCounts[act2] || 0;
-                
                 stats[bunk] = {
                     act1Count: count1,
                     act2Count: count2,
@@ -53,29 +41,29 @@
                 };
             });
 
-            // 2. Create Pool and Sort (Least Total Usage)
+            // 2. Base pool sort by least total usage
             let pool = [...bunks];
             pool.sort((a, b) => {
                 const statA = stats[a];
                 const statB = stats[b];
                 if (statA.total !== statB.total) {
-                    return statA.total - statB.total; 
+                    return statA.total - statB.total;
                 }
                 return 0.5 - Math.random();
             });
 
-            // 3. Selection Logic (Need Gap)
-            const assignments = {};
+            // 3. Sort again by "need gap" (who needs act1 vs act2)
             pool.sort((a, b) => {
                 const gapA = stats[a].act2Count - stats[a].act1Count;
                 const gapB = stats[b].act2Count - stats[b].act1Count;
-                return gapB - gapA; 
+                return gapB - gapA;
             });
 
+            const assignments = {};
             let act1AssignedCount = 0;
 
             pool.forEach(bunk => {
-                // Determine preferred activity based on fairness + capacity budget
+                // Decide preferred "main" based on fairness + act1 budget
                 let preferred = act2;
                 if (act1AssignedCount < maxAct1) {
                     preferred = act1;
@@ -83,13 +71,11 @@
 
                 let finalChoice = preferred;
 
-                // 4. CHECK AVAILABILITY & CAPACITY
                 if (availabilityChecker && !availabilityChecker(preferred)) {
-                    // Preferred is full or unavailable.
-                    // Do NOT increment act1AssignedCount if we failed to place act1.
-                    finalChoice = fallback || "Sports"; // Default fallback
+                    // Can't use preferred (full/unavailable) → fallback
+                    finalChoice = fallback || "Sports";
                 } else {
-                    // Preferred is valid and available.
+                    // Preferred accepted; log act1 usage if applicable
                     if (preferred === act1) {
                         act1AssignedCount++;
                     }
@@ -101,16 +87,7 @@
             return assignments;
         },
 
-        /**
-         * Main entry point:
-         * - schedulableSlotBlocks: all blocks (including type:'smart')
-         * - historicalCounts: "how many times bunk X did activity Y"
-         * - specialActivityNames: list of all special activity names (Gameroom, Canteen, etc.)
-         * - fillBlockFn: core's fillBlock
-         * - fieldUsageBySlot: shared capacity tracker from core
-         * - yesterdayHistory: not used here but passed through
-         * - activityProperties: merged properties (fields + specials) with Daily Adjustments
-         */
+        // ---------- MAIN ENTRY POINT ----------
         processSmartTiles: function(
             schedulableSlotBlocks,
             historicalCounts,
@@ -120,277 +97,203 @@
             yesterdayHistory,
             activityProperties
         ) {
-            // 1. Filter out smart blocks
+            // Step 1: collect smart blocks
             const smartBlocks = schedulableSlotBlocks.filter(b => b.type === 'smart');
             if (smartBlocks.length === 0) return;
 
-            // ---- Local helpers that use core data ----
+            const SLOT_MINUTES = typeof window.INCREMENT_MINS === 'number' ? window.INCREMENT_MINS : 30;
 
-            // Returns {startMin, endMin} for a unifiedTimes slot index
+            // Helper: convert unifiedTimes index → minutes
             const getSlotMinuteRange = (slotIdx) => {
                 if (!window.unifiedTimes || !window.unifiedTimes[slotIdx]) return null;
-                const s = new Date(window.unifiedTimes[slotIdx].start);
-                const startMin = s.getHours() * 60 + s.getMinutes();
+                const d = new Date(window.unifiedTimes[slotIdx].start);
+                const startMin = d.getHours() * 60 + d.getMinutes();
                 const endMin = startMin + SLOT_MINUTES;
                 return { startMin, endMin };
             };
 
-            // Check if a single slot index is allowed for a given props.timeRules & available flag.
+            // Helper: check if a slot is allowed by props.timeRules + available flag
             const isSlotAvailableForProps = (slotIdx, props) => {
                 if (!props) return false;
                 if (!window.unifiedTimes || !window.unifiedTimes[slotIdx]) return false;
 
                 const range = getSlotMinuteRange(slotIdx);
                 if (!range) return false;
-                const slotStartMin = range.startMin;
-                const slotEndMin = range.endMin;
+                const slotStart = range.startMin;
+                const slotEnd = range.endMin;
 
                 const rules = props.timeRules || [];
-                if (rules.length === 0) {
-                    return !!props.available;
-                }
-
                 if (!props.available) return false;
+                if (rules.length === 0) return true;
 
+                // Available windows
                 const hasAvailable = rules.some(r => r.type === 'Available');
-
-                let ok = !hasAvailable; // if there's an "Available" rule, default false until matched
-                for (const rule of rules) {
-                    if (rule.type !== 'Available') continue;
-                    const rStart = rule.startMin;
-                    const rEnd = rule.endMin;
-                    if (rStart == null || rEnd == null) continue;
-                    if (slotStartMin >= rStart && slotEndMin <= rEnd) {
+                let ok = !hasAvailable;
+                for (const r of rules) {
+                    if (r.type !== 'Available') continue;
+                    if (slotStart >= r.startMin && slotEnd <= r.endMin) {
                         ok = true;
                         break;
                     }
                 }
-
-                // Apply Unavailable windows
-                for (const rule of rules) {
-                    if (rule.type !== 'Unavailable') continue;
-                    const rStart = rule.startMin;
-                    const rEnd = rule.endMin;
-                    if (rStart == null || rEnd == null) continue;
-                    if (slotStartMin < rEnd && slotEndMin > rStart) {
+                // Unavailable windows
+                for (const r of rules) {
+                    if (r.type !== 'Unavailable') continue;
+                    if (slotStart < r.endMin && slotEnd > r.startMin) {
                         ok = false;
                         break;
                     }
                 }
-
                 return ok;
             };
 
-            // Check if ALL slots in this block are allowed for a given props object.
             const areSlotsWithinAvailability = (slots, props) => {
-                if (!props) return false;
-                if (!slots || slots.length === 0) return false;
-                for (const slotIdx of slots) {
-                    if (!isSlotAvailableForProps(slotIdx, props)) {
-                        return false;
-                    }
+                if (!props || !slots || !slots.length) return false;
+                for (const sIdx of slots) {
+                    if (!isSlotAvailableForProps(sIdx, props)) return false;
                 }
                 return true;
             };
 
-            // Compute TOTAL remaining capacity across ALL special activities
-            // that are:
-            // - enabled / available
-            // - allowed for this division
-            // - allowed at the time window (via timeRules / Daily Adjustments)
-            // - not already full according to fieldUsageBySlot.
-            const computeTotalSpecialCapacityForGroup = (group) => {
+            // Compute remaining capacity for each special in this group
+            const computePerSpecialRemainingForGroup = (group) => {
+                const result = {};
                 const blocks = group.blocks || [];
-                if (blocks.length === 0) return 0;
-
+                if (!blocks.length || !Array.isArray(specialActivityNames) || !activityProperties) {
+                    return result;
+                }
                 const firstBlock = blocks[0];
                 const slots = firstBlock.slots || [];
                 const divName = firstBlock.divName;
 
-                if (!slots.length ||
-                    !Array.isArray(specialActivityNames) ||
-                    !activityProperties) {
-                    return 0;
-                }
-
-                let totalCapacity = 0;
-
-                specialActivityNames.forEach(specialName => {
-                    const props = activityProperties[specialName];
+                specialActivityNames.forEach(name => {
+                    const props = activityProperties[name];
                     if (!props || props.available === false) return;
 
-                    // Division-level constraints
+                    // Division constraints
                     if (Array.isArray(props.allowedDivisions) &&
                         props.allowedDivisions.length > 0 &&
                         !props.allowedDivisions.includes(divName)) {
                         return;
                     }
-
                     if (props.limitUsage?.enabled &&
                         props.limitUsage.divisions &&
                         !props.limitUsage.divisions[divName]) {
                         return;
                     }
 
-                    // Check time availability for all slots in this block
+                    // Time availability
                     if (!areSlotsWithinAvailability(slots, props)) return;
 
-                    // Base capacity per time-slice: sharable -> capacity, else 1
+                    // Base capacity per slot
                     let baseLimit = 1;
                     if (props.sharable) {
-                        const cap = props.sharableWith && typeof props.sharableWith.capacity === 'number'
+                        const cap = (props.sharableWith && typeof props.sharableWith.capacity === 'number')
                             ? props.sharableWith.capacity
                             : 2;
                         baseLimit = cap;
                     }
 
-                    // For a block that spans multiple slots, the capacity is the MIN
-                    // remaining capacity across all slots, otherwise we'd overcount.
-                    let remainingForThisSpecial = Infinity;
-                    slots.forEach(slotIdx => {
-                        const usageObj = fieldUsageBySlot[slotIdx]?.[specialName];
-                        const used = usageObj?.count || 0;
+                    // Already used in those slots
+                    let minRemaining = Infinity;
+                    slots.forEach(sIdx => {
+                        const usage = fieldUsageBySlot[sIdx]?.[name];
+                        const used = usage?.count || 0;
                         const rem = Math.max(baseLimit - used, 0);
-                        if (rem < remainingForThisSpecial) {
-                            remainingForThisSpecial = rem;
-                        }
+                        if (rem < minRemaining) minRemaining = rem;
                     });
-
-                    if (remainingForThisSpecial === Infinity) {
-                        remainingForThisSpecial = 0;
+                    if (minRemaining === Infinity) minRemaining = 0;
+                    if (minRemaining > 0) {
+                        result[name] = minRemaining;
                     }
-
-                    totalCapacity += remainingForThisSpecial;
                 });
 
-                return totalCapacity;
+                return result; // e.g. { Gameroom:2, Canteen:1 }
             };
 
-            // 2. Group by Tile (Time + Division + Event)
+            // Group smart blocks by (division + time + event)
             const smartGroups = {};
-            
-            const parseTime = (t) => {
-                if (typeof t === 'number') return t;
-                return t; 
-            };
+            const parseTime = (t) => (typeof t === 'number' ? t : t);
 
             smartBlocks.forEach(b => {
                 const key = `${b.divName}_${b.startTime}_${b.event}`;
                 if (!smartGroups[key]) {
-                    smartGroups[key] = { 
-                        blocks: [], 
+                    smartGroups[key] = {
+                        blocks: [],
                         data: b.smartData,
-                        timeValue: parseTime(b.startTime) 
+                        timeValue: parseTime(b.startTime)
                     };
                 }
                 smartGroups[key].blocks.push(b);
             });
 
-            // 3. Sort groups by time to ensure chronological processing
             const sortedGroups = Object.values(smartGroups)
                 .sort((a, b) => (a.timeValue || 0) - (b.timeValue || 0));
 
-            // 4. Process each group
+            // Process each group in chronological order
             sortedGroups.forEach(group => {
                 if (!group.data) return;
 
                 const bunksInGroup = group.blocks.map(b => b.bunk);
                 const { main1, main2, fallbackActivity, maxSpecialBunksPerDay } = group.data;
 
-                // ---- Compute REAL total special capacity for this time window ----
-                // Example:
-                //   Gameroom (cap 2, available) + Canteen (cap 1, available)
-                //   => totalSpecialCapacity = 3.
-                const dynamicSpecialCapacity = computeTotalSpecialCapacityForGroup(group);
+                // 1. Compute per-special remaining capacity for this time window
+                const perSpecialRemaining = computePerSpecialRemainingForGroup(group);
 
-                // If designer also set a manual maxSpecialBunksPerDay, be safe and NOT exceed it.
-                let effectiveMaxSpecial = dynamicSpecialCapacity;
+                // Total special capacity across all specials in this block
+                let dynamicTotalSpecialCap = Object.values(perSpecialRemaining)
+                    .reduce((sum, v) => sum + v, 0);
+
+                // Respect manual maxSpecialBunksPerDay if provided
                 if (typeof maxSpecialBunksPerDay === 'number') {
-                    effectiveMaxSpecial = Math.min(effectiveMaxSpecial || 0, maxSpecialBunksPerDay);
-                }
-                // Fallbacks so we never get NaN or 0 when there *are* bunks
-                if (!effectiveMaxSpecial && effectiveMaxSpecial !== 0) {
-                    effectiveMaxSpecial = Math.ceil(bunksInGroup.length / 2);
+                    dynamicTotalSpecialCap = Math.min(dynamicTotalSpecialCap, maxSpecialBunksPerDay);
                 }
 
-                // --- DEFINE AVAILABILITY CHECKER ---
-                // Checks if a specific activity (e.g. "Gameroom") is available
-                // and not at capacity for THIS block's slots.
+                if (!dynamicTotalSpecialCap && dynamicTotalSpecialCap !== 0) {
+                    dynamicTotalSpecialCap = Math.ceil(bunksInGroup.length / 2);
+                }
+
+                // 2. availabilityChecker that also decrements perSpecialRemaining
                 const isActivityAvailable = (activityName) => {
                     if (!activityName) return false;
+                    const lower = String(activityName).toLowerCase();
 
-                    const nameLower = String(activityName).toLowerCase();
-
-                    // For generic categories ("sports", "special activity", etc.),
-                    // we let the main generator handle resource picking.
-                    if (["sports", "sport", "special activity", "special", "swim", "general activity"]
-                        .some(k => nameLower.includes(k))) {
+                    // Generic categories → leave to main generator
+                    if (["sport", "sports", "special activity", "special", "swim", "general activity"]
+                        .some(k => lower.includes(k))) {
                         return true;
                     }
 
-                    const props = activityProperties?.[activityName];
-                    if (!props) return true; // Unknown text label -> don't block
-
-                    // Global "Available" flag
-                    if (props.available === false) return false;
-
-                    const refBlock = group.blocks[0];
-                    if (!refBlock || !refBlock.slots || refBlock.slots.length === 0) return true;
-                    const slots = refBlock.slots;
-                    const divName = refBlock.divName;
-
-                    // Division / limitUsage checks
-                    if (Array.isArray(props.allowedDivisions) &&
-                        props.allowedDivisions.length > 0 &&
-                        !props.allowedDivisions.includes(divName)) {
-                        return false;
-                    }
-                    if (props.limitUsage?.enabled &&
-                        props.limitUsage.divisions &&
-                        !props.limitUsage.divisions[divName]) {
-                        return false;
-                    }
-
-                    // Time windows
-                    if (!areSlotsWithinAvailability(slots, props)) return false;
-
-                    // Capacity per slot (like Gameroom=2 at a time)
-                    let baseLimit = 1;
-                    if (props.sharable) {
-                        const cap = props.sharableWith && typeof props.sharableWith.capacity === 'number'
-                            ? props.sharableWith.capacity
-                            : 2;
-                        baseLimit = cap;
-                    }
-
-                    // If any slot is already full for this activity, it's unavailable
-                    for (const slotIdx of slots) {
-                        const usageObj = fieldUsageBySlot[slotIdx]?.[activityName];
-                        const used = usageObj?.count || 0;
-                        if (used >= baseLimit) {
-                            return false;
+                    // Specific specials (Gameroom, Canteen...)
+                    if (specialActivityNames &&
+                        specialActivityNames.includes(activityName)) {
+                        const left = perSpecialRemaining[activityName] || 0;
+                        if (left > 0) {
+                            perSpecialRemaining[activityName] = left - 1; // reserve one slot
+                            return true;
                         }
+                        return false; // out of capacity for this special
                     }
+
+                    // Unknown label → don't block
                     return true;
                 };
 
-                // A. Run Fairness Logic with Availability Check
+                // 3. Run fairness engine
                 const results = this.generateAssignments(
                     bunksInGroup,
-                    { act1: main1, act2: main2, fallback: fallbackActivity }, 
-                    historicalCounts, 
-                    { maxAct1: effectiveMaxSpecial },
+                    { act1: main1, act2: main2, fallback: fallbackActivity },
+                    historicalCounts,
+                    { maxAct1: dynamicTotalSpecialCap },
                     isActivityAvailable
                 );
 
-                // B. Update History & Fill Usage IMMEDIATELY
+                // 4. Update history + global fieldUsageBySlot based on results
                 Object.entries(results).forEach(([bunk, assignedAct]) => {
-                    // 1. Update History
                     if (!historicalCounts[bunk]) historicalCounts[bunk] = {};
-                    historicalCounts[bunk][assignedAct] =
-                        (historicalCounts[bunk][assignedAct] || 0) + 1;
-                    
-                    // 2. Mark Usage in fieldUsageBySlot (for specific special resources)
+                    historicalCounts[bunk][assignedAct] = (historicalCounts[bunk][assignedAct] || 0) + 1;
+
+                    // For specific special resources, mark usage now
                     const block = group.blocks.find(b => b.bunk === bunk);
                     if (block &&
                         specialActivityNames &&
@@ -414,12 +317,12 @@
                     }
                 });
 
-                // C. Convert Blocks for the Scheduler
+                // 5. Convert blocks into core-friendly events / pinned assignments
                 group.blocks.forEach(block => {
                     const assignedCategory = results[block.bunk];
                     const norm = String(assignedCategory || "").toLowerCase();
 
-                    // CASE 1: SWIM
+                    // SWIM (main2 case)
                     if (norm.includes("swim")) {
                         fillBlockFn(
                             block,
@@ -428,27 +331,26 @@
                             yesterdayHistory,
                             false
                         );
-                        block.processed = true; 
+                        block.processed = true;
                     }
-                    // CASE 2: SPORTS
+                    // SPORTS (generic land)
                     else if (norm.includes("sport")) {
                         block.event = "Sports Slot";
-                        block.type = 'slot'; 
-                    } 
-                    // CASE 3: SPECIAL (Generic Category)
+                        block.type = 'slot';
+                    }
+                    // GENERIC SPECIAL
                     else if (norm.includes("special") || norm.includes("activity")) {
                         block.event = "Special Activity";
-                        block.type = 'slot'; 
-                    } 
-                    // CASE 4: SPECIFIC NAMED SPECIAL / FALLBACK
+                        block.type = 'slot';
+                    }
+                    // SPECIFIC SPECIAL / FALLBACK
                     else {
                         if (specialActivityNames &&
                             specialActivityNames.includes(assignedCategory)) {
-                            // Specific special like "Gameroom", "Canteen" chosen.
-                            // We already validated capacity + time; pin it as fixed.
+                            // Specific special like "Gameroom", "Canteen"
                             fillBlockFn(
                                 block,
-                                { 
+                                {
                                     field: { name: assignedCategory },
                                     sport: null,
                                     _activity: assignedCategory,
@@ -460,7 +362,7 @@
                             );
                             block.processed = true;
                         } else {
-                            // Unknown string -> treat as General Activity
+                            // Unknown → GA slot
                             block.event = "General Activity Slot";
                             block.type = 'slot';
                         }
