@@ -604,7 +604,14 @@ function applySmartTileOverridesForToday() {
   // 4. Run SmartTilesEngine
   let results = [];
   if (configs.length > 0 && window.SmartTilesEngine) {
-    results = window.SmartTilesEngine.run(configs, masterSettings, smartTileHistory);
+   // 4. Run SmartTilesEngine
+let results = [];
+if (configs.length > 0 && window.SmartTilesEngine) {
+  const result = window.SmartTilesEngine.runSmartTilesForDay(configs, smartTileHistory);
+  results = result.overrides || [];
+  smartTileHistory = result.updatedHistory; // ↩ critical for fairness
+}
+
   }
 
   // 5. Clean items using availability & division rules
