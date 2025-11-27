@@ -28,8 +28,7 @@
         'Special Activity',
         'Swim',
         'League Game',
-        'Specialty League',
-        'Smart Tile'
+        'Specialty League'
     ];
 
     // ===== BASIC HELPERS =====
@@ -114,80 +113,6 @@
         let fieldUsageBySlot = {};
         window.fieldUsageBySlot = fieldUsageBySlot;
         window.activityProperties = activityProperties;
-
-        // ============================================================
-        // FAIRNESS ENGINE (Global Usage Buckets)
-        // ============================================================
-        const bunkCategoryBaseUsage = {};   
-        const bunkCategoryTodayUsage = {};  
-
-        function ensureBunkCategory(bunk) {
-            if (!bunkCategoryBaseUsage[bunk]) bunkCategoryBaseUsage[bunk] = {};
-            if (!bunkCategoryTodayUsage[bunk]) bunkCategoryTodayUsage[bunk] = {};
-        }
-
-        (availableDivisions || []).forEach(divName => {
-            const bunksInDiv = divisions[divName]?.bunks || [];
-            bunksInDiv.forEach(bunk => {
-                ensureBunkCategory(bunk);
-                const hist = historicalCounts[bunk] || {};
-                let totalSpecials = 0;
-                (specialActivityNames || []).forEach(actName => {
-                    const c = hist[actName] || 0;
-                    totalSpecials += c;
-                    if (c > 0) {
-                        bunkCategoryBaseUsage[bunk][`special:${actName}`] =
-                            (bunkCategoryBaseUsage[bunk][`special:${actName}`] || 0) + c;
-                    }
-                });
-                bunkCategoryBaseUsage[bunk]["special:any"] =
-                    (bunkCategoryBaseUsage[bunk]["special:any"] || 0) + totalSpecials;
-            });
-        });
-
-        function getCategoryUsage(bunk, categoryKey) {
-            ensureBunkCategory(bunk);
-            const base = bunkCategoryBaseUsage[bunk][categoryKey] || 0;
-            const today = bunkCategoryTodayUsage[bunk][categoryKey] || 0;
-            return base + today;
-        }
-
-        function bumpCategoryUsage(bunk, categoryKey, amount = 1) {
-            ensureBunkCategory(bunk);
-            bunkCategoryTodayUsage[bunk][categoryKey] =
-                (bunkCategoryTodayUsage[bunk][categoryKey] || 0) + amount;
-        }
-
-        function getFairnessOrderForCategory(categoryKey, bunksList) {
-            const arr = (bunksList || []).slice();
-            arr.sort((a, b) => {
-                const ua = getCategoryUsage(a, categoryKey);
-                const ub = getCategoryUsage(b, categoryKey);
-                if (ua !== ub) return ua - ub; // LOWEST usage first
-                
-                // Secondary sort by total specials to break ties
-                const ta = getCategoryUsage(a, "special:any");
-                const tb = getCategoryUsage(b, "special:any");
-                if (ta !== tb) return ta - tb;
-
-                return Math.random() - 0.5;
-            });
-            return arr;
-        }
-
-        function getFairnessCategoryForSmartLabel(label) {
-            if (!label) return null;
-            const s = String(label).trim().toLowerCase();
-            if (s.includes("sports")) return "sport:any";
-            if (s.includes("special")) return "special:any";
-            
-            // Specific special match
-            const exact = specialActivityNames || [];
-            for (const name of exact) {
-                if (s === String(name).trim().toLowerCase()) return `special:${name}`;
-            }
-            return null;
-        }
 
         // =================================================================
         // PASS 1: TIME GRID
@@ -280,7 +205,6 @@
         // PASS 2 — Pinned / Split / Slot Skeleton Blocks
         // =================================================================
         const schedulableSlotBlocks = [];
-        const smartTileGroups = {}; 
 
         manualSkeleton.forEach(item => {
             const allBunks = divisions[item.division]?.bunks || [];
@@ -299,8 +223,7 @@
                 GENERATED_EVENTS.includes(finalEventName) ||
                 normGA === "General Activity Slot" ||
                 normLeague === "League Game" ||
-                normSpecLg === "Specialty League" ||
-                item.type === 'smart';
+                normSpecLg === "Specialty League";
 
             // ----- PINNED OR NON-GENERATED EVENTS (Respects Daily Disabled) -----
             if (item.type === 'pinned' || !isGeneratedEvent) {
@@ -378,19 +301,6 @@
                 pushGA(bunksTop, slotsSecond);
                 pinSwim(bunksBottom, slotsSecond);
             }
-            else if (item.type === 'smart' && item.smartData) {
-                const signature = [item.smartData.main1, item.smartData.main2].sort().join('|');
-                const key = `${item.division}::${signature}`;
-                if (!smartTileGroups[key]) smartTileGroups[key] = [];
-                smartTileGroups[key].push({
-                    divName: item.division,
-                    startTime: startMin,
-                    endTime: endMin,
-                    slots: allSlots,
-                    smartData: item.smartData,
-                    bunks: allBunks
-                });
-            }
             else if (item.type === 'slot' && isGeneratedEvent) {
                 let normalizedEvent = null;
                 if (normalizeSpecialtyLeague(item.event)) normalizedEvent = "Specialty League";
@@ -408,246 +318,6 @@
                     });
                 });
             }
-        });
-
-        // =================================================================
-        // PASS 2.5 — SMART TILE LOGIC (Fairness for Generated Sides)
-        // =================================================================
-        Object.entries(smartTileGroups).forEach(([key, blocks]) => {
-            // All Smart Tile blocks sharing the same (division + main labels)
-            blocks.sort((a, b) => a.startTime - b.startTime);
-
-            const divName = blocks[0].divName;
-            const bunks = divisions[divName]?.bunks || [];
-            if (!bunks.length) return;
-
-            const smartDataSample = blocks[0].smartData || {};
-            const main1 = smartDataSample.main1;
-            const main2 = smartDataSample.main2;
-            const fallbackFor = smartDataSample.fallbackFor;
-            const fallbackAct = smartDataSample.fallbackActivity;
-
-            // --- Figure out which main is the "scarce" one (generated) and which is the paired side ---
-            const toKey = (v) => v ? String(v).trim().toLowerCase() : "";
-            const main1Key = toKey(main1);
-            const main2Key = toKey(main2);
-            const fbKey    = toKey(fallbackFor);
-
-            let generatedLabel = null;   // e.g. "Special Activity" or "Gameroom"
-            let placedLabel    = null;   // e.g. "Swim"
-
-            if (fbKey && fbKey === main1Key) {
-                generatedLabel = main1;
-                placedLabel    = main2;
-            } else if (fbKey && fbKey === main2Key) {
-                generatedLabel = main2;
-                placedLabel    = main1;
-            } else {
-                // If fallbackFor doesn't match either main (typo etc.), fall back to category-based inference
-                const cat1 = getFairnessCategoryForSmartLabel(main1);
-                const cat2 = getFairnessCategoryForSmartLabel(main2);
-                if (cat1 && !cat2) {
-                    generatedLabel = main1;
-                    placedLabel    = main2;
-                } else if (cat2 && !cat1) {
-                    generatedLabel = main2;
-                    placedLabel    = main1;
-                } else {
-                    // Default: treat main1 as generated, main2 as paired
-                    generatedLabel = main1;
-                    placedLabel    = main2;
-                }
-            }
-
-            const generatedCategory = getFairnessCategoryForSmartLabel(generatedLabel);
-            const fallbackCategory  = fallbackAct ? getFairnessCategoryForSmartLabel(fallbackAct) : null;
-
-            // Track, per Smart Tile group, how many times each bunk has gotten
-            // the "generated" side (e.g., Special Activity) within THIS group today.
-            const groupGeneratedCount = {};
-            bunks.forEach(b => { groupGeneratedCount[b] = 0; });
-
-            // Helper: schedule a specific activity label inside a Smart block
-            const attemptSchedule = (bunk, activity, block) => {
-                if (!activity) return false;
-
-                const normAct = String(activity).trim();
-                let finalField = normAct;
-                let finalSport = null;
-                let finalActivityType = normAct;
-                let success = false;
-
-                // SPORTS side (Sports tile or fallback)
-                if (normAct.toLowerCase() === 'sports' ||
-                    normAct.toLowerCase() === 'sport'  ||
-                    normAct.toLowerCase() === 'sports slot') {
-
-                    const pick = window.findBestSportActivity?.({
-                        divName,
-                        bunk,
-                        slots: block.slots,
-                        startTime: block.startTime,
-                        endTime: block.endTime
-                    }, allActivities, fieldUsageBySlot, yesterdayHistory,
-                      activityProperties, rotationHistory, divisions, historicalCounts);
-
-                    if (pick) {
-                        finalField = pick.field;
-                        finalSport = pick.sport;
-                        if (pick._activity) finalActivityType = pick._activity;
-                        success = true;
-                    }
-                }
-                // GENERIC SPECIAL BUCKET
-                else if (normAct.toLowerCase() === 'special' ||
-                         normAct.toLowerCase() === 'special activity') {
-
-                    const candidates = allActivities
-                        .filter(a => a.type === 'special')
-                        .slice()
-                        .sort((a, b) => {
-                            const ca = historicalCounts[bunk]?.[a.field] || 0;
-                            const cb = historicalCounts[bunk]?.[b.field] || 0;
-                            return ca - cb;
-                        });
-
-                    for (const cand of candidates) {
-                        if (canBlockFit({
-                            divName,
-                            bunk,
-                            slots: block.slots,
-                            startTime: block.startTime,
-                            endTime: block.endTime
-                        }, cand.field, activityProperties, fieldUsageBySlot, cand.field)) {
-                            finalField = cand.field;
-                            finalActivityType = cand.field;
-                            success = true;
-                            break;
-                        }
-                    }
-                }
-                // DIRECT FIELD NAME (Gameroom, Swim, Canteen, etc.)
-                else {
-                    if (canBlockFit({
-                        divName,
-                        bunk,
-                        slots: block.slots,
-                        startTime: block.startTime,
-                        endTime: block.endTime
-                    }, finalField, activityProperties, fieldUsageBySlot, finalActivityType)) {
-                        success = true;
-                    }
-                }
-
-                if (success) {
-                    fillBlock({
-                        divName,
-                        bunk,
-                        slots: block.slots,
-                        startTime: block.startTime,
-                        endTime: block.endTime
-                    }, {
-                        field: finalField,
-                        sport: finalSport,
-                        _activity: finalActivityType,
-                        _fixed: false,
-                        _h2h: false
-                    }, fieldUsageBySlot, yesterdayHistory, false);
-
-                    return true;
-                }
-                return false;
-            };
-
-            // Process each Smart Tile block in time order
-            blocks.forEach((block, blockIndex) => {
-                const isLastBlock = (blockIndex === blocks.length - 1);
-
-                // If we somehow don't have a generatedLabel, just dump main1 everywhere and bail.
-                if (!generatedLabel && !placedLabel) {
-                    bunks.forEach(bunk => {
-                        attemptSchedule(bunk, main1, block);
-                    });
-                    return;
-                }
-
-                // 1) FAIRNESS ORDER: who should get the generatedLabel in THIS block?
-                const fairOrder = generatedCategory
-                    ? getFairnessOrderForCategory(generatedCategory, bunks)
-                    : bunks.slice();
-
-                // 2) Try to give generatedLabel (e.g. "Special Activity") to bunks in fairness order.
-                const gotGeneratedHere = {};
-                fairOrder.forEach(bunk => {
-                    // 🚫 Don't give the generated side to the same bunk twice
-                    // within this Smart Tile group (e.g. they can't get Special twice).
-                    if (groupGeneratedCount[bunk] >= 1) return;
-                    if (gotGeneratedHere[bunk]) return;
-
-                    if (attemptSchedule(bunk, generatedLabel, block)) {
-                        gotGeneratedHere[bunk] = true;
-                        groupGeneratedCount[bunk] += 1;   // ✅ mark they got the generated side once
-
-                        // ✅ Update fairness usage correctly (no double-counting)
-                        if (generatedCategory) {
-                            bumpCategoryUsage(bunk, generatedCategory, 1);
-
-                            // If this is a specific special like "special:Gameroom",
-                            // also bump the global "special:any" bucket ONCE.
-                            if (generatedCategory !== "special:any" &&
-                                generatedCategory.startsWith("special:")) {
-                                bumpCategoryUsage(bunk, "special:any", 1);
-                            }
-                        }
-                    }
-                });
-
-                // 3) For bunks that did NOT get the generatedLabel here:
-                //    - If they already got the generatedLabel in a *previous* block,
-                //      they MUST get the placed side (e.g. Swim), never the fallback.
-                //    - If they never got the generatedLabel at all:
-                //         * On the last block: try the fallback first (e.g. Sports),
-                //           since we ran out of Special.
-                //         * Otherwise: give them the placed side.
-                bunks.forEach(bunk => {
-                    if (gotGeneratedHere[bunk]) return;
-
-                    const gotSomethingAlready =
-                        window.scheduleAssignments[bunk] &&
-                        block.slots.some(idx => window.scheduleAssignments[bunk][idx]);
-
-                    if (gotSomethingAlready) return;
-
-                    // 🔒 RULE: If this bunk already got the generated side (e.g. Gameroom)
-                    // in an earlier Smart block, they are *locked* into the placed side
-                    // (e.g. Swim) for any later Smart blocks in this group.
-                    if (groupGeneratedCount[bunk] > 0 && placedLabel) {
-                        // Force Swim (or whatever the placed side is) — NO fallback.
-                        attemptSchedule(bunk, placedLabel, block);
-                        return;
-                    }
-
-                    // Bunks that never got the generatedLabel:
-                    // On the LAST block, we allow the fallback to kick in if Special still didn't happen.
-                    if (isLastBlock && fallbackAct) {
-                        if (attemptSchedule(bunk, fallbackAct, block)) {
-                            if (fallbackCategory) {
-                                bumpCategoryUsage(bunk, fallbackCategory, 1);
-                                if (fallbackCategory !== "special:any" &&
-                                    fallbackCategory.startsWith("special:")) {
-                                    bumpCategoryUsage(bunk, "special:any", 1);
-                                }
-                            }
-                            return;
-                        }
-                    }
-
-                    // Otherwise, they just get the placed side (e.g. Swim).
-                    if (placedLabel) {
-                        attemptSchedule(bunk, placedLabel, block);
-                    }
-                });
-            });
         });
 
         // =================================================================
@@ -1004,7 +674,6 @@
             });
             while (bunkPtr < allBunksInGroup.length) {
                 const leftoverBunk = allBunksInGroup[bunkPtr++];
-                // FIXED: Removed the invalid <br> tag here
                 const bunkDivName = Object.keys(divisions).find(div =>
                     (divisions[div].bunks || []).includes(leftoverBunk)
                 ) || baseDivName;
