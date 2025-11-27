@@ -1,9 +1,8 @@
 // =================================================================
-// daily_adjustments.js  (UPDATED with SMART TILES v3)
-// - Includes "Smart Tile" logic for daily overrides.
-// - MATCHES master_schedule_builder Smart Tile prompts + smartData.
-// - NEW: Smart Tiles pre-process into bunkActivityOverrides BEFORE
-//        calling runSkeletonOptimizer, using SmartTilesEngine.
+// daily_adjustments.js  (UPDATED for CAPACITY FIX)
+// - Disabled "applySmartTileOverridesForToday" pre-processing.
+// - Smart Tiles are now passed to the Core Optimizer (scheduler_logic_core.js).
+// - This ensures Global Capacity (Max 2 per field) is respected across divisions.
 // =================================================================
 
 (function() {
@@ -533,145 +532,16 @@ function minutesToTime(min) {
 }
 
 // =================================================================
-// SMART TILE PRE-PROCESSOR HOOK
-// - Build configs from "smart" events in dailyOverrideSkeleton
-// - Use SmartTilesEngine to generate bunkActivityOverrides
-// - Merge into daily data BEFORE running optimizer.
-// =================================================================
-
-// =================================================================
-// SMART TILE PRE-PROCESSOR HOOK
-// - Build configs from "smart" events in dailyOverrideSkeleton
-// - Use SmartTilesEngine to generate bunkActivityOverrides
-// - Merge into daily data BEFORE running optimizer.
+// SMART TILE PRE-PROCESSOR HOOK (DISABLED for Capacity Fix)
 // =================================================================
 
 function applySmartTileOverridesForToday() {
-
-  // 1. Extract smart tiles from skeleton
-  const smartEvents = dailyOverrideSkeleton.filter(
-    ev => ev && ev.type === "smart" && ev.smartData
-  );
-
-  if (smartEvents.length === 0) {
-    window.saveCurrentDailyData("bunkActivityOverrides", []);
-    currentOverrides.bunkActivityOverrides = [];
-    return;
-  }
-
-  const divisionsCfg         = masterSettings.app1.divisions || {};
-  const specialActivitiesCfg = masterSettings.app1.specialActivities || [];
-
-  // 2. Group smart tiles by division + signature
-  const groups = {};
-  smartEvents.forEach(ev => {
-    const sd = ev.smartData;
-    const key = [
-      ev.division,
-      (sd.main1 || "").toLowerCase(),
-      (sd.main2 || "").toLowerCase(),
-      (sd.fallbackFor || "").toLowerCase(),
-      (sd.fallbackActivity || "").toLowerCase()
-    ].join("||");
-
-    if (!groups[key]) groups[key] = { division: ev.division, events: [] };
-    groups[key].events.push(ev);
-  });
-
-  // 3. Build Smart Tile Configs for engine
-  const configs = [];
-
-  Object.values(groups).forEach(g => {
-    // We only treat *pairs* as Smart Tile pairs
-    if (g.events.length !== 2) return;
-
-    const divName = g.division;
-    const bunks   = (divisionsCfg[divName]?.bunks || []).slice().sort();
-    if (!bunks.length) return;
-
-    const ev1 = g.events[0];
-    const ev2 = g.events[1];
-    const sd  = ev1.smartData;
-
-    // ---- HYBRID: respect per-special shareable limit ----
-    // `fallbackFor` is the constrained activity (e.g., "Gameroom")
-    const constrainedName = (sd.fallbackFor || "").toLowerCase();
-    let shareableLimit = null;
-
-    if (constrainedName && specialActivitiesCfg.length) {
-      const spec = specialActivitiesCfg.find(
-        s => (s.name || "").toLowerCase() === constrainedName
-      );
-      if (spec) {
-        // Try several likely field names, then fall back to 2 if "shareable" is true
-        if (typeof spec.maxSimultaneousBunks === "number") {
-          shareableLimit = spec.maxSimultaneousBunks;
-        } else if (typeof spec.shareableSlots === "number") {
-          shareableLimit = spec.shareableSlots;
-        } else if (typeof spec.shareableCount === "number") {
-          shareableLimit = spec.shareableCount;
-        } else if (spec.shareable === true) {
-          // Reasonable default when marked shareable but no explicit count
-          shareableLimit = 2;
-        }
-      }
-    }
-
-    // Whatever the Smart Tile prompt said, we never exceed the shareable capacity
-    let maxSpecial = sd.maxSpecialBunksPerDay ?? bunks.length;
-    if (shareableLimit != null) {
-      maxSpecial = Math.min(maxSpecial, shareableLimit);
-    }
-
-    configs.push({
-      id: ev1.id + "__" + ev2.id,
-      division: divName,
-      bunkNames: bunks,
-      blocks: [
-        { id: ev1.id, startTime: ev1.startTime, endTime: ev1.endTime },
-        { id: ev2.id, startTime: ev2.startTime, endTime: ev2.endTime }
-      ],
-      // Use all specials, SmartTilesEngine handles per-bunk / per-special fairness
-      specialsPool: specialActivitiesCfg.map(s => s.name),
-      fallbackActivity: sd.fallbackActivity,
-      maxSpecialBunksPerDay: maxSpecial
-    });
-  });
-
-  // 4. Run SmartTilesEngine
-let results = [];
-if (configs.length > 0 && window.SmartTilesEngine) {
-  const result = window.SmartTilesEngine.runSmartTilesForDay(configs, smartTileHistory);
-  results = result.overrides || [];
-  smartTileHistory = result.updatedHistory; // ✅ carries over counts day-to-day
-}
-
-
-  // 5. Clean items using availability & division rules
-  const clean = [];
-  const activityProps = window.activityProperties || {};
-
-  results.forEach(r => {
-    const props = activityProps[r.activity];
-    if (!props) return;
-    if (!props.available) return;
-
-    if (props.allowedDivisions &&
-        !props.allowedDivisions.includes(r.divName)) return;
-
-    clean.push(r);
-  });
-
-  // 6. Save & update overrides
-  window.saveCurrentDailyData("bunkActivityOverrides", clean);
-  currentOverrides.bunkActivityOverrides = clean;
-
-  // 7. Persist updated Smart Tile history for fairness across days
-  saveSmartTileHistory(smartTileHistory);
+  console.log("Smart Tile pre-processor DISABLED. Using Core Scheduler for capacity-aware Smart Tiles.");
+  return; // Pass-through to core optimizer
 }
 
 // =================================================================
-// RUN OPTIMIZER (now with Smart Tile pre-processing)
+// RUN OPTIMIZER (now with Smart Tile pre-processing DISABLED)
 // =================================================================
 
 function runOptimizer() {
