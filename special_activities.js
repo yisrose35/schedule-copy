@@ -1,18 +1,7 @@
 // =================================================================
 // special_activities.js
 //
-// UPDATED (CRITICAL SAVE FIX):
-// - Uses window.getGlobalSpecialActivities() / window.saveGlobalSpecialActivities()
-//   so data is owned by app1.js.
-//
-// UPDATED (BUG FIX):
-// - renderAllowedBunksControls:
-//   - Clicking an enabled division chip will now correctly disable it.
-//
-// UPDATED (UI THEME):
-// - Matches Modern Pro Camp theme used in Fields:
-//   • setup-grid + setup-card shell
-//   • Emerald master-list + detail-pane styling
+// UPDATED: Added numeric input for sharing capacity (Bunks Limit).
 // =================================================================
 
 (function() {
@@ -40,6 +29,9 @@ function initSpecialActivitiesTab() {
         s.available = s.available !== false;
         s.timeRules = s.timeRules || [];
         s.sharableWith = s.sharableWith || { type: 'not_sharable', divisions: [] };
+        // Ensure default capacity
+        if (!s.sharableWith.capacity) s.sharableWith.capacity = 2;
+
         s.limitUsage = s.limitUsage || { enabled: false, divisions: {} };
     });
 
@@ -361,7 +353,7 @@ function addSpecial() {
     specialActivities.push({
         name: n,
         available: true,
-        sharableWith: { type: 'not_sharable', divisions: [] },
+        sharableWith: { type: 'not_sharable', divisions: [], capacity: 2 },
         limitUsage: { enabled: false, divisions: {} },
         timeRules: []
     });
@@ -521,7 +513,12 @@ function renderTimeRulesUI(item, onSave, onRerender) {
 function renderSharableControls(item, onSave, onRerender) {
     const container = document.createElement("div");
     container.innerHTML = `<strong>Sharing Rules:</strong>`;
-    const rules = item.sharableWith || { type: 'not_sharable' };
+    
+    // Ensure default capacity exists
+    if (!item.sharableWith) { item.sharableWith = { type: 'not_sharable', capacity: 2 }; }
+    if (!item.sharableWith.capacity) { item.sharableWith.capacity = 2; }
+    
+    const rules = item.sharableWith;
     const isSharable = rules.type !== 'not_sharable';
 
     const tog = document.createElement("label");
@@ -552,6 +549,38 @@ function renderSharableControls(item, onSave, onRerender) {
     container.appendChild(shareWrap);
 
     if (isSharable) {
+        // --- CAPACITY INPUT ---
+        const capDiv = document.createElement("div");
+        capDiv.style.marginTop = "8px";
+        capDiv.style.paddingLeft = "12px";
+        capDiv.style.display = "flex";
+        capDiv.style.alignItems = "center";
+        capDiv.style.gap = "8px";
+        
+        const capLabel = document.createElement("span");
+        capLabel.textContent = "Max Total Bunks at once:";
+        capLabel.style.fontSize = "0.85rem";
+        
+        const capInput = document.createElement("input");
+        capInput.type = "number";
+        capInput.min = "2";
+        capInput.value = rules.capacity || 2;
+        capInput.style.width = "60px";
+        capInput.style.padding = "2px 6px";
+        capInput.style.borderRadius = "6px";
+        capInput.style.border = "1px solid #d1d5db";
+        
+        capInput.onchange = (e) => {
+            const val = parseInt(e.target.value);
+            rules.capacity = val >= 2 ? val : 2;
+            onSave();
+        };
+        
+        capDiv.appendChild(capLabel);
+        capDiv.appendChild(capInput);
+        container.appendChild(capDiv);
+
+        // --- SPECIFIC DIVISIONS ---
         const customPanel = document.createElement("div");
         customPanel.style.paddingLeft = "20px";
         customPanel.style.marginTop = "10px";
@@ -580,10 +609,11 @@ function createChipPicker(allItems, selectedItems, onToggle) {
     allItems.forEach(name => {
         const chip = document.createElement("span");
         chip.textContent = name;
-        chip.style.padding = "4px 8px";
-        chip.style.borderRadius = "12px";
+        chip.style.padding = "4px 10px";
+        chip.style.borderRadius = "999px";
         chip.style.cursor = "pointer";
-        chip.style.border = "1px solid #ccc";
+        chip.style.border = "1px solid #CBD5E1";
+        chip.style.fontSize = "0.8rem";
         const isActive = selectedItems.includes(name);
         chip.style.backgroundColor = isActive ? "#007BFF" : "#f0f0f0";
         chip.style.color = isActive ? "white" : "black";
