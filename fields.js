@@ -1,19 +1,7 @@
 // =================================================================
 // fields.js
 //
-// RESTORED: Original UI layout (Header, Status Box, Chip Pickers).
-// FIXED: Uncaught ReferenceError by correctly accessing window.availableDivisions.
-// ENHANCED: Merged Priority and Restriction UIs into one clean, organized panel.
-// UPDATED (UI REWORK + THEME):
-// - Field detail pane split into clear "cards":
-//     • Activities
-//     • Sharing Rules
-//     • Who Can Use This Field (Restrictions & Priority)
-//     • Time Rules
-// - Added helper text in each card to make it obvious what to do.
-// - Styling aligned with Modern Pro Camp theme:
-//     • Emerald primary (#00C896 / #00A67C)
-//     • Light backgrounds, white cards, soft shadows, pill buttons.
+// UPDATED: Added numeric input for sharing capacity.
 // =================================================================
 
 (function() {
@@ -244,8 +232,10 @@ function loadData() {
         f.available = f.available !== false;
         f.timeRules = f.timeRules || [];
         f.sharableWith = f.sharableWith || { type: 'not_sharable', divisions: [] };
-        f.limitUsage = f.limitUsage || { enabled: false, divisions: {} };
+        // Ensure default capacity is set if sharable
+        if (!f.sharableWith.capacity) f.sharableWith.capacity = 2;
         
+        f.limitUsage = f.limitUsage || { enabled: false, divisions: {} };
         f.preferences = f.preferences || { enabled: false, exclusive: false, list: [] };
     });
 }
@@ -547,7 +537,7 @@ function addField() {
         name: n,
         activities: [],
         available: true,
-        sharableWith: { type: 'not_sharable', divisions: [] },
+        sharableWith: { type: 'not_sharable', divisions: [], capacity: 2 },
         limitUsage: { enabled: false, divisions: {} },
         preferences: { enabled: false, exclusive: false, list: [] }, // Default
         timeRules: []
@@ -731,7 +721,12 @@ function renderTimeRulesUI(item, onSave, onRerender) {
 function renderSharableControls(item, onSave, onRerender) {
     const container = document.createElement("div");
     container.innerHTML = `<strong>Sharing Rules:</strong>`;
-    const rules = item.sharableWith || { type: 'not_sharable' };
+    
+    // Ensure default capacity exists
+    if (!item.sharableWith) { item.sharableWith = { type: 'not_sharable', capacity: 2 }; }
+    if (!item.sharableWith.capacity) { item.sharableWith.capacity = 2; }
+    
+    const rules = item.sharableWith;
     const isSharable = rules.type !== 'not_sharable';
 
     const tog = document.createElement("label");
@@ -762,6 +757,38 @@ function renderSharableControls(item, onSave, onRerender) {
     container.appendChild(shareWrap);
 
     if (isSharable) {
+        // --- CAPACITY INPUT ---
+        const capDiv = document.createElement("div");
+        capDiv.style.marginTop = "8px";
+        capDiv.style.paddingLeft = "12px";
+        capDiv.style.display = "flex";
+        capDiv.style.alignItems = "center";
+        capDiv.style.gap = "8px";
+        
+        const capLabel = document.createElement("span");
+        capLabel.textContent = "Max Bunks/Divisions at once:";
+        capLabel.style.fontSize = "0.85rem";
+        
+        const capInput = document.createElement("input");
+        capInput.type = "number";
+        capInput.min = "2";
+        capInput.value = rules.capacity || 2;
+        capInput.style.width = "60px";
+        capInput.style.padding = "2px 6px";
+        capInput.style.borderRadius = "6px";
+        capInput.style.border = "1px solid #d1d5db";
+        
+        capInput.onchange = (e) => {
+            const val = parseInt(e.target.value);
+            rules.capacity = val >= 2 ? val : 2;
+            onSave();
+        };
+        
+        capDiv.appendChild(capLabel);
+        capDiv.appendChild(capInput);
+        container.appendChild(capDiv);
+
+        // --- SPECIFIC DIVISIONS ---
         const customPanel = document.createElement("div");
         customPanel.style.paddingLeft = "12px";
         customPanel.style.marginTop = "8px";
