@@ -29,7 +29,7 @@ const TILES = [
   { type: 'special', name: 'Special Activity', style: 'background:#e8f5e9;border:1px solid #43a047;', description: 'Special activity only.' },
 
   // SMART TILE
-  { type: 'smart', name: 'Smart Tile', style: 'background:#e3f2fd;border:2px dashed #0288d1;color:#01579b;', description: 'Smart balancing tile' },
+  { type: 'smart', name: 'Smart Tile', style: 'background:#e3f2fd;border:2px dashed #0288d1;color:#01579b;', description: 'Smart balancing tile (main1/main2 + fallback).' },
 
   // SPLIT TILE
   { type: 'split', name: 'Split Activity', style: 'background:#fff3e0;border:1px solid #f57c00;', description: 'Two activities share the block.' },
@@ -37,16 +37,16 @@ const TILES = [
   { type: 'league', name: 'League Game', style: 'background:#d1c4e9;border:1px solid #5e35b1;', description: 'Regular league slot.' },
   { type: 'specialty_league', name: 'Specialty League', style: 'background:#fff8e1;border:1px solid #f9a825;', description: 'Specialty league slot.' },
 
-  { type: 'swim', name: 'Swim', style: 'background:#bbdefb;border:1px solid #1976d2;', description: 'Pinned swim.' },
-  { type: 'lunch', name: 'Lunch', style: 'background:#fbe9e7;border:1px solid #d84315;', description: 'Pinned lunch.' },
-  { type: 'snacks', name: 'Snacks', style: 'background:#fff9c4;border:1px solid #fbc02d;', description: 'Pinned snacks.' },
+  { type: 'swim', name: 'Swim', style: 'background:#bbdefb;border:1px solid #1976d2;', description: 'Pinned Swim.' },
+  { type: 'lunch', name: 'Lunch', style: 'background:#fbe9e7;border:1px solid #d84315;', description: 'Pinned Lunch.' },
+  { type: 'snacks', name: 'Snacks', style: 'background:#fff9c4;border:1px solid #fbc02d;', description: 'Pinned Snacks.' },
   { type: 'dismissal', name: 'Dismissal', style: 'background:#f44336;color:white;border:1px solid #b71c1c;', description: 'Dismissal.' },
 
-  { type: 'custom', name: 'Custom Pinned Event', style: 'background:#eee;border:1px solid #616161;', description: 'Pinned custom event' }
+  { type: 'custom', name: 'Custom Pinned Event', style: 'background:#eee;border:1px solid #616161;', description: 'Pinned custom event.' }
 ];
 
 /* ========================================================================== */
-/* HELPERS: RESOLVE INPUT NAMES TO CORRECT ENGINE TYPES */
+/* HELPERS: RESOLVE INPUT NAMES TO CANONICAL ENGINE TYPES */
 /* ========================================================================== */
 
 function resolveEvent(inputName) {
@@ -54,7 +54,7 @@ function resolveEvent(inputName) {
 
   const v = inputName.trim().toLowerCase();
 
-  if (v === "activity" || v === "general activity slot") 
+  if (v === "activity" || v === "general activity slot")
     return { type: "slot", event: "General Activity Slot" };
 
   if (v === "sports" || v === "sports slot")
@@ -81,7 +81,7 @@ function resolveEvent(inputName) {
   if (v === "specialty league")
     return { type: "specialty", event: "Specialty League" };
 
-  // ANYTHING ELSE → PINNED
+  // ANYTHING ELSE → PINNED CUSTOM
   return { type: "pinned", event: inputName.trim() };
 }
 
@@ -156,7 +156,6 @@ function renderTemplateUI() {
   const ui = document.getElementById("scheduler-template-ui");
   const saved = window.getSavedSkeletons?.() || {};
   const names = Object.keys(saved).sort();
-  const assignments = window.getSkeletonAssignments?.() || {};
 
   const options = names.map(n => `<option value="${n}">${n}</option>`).join("");
 
@@ -261,7 +260,7 @@ function renderGrid() {
 
   html += `<div style="padding:8px;border-bottom:1px solid #999;position:sticky;top:0;background:#fff;z-index:5;">Time</div>`;
 
-  availableDivisions.forEach((d, i) => {
+  availableDivisions.forEach((d) => {
     const col = divisions[d]?.color || "#333";
     html += `<div style="padding:8px;border-bottom:1px solid #999;background:${col};color:white;position:sticky;top:0;z-index:5;text-align:center;">${d}</div>`;
   });
@@ -273,7 +272,7 @@ function renderGrid() {
   }
   html += `</div>`;
 
-  availableDivisions.forEach((divName, idx) => {
+  availableDivisions.forEach((divName) => {
     const div = divisions[divName];
     const s = timeToMin(div.startTime);
     const e = timeToMin(div.endTime);
@@ -297,8 +296,10 @@ function renderGrid() {
         const sm = timeToMin(event.startTime);
         const em = timeToMin(event.endTime);
         if (sm == null || em == null) return;
+
         const vs = Math.max(sm, earliest);
         const ve = Math.min(em, latest);
+
         const top = (vs - earliest) * PIXELS_PER_MINUTE;
         const height = (ve - vs) * PIXELS_PER_MINUTE;
         html += renderTile(event, top, height);
@@ -343,8 +344,13 @@ function renderTile(event, top, height) {
 
 function enableDrops() {
   grid.querySelectorAll(".grid-cell").forEach(cell => {
-    cell.ondragover = e => { e.preventDefault(); cell.style.background = "#e0ffe0"; };
-    cell.ondragleave = () => { cell.style.background = ""; };
+    cell.ondragover = e => {
+      e.preventDefault();
+      cell.style.background = "#e0ffe0";
+    };
+    cell.ondragleave = () => {
+      cell.style.background = "";
+    };
     cell.ondrop = e => {
       e.preventDefault();
       cell.style.background = "";
@@ -356,6 +362,7 @@ function enableDrops() {
       const rect = cell.getBoundingClientRect();
       const y = e.clientY - rect.top + grid.scrollTop;
       const earliest = parseInt(cell.dataset.start, 10);
+
       const dropped = Math.round((y / PIXELS_PER_MINUTE) / 15) * 15;
       const defaultStart = minToTime(earliest + dropped);
 
@@ -368,7 +375,7 @@ function enableDrops() {
 
 function enableRemovals() {
   grid.querySelectorAll(".grid-event").forEach(tile => {
-    tile.onclick = e => {
+    tile.onclick = () => {
       const id = tile.dataset.id;
       const ev = dailySkeleton.find(v => v.id === id);
       if (confirm(`Remove "${ev?.event}"?`)) {
@@ -391,13 +398,17 @@ function addEventFromTile(tileData, divName, div, defaultStart) {
     while (true) {
       const t = prompt(label, defaultStart);
       if (!t) return null;
+
       const m = timeToMin(t);
       if (m == null) { alert("Invalid time."); continue; }
+
       const ds = timeToMin(div.startTime);
       const de = timeToMin(div.endTime);
+
       if (isStart && m < ds) { alert("Before division start."); continue; }
       if (!isStart && m > de) { alert("After division end."); continue; }
       if (!isStart && m <= sm) { alert("End must be after start."); continue; }
+
       return t;
     }
   }
@@ -406,38 +417,41 @@ function addEventFromTile(tileData, divName, div, defaultStart) {
   if (tileData.type === "smart") {
     st = askTime(`Smart Tile\n\nStart Time:`, true); if (!st) return;
     sm = timeToMin(st);
-    et = askTime(`Smart Tile\n\nEnd Time:`, false); if (!et) return;
+    et = askTime(`End Time:`, false); if (!et) return;
     em = timeToMin(et);
 
-    const mainsRaw = prompt("Enter the 2 MAIN activities separated by comma or slash:");
+    const mainsRaw = prompt("Enter 2 MAIN activities separated by comma or slash (e.g., Sports / Special):");
     if (!mainsRaw) return;
-    const parts = mainsRaw.split(/[,/]/).map(s=>s.trim()).filter(Boolean);
-    if (parts.length < 2) return alert("Need two activities.");
-    const [m1, m2] = parts;
 
-    const target = prompt(`Which activity needs fallback?\n1: ${m1}\n2: ${m2}`);
-    let fallbackFor = (target === "1" ? m1 : target === "2" ? m2 : null);
+    const parts = mainsRaw.split(/[,/]/).map(s => s.trim()).filter(Boolean);
+    if (parts.length < 2) return alert("Need two activities.");
+
+    const [m1_raw, m2_raw] = parts;
+
+    const r1 = resolveEvent(m1_raw);
+    const r2 = resolveEvent(m2_raw);
+
+    const target = prompt(`Which activity needs fallback?\n1: ${r1.event}\n2: ${r2.event}`);
+    let fallbackFor = (target === "1" ? r1.event : target === "2" ? r2.event : null);
     if (!fallbackFor) return alert("Invalid selection.");
 
-    const fallback = prompt(`Fallback for "${fallbackFor}":`);
-    if (!fallback) return;
+    const fallbackRaw = prompt(`Fallback for "${fallbackFor}":`);
+    if (!fallbackRaw) return;
 
-    const r1 = resolveEvent(m1);
-    const r2 = resolveEvent(m2);
-    const rFor = resolveEvent(fallbackFor);
-    const rFb = resolveEvent(fallback);
+    const rFb = resolveEvent(fallbackRaw);
 
     dailySkeleton.push({
       id: "evt_" + Math.random().toString(36).slice(2, 9),
       type: "smart",
-      event: `${m1} / ${m2}`,
+      event: `${r1.event} / ${r2.event}`,     // FIXED — canonical names
       division: divName,
       startTime: st,
       endTime: et,
+
       smartData: {
         main1: r1.event,
         main2: r2.event,
-        fallbackFor: rFor.event,
+        fallbackFor: fallbackFor,
         fallbackActivity: rFb.event
       }
     });
@@ -451,13 +465,14 @@ function addEventFromTile(tileData, divName, div, defaultStart) {
     et = askTime("Split Block\n\nEnd Time:", false); if (!et) return;
     em = timeToMin(et);
 
-    const a1 = prompt("First Activity:");
-    if (!a1) return;
-    const a2 = prompt("Second Activity:");
-    if (!a2) return;
+    const a1_raw = prompt("First Activity:");
+    if (!a1_raw) return;
 
-    const r1 = resolveEvent(a1);
-    const r2 = resolveEvent(a2);
+    const a2_raw = prompt("Second Activity:");
+    if (!a2_raw) return;
+
+    const r1 = resolveEvent(a1_raw);
+    const r2 = resolveEvent(a2_raw);
 
     dailySkeleton.push({
       id: "evt_" + Math.random().toString(36).slice(2, 9),
@@ -474,11 +489,10 @@ function addEventFromTile(tileData, divName, div, defaultStart) {
     return;
   }
 
-  // EVERYTHING ELSE (standard single events)
+  // EVERYTHING ELSE
   st = askTime(`Add "${tileData.name}"\n\nStart:`, true); if (!st) return;
   sm = timeToMin(st);
   et = askTime(`End Time:`, false); if (!et) return;
-  em = timeToMin(et);
 
   const mapped = resolveEvent(tileData.name);
 
@@ -500,14 +514,18 @@ function timeToMin(str) {
   if (!str) return null;
   let s = str.toLowerCase().trim();
   let mer = null;
+
   if (s.endsWith("am") || s.endsWith("pm")) {
     mer = s.endsWith("am") ? "am" : "pm";
     s = s.replace(/am|pm/, "").trim();
   }
+
   const m = s.match(/^(\d{1,2})\s*:\s*(\d{2})$/);
   if (!m) return null;
+
   let hh = parseInt(m[1], 10);
   let mm = parseInt(m[2], 10);
+
   if (mer) {
     if (hh === 12) hh = (mer === "am" ? 0 : 12);
     else if (mer === "pm") hh += 12;
@@ -523,7 +541,7 @@ function minToTime(min) {
 }
 
 /* ========================================================================== */
-/* OUTPUT FOR NEW ENGINE */
+/* OUTPUT TO ENGINE */
 /* ========================================================================== */
 
 window.getMasterSkeleton = function () {
@@ -539,8 +557,11 @@ window.getMasterSkeleton = function () {
       event: ev.event
     };
 
-    if (ev.type === "smart") out.smartData = { ...ev.smartData };
-    if (ev.type === "split") out.subEvents = ev.subEvents.map(s => ({ ...s }));
+    if (ev.type === "smart")
+      out.smartData = { ...ev.smartData };
+
+    if (ev.type === "split")
+      out.subEvents = ev.subEvents.map(s => ({ ...s }));
 
     return out;
   });
@@ -548,4 +569,4 @@ window.getMasterSkeleton = function () {
 
 window.initMasterScheduler = init;
 
-})(); 
+})();
