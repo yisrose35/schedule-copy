@@ -1,345 +1,220 @@
 // ============================================================================
-// smart_tiles_engine.js  (FIXED VERSION)
+// smart_tiles_engine.js
+//
+// SmartTilesEngine v4
+// - Hybrid fairness:
+//     • Global: Who gets ANY special today
+//     • Per-special: Which special each bunk gets
+// - For each Smart Tile pair (usually 2 blocks per division):
+//     • Every bunk gets exactly 1 Swim
+//     • Some bunks get 1 Special, others get 1 Fallback
+//     • No bunk gets 2 specials or 2 swims
+// - Uses all specials from `specialsPool` and rotates them fairly
+// - Integrates with daily_adjustments.js applySmartTileOverridesForToday()
 // ============================================================================
 
-(function () {
-  "use strict";
+(function() {
+  'use strict';
 
-  // --------------------------------------------------------------------------
-  // VALIDATION HELPERS — NEW
-  // --------------------------------------------------------------------------
-
-  function isActivityAllowed(activityName, bunkName, divName, slots, startTime, endTime) {
-    if (!activityName) return false;
-
-    const props = window.activityProperties?.[activityName];
-    if (!props) return false;                              // disabled or unregistered
-
-    if (!props.available) return false;                    // daily disabled
-
-    if (props.allowedDivisions && Array.isArray(props.allowedDivisions)) {
-      if (!props.allowedDivisions.includes(divName)) return false; // division blocked
-    }
-
-    // Build a mock block for canBlockFit
-    const block = {
-      divName,
-      bunk: bunkName,
-      slots,
-      startTime,
-      endTime
-    };
-
-    return window.canBlockFit?.(
-      block,
-      activityName,
-      window.activityProperties,
-      window.fieldUsageBySlot,
-      activityName
-    );
+  function genId() {
+    return `smart_${Math.random().toString(36).slice(2, 9)}`;
   }
 
-  function pickValidSpecial(specialName, fallbackActivity, bunkName, divName, slots, startTime, endTime) {
-    // Try specific special first
-    if (specialName && isActivityAllowed(specialName, bunkName, divName, slots, startTime, endTime)) {
-      return { type: "Special", name: specialName };
-    }
+  const SmartTilesEngine = {
+    /**
+     * @param {Array} configs - Smart tile configs built in applySmartTileOverridesForToday()
+     *    Each cfg:
+     *      {
+     *        id,
+     *        division,
+     *        bunkNames: [ "Bunk 1", "Bunk 2", ... ],
+     *        blocks: [
+     *          { id, startTime, endTime },
+     *          { id, startTime, endTime }
+     *        ],
+     *        specialsPool: [ "Gameroom", "Canteen", ... ],
+     *        fallbackActivity: "Sports",
+     *        maxSpecialBunksPerDay: Number
+     *      }
+     *
+     * @param {Object} masterSettings - global settings from app1 etc (not heavily used here)
+     * @param {Object} history - smartTileHistory object (mutated in place)
+     *
+     * @returns {Array} overrides:
+     *      [
+     *        {
+     *          id,
+     *          bunk,
+     *          activity,
+     *          startTime,
+     *          endTime,
+     *          divName
+     *        },
+     *        ...
+     *      ]
+     */
+    run(configs, masterSettings, history) {
+      const results = [];
+      if (!Array.isArray(configs) || configs.length === 0) return results;
 
-    // Try generic "Special Activity" if valid
-    if (isActivityAllowed("Special Activity", bunkName, divName, slots, startTime, endTime)) {
-      return { type: "Special", name: "Special Activity" };
-    }
-
-    // Try fallback
-    if (fallbackActivity && isActivityAllowed(fallbackActivity, bunkName, divName, slots, startTime, endTime)) {
-      return { type: "Fallback", name: fallbackActivity };
-    }
-
-    // Nothing valid → Free period
-    return { type: "Free", name: "Free" };
-  }
-
-  function pickValidFallback(fallbackActivity, bunkName, divName, slots, startTime, endTime) {
-    if (fallbackActivity && isActivityAllowed(fallbackActivity, bunkName, divName, slots, startTime, endTime)) {
-      return { type: "Fallback", name: fallbackActivity };
-    }
-
-    return { type: "Free", name: "Free" };
-  }
-
-  function pickValidSwim(bunkName, divName, slots, startTime, endTime) {
-    if (isActivityAllowed("Swim", bunkName, divName, slots, startTime, endTime)) {
-      return { type: "Swim", name: "Swim" };
-    }
-
-    return { type: "Free", name: "Free" };
-  }
-
-  // --------------------------------------------------------------------------
-  // HISTORY HELPERS (unchanged)
-  // --------------------------------------------------------------------------
-
-  function ensureHistoryForBunk(history, bunkName) {
-    if (!history.byBunk) history.byBunk = {};
-    if (!history.byBunk[bunkName]) {
-      history.byBunk[bunkName] = {
-        totalSpecials: 0,
-        totalFallbacks: 0,
-        specialsByName: {}
-      };
-    }
-    return history.byBunk[bunkName];
-  }
-
-  function getSpecialCountForBunk(bunkHist, specialName) {
-    if (!bunkHist.specialsByName) bunkHist.specialsByName = {};
-    return bunkHist.specialsByName[specialName] || 0;
-  }
-
-  function bumpSpecialCountForBunk(bunkHist, specialName) {
-    if (!bunkHist.specialsByName) bunkHist.specialsByName = {};
-    bunkHist.specialsByName[specialName] =
-      (bunkHist.specialsByName[specialName] || 0) + 1;
-  }
-
-  // --------------------------------------------------------------------------
-  // SORTING FOR SPECIAL PRIORITY (unchanged)
-  // --------------------------------------------------------------------------
-
-  function sortBunksForSpecialToday(bunkNames, history) {
-    const arr = bunkNames.map((name) => {
-      const h = ensureHistoryForBunk(history, name);
-      return {
-        bunkName: name,
-        totalSpecials: h.totalSpecials || 0,
-        totalFallbacks: h.totalFallbacks || 0
-      };
-    });
-
-    arr.sort((a, b) => {
-      if (a.totalSpecials !== b.totalSpecials) {
-        return a.totalSpecials - b.totalSpecials;
+      // --- Normalize history shape ---
+      if (!history || typeof history !== 'object') {
+        history = { byBunk: {}, bySpecial: {} };
       }
-      if (a.totalFallbacks !== b.totalFallbacks) {
-        return b.totalFallbacks - a.totalFallbacks;
-      }
-      return a.bunkName.localeCompare(b.bunkName);
-    });
+      if (!history.byBunk) history.byBunk = {};
+      if (!history.bySpecial) history.bySpecial = {};
 
-    return arr.map((x) => x.bunkName);
-  }
+      const byBunk = history.byBunk;
+      const bySpecial = history.bySpecial;
+      const today = window.currentScheduleDate || null;
 
-  // --------------------------------------------------------------------------
-  // ASSIGN SPECIFIC SPECIAL NAMES (unchanged)
-  // --------------------------------------------------------------------------
+      configs.forEach(cfg => {
+        const division = cfg.division;
+        let bunks = (cfg.bunkNames || []).slice();
+        if (!bunks.length) return;
 
- function assignSpecificSpecials(bunkNames, specialsPool, history) {
-  const assignments = {};
-  const remaining = new Set(bunkNames);
+        const blocks = (cfg.blocks || []).slice();
+        if (!blocks.length) return;
 
-  if (!specialsPool || specialsPool.length === 0) {
-    bunkNames.forEach((b) => { assignments[b] = null; });
-    return assignments;
-  }
+        // We use the FIRST TWO blocks as the Smart Tile pair
+        const blockA = blocks[0];
+        const blockB = blocks[1] || blocks[0]; // if only one, double-use it
 
-  while (remaining.size > 0) {
-    const candidates = Array.from(remaining);
+        const specialsPool = (cfg.specialsPool || []).slice();
+        if (!specialsPool.length) {
+          // If no specials, everyone just gets Swim + fallback
+          assignNoSpecialScenario(bunks, division, blockA, blockB, cfg.fallbackActivity, results);
+          return;
+        }
 
-    // Build all possible (bunk, special) combinations
-    const pairs = [];
+        const fallbackActivity = cfg.fallbackActivity || "Sports";
 
-    for (const bunkName of candidates) {
-      const h = ensureHistoryForBunk(history, bunkName);
-
-      const totalSpecials = h.totalSpecials || 0;
-      const totalFallbacks = h.totalFallbacks || 0;
-
-      for (const specialName of specialsPool) {
-        const specialCount = getSpecialCountForBunk(h, specialName);
-
-        pairs.push({
-          bunkName,
-          specialName,
-          score: [
-            totalSpecials,    // Fairness A: fewest specials overall FIRST
-            specialCount,     // Fairness B: fewest of THIS special next
-            -totalFallbacks,  // Fairness C: bunks that get fallback more get priority
-            bunkName          // Fairness D: tie breaker alphabetically
-          ]
+        // --- 1. GLOBAL FAIRNESS: who gets ANY special today? ---
+        // Sort bunks by how many specials they've had total.
+        bunks.sort((a, b) => {
+          const ha = byBunk[a] || {};
+          const hb = byBunk[b] || {};
+          const ca = ha.anySpecialCount || 0;
+          const cb = hb.anySpecialCount || 0;
+          if (ca !== cb) return ca - cb;
+          // deterministic tie-breaker
+          return String(a).localeCompare(String(b));
         });
-      }
+
+        const maxSpecial = Math.min(
+          cfg.maxSpecialBunksPerDay || bunks.length,
+          bunks.length
+        );
+
+        const specialBunks = bunks.slice(0, maxSpecial);
+        const nonSpecialBunks = bunks.slice(maxSpecial);
+
+        // --- 2. PER-SPECIAL FAIRNESS: which special does each "special bunk" get? ---
+        function pickSpecialForBunk(bunk) {
+          if (!specialsPool.length) return null;
+
+          const bunkHist = (byBunk[bunk] && byBunk[bunk].specials) || {};
+          let best = null;
+
+          specialsPool.forEach(name => {
+            const bunkCount = bunkHist[name] || 0;
+            const globalCount = bySpecial[name] || 0;
+
+            // Lower is better; weight personal history more heavily
+            const score = bunkCount * 1000 + globalCount;
+
+            if (!best ||
+                score < best.score ||
+                (score === best.score && name < best.name)) {
+              best = { name, score };
+            }
+          });
+
+          return best ? best.name : null;
+        }
+
+        // --- 3. Build per-bunk assignments (2 blocks each) ---
+
+        // Helper: ensure bunk has history record
+        function ensureBunkHist(bunkName) {
+          if (!byBunk[bunkName]) {
+            byBunk[bunkName] = {
+              anySpecialCount: 0,
+              specials: {},
+              lastDate: null
+            };
+          } else if (!byBunk[bunkName].specials) {
+            byBunk[bunkName].specials = {};
+          }
+        }
+
+        // Special bunks: 1 Swim + 1 Special
+        specialBunks.forEach(bunk => {
+          ensureBunkHist(bunk);
+
+          const chosenSpecial = pickSpecialForBunk(bunk);
+          if (!chosenSpecial) {
+            // If somehow no special is available, fall back to "no special" behavior for this bunk.
+            assignBunkPair(bunk, division, blockA, blockB, "Swim", fallbackActivity, results);
+            return;
+          }
+
+          // Rule A: Bunk gets exactly 1 Swim + 1 Special (no double special).
+          // We'll make Block A = Swim, Block B = Special (consistent pattern).
+          assignBunkPair(bunk, division, blockA, blockB, "Swim", chosenSpecial, results);
+
+          // Update fairness history
+          byBunk[bunk].anySpecialCount = (byBunk[bunk].anySpecialCount || 0) + 1;
+          byBunk[bunk].specials[chosenSpecial] =
+            (byBunk[bunk].specials[chosenSpecial] || 0) + 1;
+          byBunk[bunk].lastDate = today;
+
+          bySpecial[chosenSpecial] = (bySpecial[chosenSpecial] || 0) + 1;
+        });
+
+        // Non-special bunks: 1 Swim + 1 Fallback (never special)
+        nonSpecialBunks.forEach(bunk => {
+          assignBunkPair(bunk, division, blockA, blockB, "Swim", fallbackActivity, results);
+          // No special history increment (they didn't get a special today)
+        });
+      });
+
+      return results;
     }
+  };
 
-    // Sort lexicographically by the score array
-    pairs.sort((a, b) => {
-      for (let i = 0; i < a.score.length; i++) {
-        if (a.score[i] < b.score[i]) return -1;
-        if (a.score[i] > b.score[i]) return 1;
-      }
-      return 0;
+  // Helper: assign 2 blocks to a bunk (first + second activity)
+  function assignBunkPair(bunk, division, blockA, blockB, firstActivity, secondActivity, results) {
+    // Block A
+    results.push({
+      id: genId(),
+      bunk: bunk,
+      activity: firstActivity,
+      startTime: blockA.startTime,
+      endTime: blockA.endTime,
+      divName: division
     });
 
-    // Pick the best bunk-special pair
-    const chosen = pairs[0];
-    assignments[chosen.bunkName] = chosen.specialName;
-    remaining.delete(chosen.bunkName);
-
-    // Update history so next assignment respects the new state
-    const h = ensureHistoryForBunk(history, chosen.bunkName);
-    h.totalSpecials = (h.totalSpecials || 0) + 1;
-    bumpSpecialCountForBunk(h, chosen.specialName);
-  }
-
-  return assignments;
-}
-
-  // --------------------------------------------------------------------------
-  // RUN ONE SMART TILE CONFIG  (fully patched)
-  // --------------------------------------------------------------------------
-
-  function runSmartTileConfig(cfg, history) {
-    const updatedHistory = JSON.parse(JSON.stringify(history || { byBunk: {} }));
-    const bunkNames = (cfg.bunkNames || []).slice();
-    if (!bunkNames.length) return { overrides: [], updatedHistory };
-
-    if (!cfg.blocks || cfg.blocks.length !== 2) return { overrides: [], updatedHistory };
-
-    const blockA = cfg.blocks[0];
-    const blockB = cfg.blocks[1];
-    const divName = cfg.division;
-
-    const fallbackActivity = cfg.fallbackActivity || "Sports Slot";
-    const specialsPool = cfg.specialsPool || [];
-
-    const maxSpecialBunksPerDay =
-      typeof cfg.maxSpecialBunksPerDay === "number"
-        ? Math.min(bunkNames.length, cfg.maxSpecialBunksPerDay)
-        : bunkNames.length;
-
-    const sortedForSpecial = sortBunksForSpecialToday(bunkNames, updatedHistory);
-    const bunksThatGetSpecialToday = new Set(sortedForSpecial.slice(0, maxSpecialBunksPerDay));
-    const bunksThatGetFallbackToday = new Set(sortedForSpecial.slice(maxSpecialBunksPerDay));
-
-    const specialAssignments = assignSpecificSpecials(
-      Array.from(bunksThatGetSpecialToday),
-      specialsPool,
-      updatedHistory
-    );
-
-    const overrides = [];
-
-    bunkNames.forEach((bunkName, idx) => {
-      const getsSpecial = bunksThatGetSpecialToday.has(bunkName);
-      const getsFallback = bunksThatGetFallbackToday.has(bunkName);
-      const even = idx % 2 === 0;
-
-      // Helper to validate a chosen activity
-      function validate(type, specialName, blockDef) {
-        const slots = blockDef.slots || [];
-        const startTime = blockDef.startTime;
-        const endTime = blockDef.endTime;
-
-        if (type === "Swim") {
-          return pickValidSwim(bunkName, divName, slots, startTime, endTime);
-        }
-
-        if (type === "Special") {
-          return pickValidSpecial(
-            specialName,
-            fallbackActivity,
-            bunkName,
-            divName,
-            slots,
-            startTime,
-            endTime
-          );
-        }
-
-        if (type === "Fallback") {
-          return pickValidFallback(
-            fallbackActivity,
-            bunkName,
-            divName,
-            slots,
-            startTime,
-            endTime
-          );
-        }
-
-        return { type: "Free", name: "Free" };
-      }
-
-      // FIRST BLOCK
-      const firstType = getsSpecial
-        ? (even ? "Swim" : "Special")
-        : (even ? "Swim" : "Fallback");
-
-      const firstSpecialName =
-        getsSpecial && !even ? specialAssignments[bunkName] : null;
-
-      const validA = validate(firstType, firstSpecialName, blockA);
-
-      overrides.push({
-        bunkName,
-        blockId: blockA.id,
-        activityType: validA.type,
-        specialName: validA.name
-      });
-
-      // SECOND BLOCK
-      const secondType = getsSpecial
-        ? (even ? "Special" : "Swim")
-        : (even ? "Fallback" : "Swim");
-
-      const secondSpecialName =
-        getsSpecial && even ? specialAssignments[bunkName] : null;
-
-      const validB = validate(secondType, secondSpecialName, blockB);
-
-      overrides.push({
-        bunkName,
-        blockId: blockB.id,
-        activityType: validB.type,
-        specialName: validB.name
-      });
-
-      // UPDATE HISTORY
-      const bunkHist = ensureHistoryForBunk(updatedHistory, bunkName);
-
-      if (validA.type === "Special" || validB.type === "Special") {
-        bunkHist.totalSpecials++;
-        const used = validA.type === "Special" ? validA.name :
-                     validB.type === "Special" ? validB.name : null;
-        if (used) bumpSpecialCountForBunk(bunkHist, used);
-      }
-
-      if (validA.type === "Fallback" || validB.type === "Fallback") {
-        bunkHist.totalFallbacks++;
-      }
+    // Block B
+    results.push({
+      id: genId(),
+      bunk: bunk,
+      activity: secondActivity,
+      startTime: blockB.startTime,
+      endTime: blockB.endTime,
+      divName: division
     });
-
-    return { overrides, updatedHistory };
   }
 
-  // --------------------------------------------------------------------------
-  // RUN MULTIPLE CONFIGS (unchanged)
-  // --------------------------------------------------------------------------
-
-  function runSmartTilesForDay(smartTilesForDay, history) {
-    let currentHistory = JSON.parse(JSON.stringify(history || { byBunk: {} }));
-    const allOverrides = [];
-
-    (smartTilesForDay || []).forEach((cfg) => {
-      const result = runSmartTileConfig(cfg, currentHistory);
-      allOverrides.push(...result.overrides);
-      currentHistory = result.updatedHistory;
+  // Helper: scenario where there are no specials (just Swim + fallback)
+  function assignNoSpecialScenario(bunks, division, blockA, blockB, fallbackActivity, results) {
+    const fb = fallbackActivity || "Sports";
+    bunks.forEach(bunk => {
+      assignBunkPair(bunk, division, blockA, blockB, "Swim", fb, results);
     });
-
-    return {
-      overrides: allOverrides,
-      updatedHistory: currentHistory
-    };
   }
 
-  window.SmartTilesEngine = { runSmartTilesForDay };
+  // Expose globally
+  window.SmartTilesEngine = SmartTilesEngine;
+
 })();
