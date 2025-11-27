@@ -539,6 +539,13 @@ function minutesToTime(min) {
 // - Merge into daily data BEFORE running optimizer.
 // =================================================================
 
+// =================================================================
+// SMART TILE PRE-PROCESSOR HOOK
+// - Build configs from "smart" events in dailyOverrideSkeleton
+// - Use SmartTilesEngine to generate bunkActivityOverrides
+// - Merge into daily data BEFORE running optimizer.
+// =================================================================
+
 function applySmartTileOverridesForToday() {
 
   // 1. Extract smart tiles from skeleton
@@ -552,7 +559,7 @@ function applySmartTileOverridesForToday() {
     return;
   }
 
-  const divisionsCfg = masterSettings.app1.divisions || {};
+  const divisionsCfg         = masterSettings.app1.divisions || {};
   const specialActivitiesCfg = masterSettings.app1.specialActivities || [];
 
   // 2. Group smart tiles by division + signature
@@ -575,17 +582,46 @@ function applySmartTileOverridesForToday() {
   const configs = [];
 
   Object.values(groups).forEach(g => {
-    if (g.events.length !== 2) return; // require pairs
+    // We only treat *pairs* as Smart Tile pairs
+    if (g.events.length !== 2) return;
 
     const divName = g.division;
-    const bunks = (divisionsCfg[divName]?.bunks || []).slice().sort();
+    const bunks   = (divisionsCfg[divName]?.bunks || []).slice().sort();
     if (!bunks.length) return;
 
     const ev1 = g.events[0];
     const ev2 = g.events[1];
-    const sd = ev1.smartData;
+    const sd  = ev1.smartData;
 
-    const maxSpecial = sd.maxSpecialBunksPerDay ?? bunks.length;
+    // ---- HYBRID: respect per-special shareable limit ----
+    // `fallbackFor` is the constrained activity (e.g., "Gameroom")
+    const constrainedName = (sd.fallbackFor || "").toLowerCase();
+    let shareableLimit = null;
+
+    if (constrainedName && specialActivitiesCfg.length) {
+      const spec = specialActivitiesCfg.find(
+        s => (s.name || "").toLowerCase() === constrainedName
+      );
+      if (spec) {
+        // Try several likely field names, then fall back to 2 if "shareable" is true
+        if (typeof spec.maxSimultaneousBunks === "number") {
+          shareableLimit = spec.maxSimultaneousBunks;
+        } else if (typeof spec.shareableSlots === "number") {
+          shareableLimit = spec.shareableSlots;
+        } else if (typeof spec.shareableCount === "number") {
+          shareableLimit = spec.shareableCount;
+        } else if (spec.shareable === true) {
+          // Reasonable default when marked shareable but no explicit count
+          shareableLimit = 2;
+        }
+      }
+    }
+
+    // Whatever the Smart Tile prompt said, we never exceed the shareable capacity
+    let maxSpecial = sd.maxSpecialBunksPerDay ?? bunks.length;
+    if (shareableLimit != null) {
+      maxSpecial = Math.min(maxSpecial, shareableLimit);
+    }
 
     configs.push({
       id: ev1.id + "__" + ev2.id,
@@ -595,19 +631,22 @@ function applySmartTileOverridesForToday() {
         { id: ev1.id, startTime: ev1.startTime, endTime: ev1.endTime },
         { id: ev2.id, startTime: ev2.startTime, endTime: ev2.endTime }
       ],
+      // Use all specials, SmartTilesEngine handles per-bunk / per-special fairness
       specialsPool: specialActivitiesCfg.map(s => s.name),
       fallbackActivity: sd.fallbackActivity,
       maxSpecialBunksPerDay: maxSpecial
     });
   });
 
-  // 4. Run SmartTilesEngine
-let results = [];
-if (configs.length > 0 && window.SmartTilesEngine) {
-  // SmartTilesEngine.run mutates smartTileHistory in place
-  results = window.SmartTilesEngine.run(configs, masterSettings, smartTileHistory) || [];
-}
-
+  // 4. Run SmartTilesEngine (v4) – note: API is `.run`, not `.runSmartTilesForDay`
+  let results = [];
+  if (
+    configs.length > 0 &&
+    window.SmartTilesEngine &&
+    typeof window.SmartTilesEngine.run === "function"
+  ) {
+    results = window.SmartTilesEngine.run(configs, masterSettings, smartTileHistory) || [];
+  }
 
   // 5. Clean items using availability & division rules
   const clean = [];
@@ -624,11 +663,11 @@ if (configs.length > 0 && window.SmartTilesEngine) {
     clean.push(r);
   });
 
-  // 6. Save & update
+  // 6. Save & update overrides
   window.saveCurrentDailyData("bunkActivityOverrides", clean);
   currentOverrides.bunkActivityOverrides = clean;
 
-  // 7. Update fairness history
+  // 7. Persist updated Smart Tile history for fairness across days
   saveSmartTileHistory(smartTileHistory);
 }
 
