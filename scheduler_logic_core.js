@@ -1,18 +1,10 @@
 // ============================================================================
 // scheduler_logic_core.js
 //
-// UPDATED (FIXED for CAPACITY, FAIRNESS & ANTI-DOUBLE ASSIGNMENT):
-// - canBlockFit now correctly handles { type: 'all' } style sharability objects.
-// - Smart Tile Logic (Pass 2.5) is fully capacity-aware: it checks fieldUsageBySlot
-//   before assigning. If full, it forces fallback.
-// - Strict logic ensures a bunk cannot get "Gameroom" twice in one Smart Tile pair.
-// - Fairness uses historical counts correctly.
-//
-// LATEST FIXES:
-// - Removed stray HTML tags (<br>) causing syntax errors.
-// - Defined 'timestamp' variable for history saving.
-// - Initialized 'dailyLeagueSportsUsage' to prevent ReferenceErrors.
-// - Added missing league helper functions (coreGetNextLeagueRound, pairRoundRobin, etc).
+// UPDATED (Smart Tiles Integrated):
+// - Pass 2: Captures 'smart' tiles from skeleton.
+// - Pass 2.5: Processes Smart Tiles using SmartLogicAdapter (fairness engine).
+// - Pass 4: Filters out processed Smart Tiles to prevent double-scheduling.
 // ============================================================================
 
 (function() {
@@ -84,7 +76,7 @@
         window.leagueAssignments = {};
         window.unifiedTimes = [];
         
-        // Fix: Initialize this to prevent ReferenceError in Pass 3.5
+        // Prevent ReferenceError
         const dailyLeagueSportsUsage = {}; 
 
         if (!manualSkeleton || manualSkeleton.length === 0) return false;
@@ -234,8 +226,7 @@
                     Array.isArray(disabledSpecials) && disabledSpecials.includes(item.event);
 
                 if (isDisabledField || isDisabledSpecial) {
-                    // Do not place this pinned block at all today
-                    return;
+                    return; // Do not place this pinned block at all today
                 }
 
                 // Fully pinned: every bunk, every slot = same fixed tile
@@ -301,6 +292,21 @@
                 pushGA(bunksTop, slotsSecond);
                 pinSwim(bunksBottom, slotsSecond);
             }
+            // NEW: Handle Smart Tiles (prepare for Pass 2.5)
+            else if (item.type === 'smart') {
+                allBunks.forEach(bunk => {
+                    schedulableSlotBlocks.push({
+                        divName: item.division,
+                        bunk: bunk,
+                        event: item.event, 
+                        startTime: startMin,
+                        endTime: endMin,
+                        slots: allSlots,
+                        type: 'smart',           // Mark for Pass 2.5
+                        smartData: item.smartData // Pass data through
+                    });
+                });
+            }
             else if (item.type === 'slot' && isGeneratedEvent) {
                 let normalizedEvent = null;
                 if (normalizeSpecialtyLeague(item.event)) normalizedEvent = "Specialty League";
@@ -321,11 +327,82 @@
         });
 
         // =================================================================
+        // PASS 2.5 — SMART TILES (Fairness Engine)
+        // =================================================================
+        const smartBlocks = schedulableSlotBlocks.filter(b => b.type === 'smart');
+        
+        // Group blocks by unique ID (Time + Division + Event) to process bunks together
+        const smartGroups = {};
+        smartBlocks.forEach(b => {
+            const key = `${b.divName}_${b.startTime}_${b.event}`;
+            if (!smartGroups[key]) smartGroups[key] = { blocks: [], data: b.smartData };
+            smartGroups[key].blocks.push(b);
+        });
+
+        Object.values(smartGroups).forEach(group => {
+            if (!group.data) return;
+
+            const bunksInGroup = group.blocks.map(b => b.bunk);
+            // Destructure the smartData saved from the builder
+            const { main1, main2, fallbackActivity, maxSpecialBunksPerDay } = group.data;
+
+            // 1. Run the Fairness Logic
+            let results = {};
+            if (window.SmartLogicAdapter) {
+                results = window.SmartLogicAdapter.generateAssignments(
+                    bunksInGroup,
+                    { act1: main1, act2: main2 },
+                    historicalCounts, // Passed from loadAndFilterData
+                    { maxAct1: maxSpecialBunksPerDay }
+                );
+            } else {
+                // Fallback if adapter missing: Random split
+                console.warn("SmartLogicAdapter not found. Using random split.");
+                bunksInGroup.forEach((b, i) => {
+                    results[b] = (i % 2 === 0) ? main1 : main2;
+                });
+            }
+
+            // 2. Assign activities to the schedule
+            group.blocks.forEach(block => {
+                const assignedActivity = results[block.bunk];
+                
+                const pick = {
+                    field: { name: assignedActivity }, // Assuming name match
+                    sport: null,
+                    _activity: assignedActivity,
+                    _fixed: false 
+                };
+
+                // Validate: Is the assigned activity actually available?
+                // (e.g. checks double booking, time rules, exclusions)
+                if (isPickValidForBlock(block, pick, activityProperties, fieldUsageBySlot)) {
+                    fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, false);
+                } else {
+                    // If Main choice failed (e.g. Canteen full from another division), use Fallback
+                    console.log(`Smart Tile Fallback: ${block.bunk} bumped from ${assignedActivity} to ${fallbackActivity}`);
+                    const fallbackPick = {
+                        field: { name: fallbackActivity },
+                        sport: null,
+                        _activity: fallbackActivity
+                    };
+                    fillBlock(block, fallbackPick, fieldUsageBySlot, yesterdayHistory, false);
+                }
+            });
+        });
+
+        // =================================================================
         // PASS 3 — SPECIALTY LEAGUES
         // =================================================================
         const leagueBlocks = schedulableSlotBlocks.filter(b => b.event === 'League Game');
         const specialtyLeagueBlocks = schedulableSlotBlocks.filter(b => b.event === 'Specialty League');
-        const remainingBlocks = schedulableSlotBlocks.filter(b => b.event !== 'League Game' && b.event !== 'Specialty League');
+        
+        // UPDATED FILTER: Exclude 'smart' tiles since they are done in Pass 2.5
+        const remainingBlocks = schedulableSlotBlocks.filter(b => 
+            b.event !== 'League Game' && 
+            b.event !== 'Specialty League' && 
+            b.type !== 'smart'
+        );
 
         const specialtyLeagueGroups = {};
         specialtyLeagueBlocks.forEach(block => {
@@ -754,7 +831,6 @@
         // =================================================================
         try {
             const historyToSave = rotationHistory;
-            // FIXED: Defined timestamp here
             const timestamp = Date.now();
             
             availableDivisions.forEach(divName => {
