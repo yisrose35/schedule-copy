@@ -7,6 +7,11 @@
 //   before assigning. If full, it forces fallback.
 // - Strict logic ensures a bunk cannot get "Gameroom" twice in one Smart Tile pair.
 // - Fairness uses historical counts correctly.
+//
+// LATEST FIXES:
+// - Removed stray HTML tags (<br>) causing syntax errors.
+// - Defined 'timestamp' variable for history saving.
+// - Initialized 'dailyLeagueSportsUsage' to prevent ReferenceErrors.
 // ============================================================================
 
 (function() {
@@ -71,9 +76,6 @@
         return d;
     }
 
-    // ... (League Round State & Helpers omitted for brevity, assume standard helpers exist) ...
-    // [Standard League helpers here same as before]
-
     // =====================================================================
     // MAIN ENTRY POINT
     // =====================================================================
@@ -81,6 +83,9 @@
         window.scheduleAssignments = {};
         window.leagueAssignments = {};
         window.unifiedTimes = [];
+        
+        // Fix: Initialize this to prevent ReferenceError in Pass 3.5
+        const dailyLeagueSportsUsage = {}; 
 
         if (!manualSkeleton || manualSkeleton.length === 0) return false;
 
@@ -483,7 +488,7 @@
                         startTime: block.startTime,
                         endTime: block.endTime
                     }, allActivities, fieldUsageBySlot, yesterdayHistory,
-                       activityProperties, rotationHistory, divisions, historicalCounts);
+                      activityProperties, rotationHistory, divisions, historicalCounts);
 
                     if (pick) {
                         finalField = pick.field;
@@ -694,11 +699,11 @@
                         matchups = window.getLeagueMatchups(leagueEntry.name, leagueTeams) || [];
                     else
                         matchups = pairRoundRobin(leagueTeams);
-                     
+                      
                     const gamesPerField = Math.ceil(matchups.length / leagueFields.length);
                     const slotCount = group.slots.length || 1;
                     const usedFieldsInThisBlock = Array.from({ length: slotCount }, () => new Set());
-                     
+                      
                     for (let i = 0; i < matchups.length; i++) {
                         const [teamA, teamB] = matchups[i];
                         if (teamA === "BYE" || teamB === "BYE") continue;
@@ -709,7 +714,7 @@
                         const slotIndex = group.slots[i % slotCount];
                         if (fieldUsageBySlot[slotIndex]?.[fieldName]?.count >= 1) isFieldAvailable = false;
                         if (usedFieldsInThisBlock[i % slotCount].has(fieldName)) isFieldAvailable = false;
-                         
+                          
                         const props = activityProperties[fieldName];
                         if (props) {
                             if (!isTimeAvailable(slotIndex, props)) isFieldAvailable = false;
@@ -998,8 +1003,10 @@
             });
             while (bunkPtr < allBunksInGroup.length) {
                 const leftoverBunk = allBunksInGroup[bunkPtr++];
+                // FIXED: Removed the invalid <br> tag here
                 const bunkDivName = Object.keys(divisions).find(div =>
-                    (divisions[div].bunks || []).includes(leftoverBunk)<br>                ) || baseDivName;
+                    (divisions[div].bunks || []).includes(leftoverBunk)
+                ) || baseDivName;
                 fillBlock({
                     slots,
                     bunk: leftoverBunk,
@@ -1077,6 +1084,9 @@
         // =================================================================
         try {
             const historyToSave = rotationHistory;
+            // FIXED: Defined timestamp here
+            const timestamp = Date.now();
+            
             availableDivisions.forEach(divName => {
                 (divisions[divName]?.bunks || []).forEach(bunk => {
                     const schedule = window.scheduleAssignments[bunk] || [];
