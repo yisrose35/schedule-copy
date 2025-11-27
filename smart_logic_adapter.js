@@ -1,7 +1,6 @@
 // =================================================================
 // smart_logic_adapter.js
 //
-// Adapted from "SpecialActivityGridFixed" React component.
 // Handles the fairness logic for Smart Tiles:
 // 1. Calculates historical usage for the specific activities in the tile.
 // 2. Sorts bunks by "Least Total Usage" first.
@@ -17,15 +16,21 @@
         /**
          * Core function to determine which bunks get Activity A vs Activity B
          * based on historical fairness.
-         * * @param {Array} bunks - Array of bunk names (strings)
-         * @param {Object} activities - { act1: "Canteen", act2: "Gameroom", fallback: "Sports" }
+         * @param {Array} bunks - Array of bunk names (strings)
+         * @param {Object} activities - { act1: "Canteen", act2: "Gameroom" }
          * @param {Object} historicalCounts - Global counts object { "Bunk 1": { "Canteen": 5, ... } }
          * @param {Object} constraints - { maxAct1: 2 } (Optional capacity limit for Act 1)
          */
         generateAssignments: function(bunks, activities, historicalCounts, constraints) {
             const { act1, act2 } = activities;
-            // Default to 2 if not set (standard "half the bunks" logic), or 999 if unlimited
-            const maxAct1 = constraints?.maxAct1 || Math.ceil(bunks.length / 2); 
+            
+            // Default to half the bunks if no limit set, or 999 if specifically 0/null meant unlimited (logic varies, assuming strict limit if provided)
+            let maxAct1 = constraints?.maxAct1;
+            if (maxAct1 === null || maxAct1 === undefined || maxAct1 === "") {
+                maxAct1 = Math.ceil(bunks.length / 2); // Default behavior: Split 50/50
+            } else {
+                maxAct1 = parseInt(maxAct1, 10);
+            }
 
             // 1. Calculate Stats from History
             // We look at how many times each bunk has done Act1 vs Act2
