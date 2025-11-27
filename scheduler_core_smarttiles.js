@@ -1,37 +1,7 @@
-
 /* ===========================================================================
    scheduler_core_smarttiles.js
 
    FULL SMART TILE ENGINE
-   ----------------------
-   Handles:
-     - Grouping Smart Tile blocks by (division + main1/main2 signature)
-     - Determining which side is "generated" (special/gameroom/etc.)
-     - Determining which side is "paired" (swim, sports, etc.)
-     - Fairness ordering: lowest historical usage → gets generated side first
-     - Preventing double-generated assignments within same Smart Tile group
-     - Enforcing rule: "If a bunk got generated in block A, they MUST get paired in block B"
-     - Last-block fallback logic (use fallbackActivity if no generated was given)
-     - Capacity & rule checking via SchedulerCore.field.canFit
-     - Usage marking via SchedulerCore.field.markUsage
-     - Fairness usage bumping via SchedulerCore.fairness.bump
-
-   API:
-     SchedulerCore.smarttiles.run(groups, ctx)
-
-   ctx contains:
-     {
-        divisions,
-        unifiedTimes,
-        fieldUsage,
-        activityProps,
-        fairness,
-        allActivities,
-        findBestSpecial,
-        findBestSport,
-        findBestGeneral
-     }
-
    =========================================================================== */
 
 (function (global) {
@@ -47,18 +17,18 @@
        ======================================================================= */
 
     function tryAssignLabel(bunk, label, block, ctx) {
-        const { activityProps, unifiedTimes, fieldUsage, findBestSpecial, findBestSport, findBestGeneral } = ctx;
+        const { activityProps, unifiedTimes, fieldUsage,
+                findBestSpecial, findBestSport, findBestGeneral } = ctx;
 
         if (!label) return false;
+
         const norm = U.normalizeActivityName(label);
 
         let chosenField = null;
         let chosenSport = null;
         let chosenActivity = norm;
 
-        /* --------------------------------------------------------------
-           1. SPORTS TILE
-           -------------------------------------------------------------- */
+        /* SPORTS */
         if (norm === "sports" || norm === "sports slot" || norm === "sport") {
             const pick = findBestSport(block, ctx.allActivities, fieldUsage, null, activityProps);
             if (!pick) return false;
@@ -68,9 +38,7 @@
             chosenActivity = pick._activity;
         }
 
-        /* --------------------------------------------------------------
-           2. GENERIC SPECIAL BUCKET (Special Activity)
-           -------------------------------------------------------------- */
+        /* SPECIAL */
         else if (norm === "special" || norm === "special activity") {
             const pick = findBestSpecial(block, ctx.allActivities, fieldUsage, null, activityProps);
             if (!pick) return false;
@@ -79,28 +47,23 @@
             chosenActivity = pick._activity;
         }
 
-        /* --------------------------------------------------------------
-           3. DIRECT FIELD NAME (Gameroom, Swim, Canteen, etc.)
-           -------------------------------------------------------------- */
+        /* DIRECT FIELD NAME */
         else {
             if (!F.canFit(block, norm, activityProps[norm], fieldUsage, unifiedTimes, norm))
                 return false;
             chosenField = norm;
         }
 
-        /* --------------------------------------------------------------
-           If fully valid, mark usage
-           -------------------------------------------------------------- */
+        /* MARK USAGE */
         F.markUsage(block, chosenField, fieldUsage, chosenActivity);
 
-        // Place schedule tile
         const schedule = global.scheduleAssignments[bunk];
         for (const idx of block.slots) {
             if (!schedule[idx]) {
                 schedule[idx] = {
                     field: chosenField,
                     sport: chosenSport,
-                    continuation: false, // continuation handled upstream
+                    continuation: false,
                     _fixed: false,
                     _h2h: false,
                     _activity: chosenActivity
@@ -113,7 +76,7 @@
 
 
     /* =======================================================================
-       DETERMINE WHICH MAIN IS GENERATED VS PAIRED
+       DETERMINE GENERATED vs PLACED
        ======================================================================= */
 
     function determineSides(blocks, fallbackFor, fallbackActivity) {
@@ -132,20 +95,18 @@
         if (fb && fb === m1) return { generated: main1, placed: main2 };
         if (fb && fb === m2) return { generated: main2, placed: main1 };
 
-        // Heuristic: special vs non-special
         const cat1 = FR.categoryForActivity(main1);
         const cat2 = FR.categoryForActivity(main2);
 
         if (cat1 && !cat2) return { generated: main1, placed: main2 };
         if (cat2 && !cat1) return { generated: main2, placed: main1 };
 
-        // Default fallback
         return { generated: main1, placed: main2 };
     }
 
 
     /* =======================================================================
-       RUN SMART TILE GROUP
+       RUN ONE SMART TILE GROUP
        ======================================================================= */
 
     function runGroup(blocks, ctx) {
@@ -155,40 +116,38 @@
         const bunks = ctx.divisions[divName].bunks.slice();
 
         const sd = blocks[0].smartData;
-        const { generated, placed } = determineSides(blocks, sd.fallbackFor, sd.fallbackActivity);
+        const { generated, placed } =
+            determineSides(blocks, sd.fallbackFor, sd.fallbackActivity);
 
         const genCat = FR.categoryForActivity(generated);
         const fallbackCat = sd.fallbackActivity
             ? FR.categoryForActivity(sd.fallbackActivity)
             : null;
 
-        // Track if bunk has already received the generated side
         const gotGeneratedCount = {};
         bunks.forEach(b => gotGeneratedCount[b] = 0);
 
         blocks.forEach((block, blockIndex) => {
             const isLast = (blockIndex === blocks.length - 1);
-            const fairOrder = genCat ? FR.order(bunks, genCat) : bunks.slice();
+            const fairOrder =
+                genCat ? FR.order(bunks, genCat) : bunks.slice();
+
             const gotGenerationThisBlock = {};
 
-            /* -----------------------------------------------------------
-               PASS 1: Try to give generated side in fairness order
-               ----------------------------------------------------------- */
+            /* PASS 1: Generated side in fairness order */
             for (const bunk of fairOrder) {
-                if (gotGeneratedCount[bunk] >= 1) continue; // can't double-generate
+                if (gotGeneratedCount[bunk] >= 1) continue;
                 if (gotGenerationThisBlock[bunk]) continue;
 
                 if (tryAssignLabel(bunk, generated, block, ctx)) {
                     gotGenerationThisBlock[bunk] = true;
-                    gotGeneratedCount[bunk] += 1;
+                    gotGeneratedCount[bunk]++;
 
                     if (genCat) FR.bump(bunk, genCat, 1);
                 }
             }
 
-            /* -----------------------------------------------------------
-               PASS 2: Everyone else gets placed / fallback
-               ----------------------------------------------------------- */
+            /* PASS 2: Everyone else gets placed or fallback */
             for (const bunk of bunks) {
                 if (gotGenerationThisBlock[bunk]) continue;
 
@@ -196,13 +155,13 @@
                 const alreadyFilled = block.slots.some(s => schedule[s]);
                 if (alreadyFilled) continue;
 
-                // If they got generated earlier → MUST get placed now
+                /* If they got generated earlier → MUST get placed now */
                 if (gotGeneratedCount[bunk] > 0) {
                     tryAssignLabel(bunk, placed, block, ctx);
                     continue;
                 }
 
-                // If they never got generated, and this is the last Smart block
+                /* Last block fallback */
                 if (isLast && sd.fallbackActivity) {
                     if (tryAssignLabel(bunk, sd.fallbackActivity, block, ctx)) {
                         if (fallbackCat) FR.bump(bunk, fallbackCat, 1);
@@ -210,9 +169,9 @@
                     }
                 }
 
-                // Normal behavior → give placed side
+                /* Normal path → placed side */
                 tryAssignLabel(bunk, placed, block, ctx);
-            });
+            }
         });
     }
 
@@ -222,7 +181,9 @@
        ======================================================================= */
 
     function run(groups, ctx) {
-        Object.values(groups).forEach(blocks => runGroup(blocks, ctx));
+        Object.values(groups).forEach(blocks =>
+            runGroup(blocks, ctx)
+        );
     }
 
     NS.smarttiles = { run };
