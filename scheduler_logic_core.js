@@ -830,9 +830,15 @@ sortedLeagueGroups.forEach(group => {
     const leagueTeamLastSport = rotationHistory.leagueTeamLastSport[leagueName] || {};
     rotationHistory.leagueTeamLastSport[leagueName] = leagueTeamLastSport;
 
-    let standardMatchups = [];
-    if (typeof window.getLeagueMatchups === "function")
+   
+        let standardMatchups = [];
+    if (typeof window.getLeagueMatchups === "function") {
         standardMatchups = window.getLeagueMatchups(leagueName, leagueTeams) || [];
+    } else {
+        // Fallback: simple round-robin pairings
+        standardMatchups = pairRoundRobin(leagueTeams) || [];
+    }
+
     else
         standardMatchups = coreGetNextLeagueRound(leagueName, leagueTeams) || [];
 
