@@ -86,16 +86,38 @@ const TILES = [
 ];
 
 function mapEventNameForOptimizer(name) {
-  if (!name) name = "Free";
-  const lowerName = name.toLowerCase().trim();
-  if (lowerName === 'activity')          return { type: 'slot',   event: 'General Activity Slot' };
-  if (lowerName === 'sports')           return { type: 'slot',   event: 'Sports Slot' };
-  if (lowerName === 'special activity' ||
-      lowerName === 'special')          return { type: 'slot',   event: 'Special Activity' };
-  if (['swim','lunch','snacks','dismissal'].includes(lowerName))
-                                        return { type: 'pinned', event: name };
-  return { type: 'pinned', event: name };
+  if (!name) return { type:"pinned", event:"Free" };
+
+  const lower = name.toLowerCase().trim();
+
+  // Sports (fields)
+  if (lower === "sports" || lower === "sport")
+    return { type: "slot", event: "Sports Slot" };
+
+  // Activity (general)
+  if (lower === "activity" || lower === "general activity")
+    return { type: "slot", event: "General Activity Slot" };
+
+  // Specials
+  if (lower === "special" || lower === "special activity")
+    return { type: "slot", event: "Special Activity" };
+
+  // Leagues
+  if (lower === "league" || lower === "league game")
+    return { type: "league", event: "League Game" };
+
+  // Specialty Leagues
+  if (lower === "specialty league" || lower === "specialty")
+    return { type: "specialty", event: "Specialty League" };
+
+  // Swim, Meals, Dismissal
+  if (["swim","lunch","snacks","dismissal"].includes(lower))
+    return { type:"pinned", event:name };
+
+  // Everything else = Custom pinned
+  return { type:"pinned", event:name };
 }
+
 
 function renderPalette(paletteContainer) {
   paletteContainer.innerHTML = '<span style="font-weight:600;align-self:center;">Drag tiles onto the grid:</span>';
