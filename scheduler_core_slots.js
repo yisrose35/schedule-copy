@@ -1,7 +1,8 @@
-=========================================================================== scheduler_core_slots.js
-Standard Slot Filler (Sports, Specials, General)
+//=========================================================================== 
+//scheduler_core_slots.js
+//Standard Slot Filler (Sports, Specials, General)
 
-Fixed: Added run method required by scheduler_core_engine.js ===========================================================================*/
+//Fixed: Added run method required by scheduler_core_engine.js ===========================================================================*/
 
 (function (global) { "use strict";
 
