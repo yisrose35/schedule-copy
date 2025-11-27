@@ -1,219 +1,151 @@
-/* ============================================================================
+/* ===========================================================================
    scheduler_core_engine.js
-   MASTER ENGINE ORCHESTRATOR (For 10-Module Architecture)
+   Master Orchestrator for the 10-Module SchedulerCore Engine
+   =========================================================================== */
 
-   Modules expected:
-     scheduler_core_utils.js           → NS.utils
-     scheduler_core_timegrid.js        → NS.timegrid
-     scheduler_core_field_usage.js     → NS.field
-     scheduler_core_fairness.js        → NS.fairness
-     scheduler_core_smarttiles.js      → NS.smarttiles
-     scheduler_core_slots.js           → NS.slots
-     scheduler_core_leagues.js         → NS.leagues
-     scheduler_core_overrides.js       → NS.overrides
-     scheduler_core_history.js         → NS.history
-
-   This file orchestrates:
-     1. Build master block list from master skeleton + daily overrides
-     2. Build unifiedTimes grid
-     3. Build fieldUsage grid
-     4. Smart Tiles pass
-     5. Slots pass (Sports, Specials, Activity, Swim)
-     6. League pass
-     7. Overrides pass
-     8. Save scheduleAssignments + unifiedTimes
-
-   ============================================================================ */
 (function (global) {
-"use strict";
+    "use strict";
 
-const NS = global.SchedulerCore = global.SchedulerCore || {};
+    const NS = global.SchedulerCore = global.SchedulerCore || {};
 
-/* ============================================================================
-   CORE: BUILD FULL CONTEXT
-   ============================================================================ */
-NS.getFullContext = function () {
-    return {
-        divisions:        window.divisions || {},
-        allActivities:    window.allActivities || {},
-        activityProps:    window.activityProperties || {},
+    const U  = NS.utils;
+    const TG = NS.timegrid;
+    const F  = NS.field;
+    const FR = NS.fairness;
+    const ST = NS.smarttiles;
+    const SL = NS.slots;
+    const LG = NS.leagues;
+    const OV = NS.overrides;
+    const HI = NS.history;
 
-        unifiedTimes:     [],
-        fieldUsage:       {},
+    /* =======================================================================
+       BUILD FULL CONTEXT
+       ======================================================================= */
+    function getFullContext() {
+        try {
+            const divisions        = global.divisions               || {};
+            const allActivities    = global.allActivities           || {};
+            const activityProps    = global.activityProperties      || {};
+            const fieldsBySport    = global.fieldsBySport           || {};
+            const masterLeagues    = global.masterLeagues           || {};
+            const masterSpecialty  = global.masterSpecialtyLeagues  || {};
+            const rotationHistory  = HI.getRotationHistory()        || {};
+            const yesterdayHistory = HI.getYesterdayHistory()       || {};
+            const disabledLeagues  = global.disabledLeagues         || [];
+            const disabledSL       = global.disabledSpecialtyLeagues|| [];
 
-        fairness:         NS.fairness,
-        history:          NS.history,
+            const unifiedTimes = TG.buildUnifiedTimeGrid(divisions);
 
-        field:            NS.field,
+            return {
+                divisions,
+                unifiedTimes,
+                allActivities,
+                activityProps,
+                fieldsBySport,
+                masterLeagues,
+                masterSpecialtyLeagues: masterSpecialty,
+                rotationHistory,
+                yesterdayHistory,
+                disabledLeagues,
+                disabledSpecialtyLeagues: disabledSL,
+                fieldUsage: F.createUsageTracker(unifiedTimes),
 
-        findBestGeneral:  NS.slots.findBestGeneral,
-        findBestSpecial:  NS.slots.findBestSpecial,
-        findBestSport:    NS.slots.findBestSport,
-
-        leagues:          NS.leagues,
-        overrides:        NS.overrides
-    };
-};
-
-/* ============================================================================
-   CORE: EXPAND MASTER SKELETON INTO BLOCK OBJECTS
-   ============================================================================ */
-function expandSkeletonToBlocks(masterSkeleton, ctx) {
-    const blocks = [];
-
-    masterSkeleton.forEach(ev => {
-        const start = ev.start;
-        const end   = ev.end;
-        const div   = ev.division;
-
-        if (!ctx.divisions[div]) return; // unknown division
-
-        blocks.push({
-            divName: div,
-            startTime: start,
-            endTime: end,
-            type: ev.type,
-            event: ev.event,
-            smartData: ev.smartData ? { ...ev.smartData } : null,
-            subEvents: ev.subEvents ? ev.subEvents.map(se => ({ ...se })) : null,
-            slots: [] // filled after unified timegrid
-        });
-    });
-
-    return blocks;
-}
-
-/* ============================================================================
-   CORE: ATTACH SLOT INDICES TO EACH BLOCK
-   ============================================================================ */
-function attachSlotsToBlocks(blocks, unifiedTimes) {
-    blocks.forEach(block => {
-        block.slots = [];
-        for (let i = 0; i < unifiedTimes.length; i++) {
-            const slot = unifiedTimes[i];
-            const sMin =
-                slot.start.getHours() * 60 + slot.start.getMinutes();
-            if (sMin >= block.startTime && sMin < block.endTime) {
-                block.slots.push(i);
-            }
+                /* engine injectors */
+                findBestSpecial: SL.findBestSpecial,
+                findBestSport:   SL.findBestSport,
+                findBestGeneral: SL.findBestGeneral
+            };
         }
-    });
-}
-
-/* ============================================================================
-   CORE: GROUP SMART TILES
-   ============================================================================ */
-function groupSmartTiles(blocks) {
-    const groups = {};
-    blocks.forEach(b => {
-        if (b.type !== "smart") return;
-
-        const sd = b.smartData || {};
-        const key = `${b.divName}__${sd.main1 || ""}__${sd.main2 || ""}`;
-        if (!groups[key]) groups[key] = [];
-        groups[key].push(b);
-    });
-    return groups;
-}
-
-/* ============================================================================ 
-   CLEAR SCHEDULE 
-   ============================================================================ */
-function prepareEmptyScheduleAssignments(ctx) {
-    const assignments = {};
-    Object.values(ctx.divisions).forEach(div => {
-        (div.bunks || []).forEach(b => {
-            assignments[b] = new Array(ctx.unifiedTimes.length)
-                .fill(null);
-        });
-    });
-    return assignments;
-}
-
-/* ============================================================================
-   MAIN ENGINE RUN
-   ============================================================================ */
-NS.run = function () {
-
-    console.log("ENGINE START");
-
-    /* --------------------------------------------
-       1. Context
-       -------------------------------------------- */
-    const ctx = NS.getFullContext();
-
-    /* --------------------------------------------
-       2. Load master skeleton from the builder
-       -------------------------------------------- */
-    if (typeof window.getMasterSkeleton !== "function") {
-        throw new Error("Master Scheduler missing getMasterSkeleton()");
+        catch (e) {
+            console.error("getFullContext ERROR:", e);
+            return null;
+        }
     }
-    const masterSkeleton = window.getMasterSkeleton();
 
-    /* --------------------------------------------
-       3. Expand skeleton to block objects
-       -------------------------------------------- */
-    let blocks = expandSkeletonToBlocks(masterSkeleton, ctx);
 
-    /* --------------------------------------------
-       4. Build unifiedTimes grid
-       -------------------------------------------- */
-    ctx.unifiedTimes = NS.timegrid.buildUnifiedTimes(ctx, blocks);
+    /* =======================================================================
+       MAIN ENGINE RUN
+       ======================================================================= */
+    NS.run = async function (blocks, ctx) {
+        if (!ctx) throw new Error("Context missing. Engine cannot run.");
 
-    /* --------------------------------------------
-       5. Attach slots to blocks
-       -------------------------------------------- */
-    attachSlotsToBlocks(blocks, ctx.unifiedTimes);
+        // Create storage
+        global.scheduleAssignments = {};
+        const divisions = ctx.divisions;
 
-    /* --------------------------------------------
-       6. Build fieldUsage grid
-       -------------------------------------------- */
-    ctx.fieldUsage = NS.field.buildFieldUsage(ctx);
+        Object.keys(divisions).forEach(div => {
+            divisions[div].bunks.forEach(b => {
+                global.scheduleAssignments[b] = new Array(ctx.unifiedTimes.length);
+            });
+        });
 
-    /* --------------------------------------------
-       7. Prepare empty scheduleAssignments
-       -------------------------------------------- */
-    global.scheduleAssignments = prepareEmptyScheduleAssignments(ctx);
+        /* --------------------------------------------
+           1. FIELD USAGE INITIALIZATION
+        -------------------------------------------- */
+        ctx.fieldUsage = F.createUsageTracker(ctx.unifiedTimes);
 
-    /* --------------------------------------------
-       8. SMART TILES PASS
-       -------------------------------------------- */
-    const smartGroups = groupSmartTiles(blocks);
-    NS.smarttiles.run(smartGroups, ctx);
+        /* --------------------------------------------
+           2. SPLIT BLOCK EXPANSION
+        -------------------------------------------- */
+        blocks = SL.expandSplits(blocks);
 
-    /* --------------------------------------------
-       9. SLOT ASSIGNMENT PASS (Sports / Special / Activity / Swim)
-       -------------------------------------------- */
-    NS.slots.assign(blocks, ctx);
+        /* --------------------------------------------
+           3. GROUP SMART TILES
+        -------------------------------------------- */
+        const smartGroups = SL.groupSmartTiles(blocks);
 
-    /* --------------------------------------------
-       10. LEAGUES PASS
-       -------------------------------------------- */
-    NS.leagues.run(blocks, ctx);
+        /* --------------------------------------------
+           4. REMOVE SMART TILE BLOCKS FROM MAIN
+        -------------------------------------------- */
+        const normalBlocks = blocks.filter(b => b.type !== "smart");
 
-    /* --------------------------------------------
-       11. OVERRIDES PASS (User daily-adjustment overrides)
-       -------------------------------------------- */
-    NS.overrides.apply(blocks, ctx);
+        /* --------------------------------------------
+           5. RUN SMART TILE ENGINE
+        -------------------------------------------- */
+        ST.run(smartGroups, ctx);
 
-    /* --------------------------------------------
-       12. SAVE RESULTS
-       -------------------------------------------- */
-    window.saveCurrentDailyData?.("scheduleAssignments", global.scheduleAssignments);
-    window.saveCurrentDailyData?.("unifiedTimes", ctx.unifiedTimes);
+        /* --------------------------------------------
+           6. RUN STANDARD SLOTS (Activity / Special / Sports / Swim fallback)
+        -------------------------------------------- */
+        SL.run(normalBlocks, ctx);
 
-    console.log("ENGINE COMPLETE");
-};
+        /* --------------------------------------------
+           7. LEAGUES (REGULAR)
+        -------------------------------------------- */
+        LG.run(normalBlocks, ctx);
 
-/* ============================================================================
-   EXPORT
-   ============================================================================ */
+        /* --------------------------------------------
+           8. SPECIALTY LEAGUES
+        -------------------------------------------- */
+        LG.runSpecialty(normalBlocks, ctx);
 
-// Public API for the new 10-module engine
-NS.runEngine     = NS.run;             // legacy alias
-NS.run           = NS.run;             // main engine entry point
-NS.getFullContext = getFullContext;    // expose context builder
+        /* --------------------------------------------
+           9. OVERRIDES FROM DAILY ADJUSTMENTS
+        -------------------------------------------- */
+        OV.apply(normalBlocks, ctx);
 
-// attach to window/global
-global.SchedulerCore = NS;
+        /* --------------------------------------------
+           10. SAVE HISTORY
+        -------------------------------------------- */
+        const newHistory = HI.computeNewHistory(ctx.rotationHistory, global.scheduleAssignments);
+        HI.saveRotationHistory(newHistory);
 
+        /* --------------------------------------------
+           11. RETURN
+        -------------------------------------------- */
+        return {
+            schedule: global.scheduleAssignments,
+            rotationHistory: newHistory
+        };
+    };
+
+
+    /* =======================================================================
+       EXPORT PUBLIC API
+       ======================================================================= */
+
+    NS.getFullContext = getFullContext;
+    NS.engine = NS;       // alias for clarity
+    global.SchedulerCore = NS;
+
+})(typeof window !== "undefined" ? window : global);
