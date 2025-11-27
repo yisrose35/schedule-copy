@@ -343,7 +343,7 @@
                     blocks: [], 
                     data: b.smartData,
                     // Capture numeric time for sorting
-                    timeValue: parseTimeToMinutes(b.startTime) 
+                    timeValue: b.startTime 
                 };
             }
             smartGroups[key].blocks.push(b);
@@ -388,13 +388,19 @@
                 const assignedCategory = results[block.bunk]; // e.g. "Special", "Swim", "Sports"
                 
                 // Determine what KIND of slot this should become
-                const norm = String(assignedCategory).toLowerCase();
+                const norm = String(assignedCategory || '').toLowerCase();
                 
                 // CASE 1: SWIM (Fixed/Pinned)
                 if (norm.includes("swim")) {
                     // Assign immediately. No need to pass to generator.
                     // Remove this block from future processing by handling it now.
-                    fillBlock(block, { field: "Swim", _fixed: true, _activity: "Swim" }, fieldUsageBySlot, yesterdayHistory, false);
+                    fillBlock(
+                        block,
+                        { field: "Swim", _fixed: true, _activity: "Swim" },
+                        fieldUsageBySlot,
+                        yesterdayHistory,
+                        false
+                    );
                     
                     // Mark block as 'processed' so Pass 4 ignores it
                     block.processed = true; 
@@ -412,21 +418,19 @@
                     block.type = 'slot'; // Pass 4 will pick it up
                 } 
                 
-                // CASE 4: FALLBACK / SPECIFIC (Treat as pinned specific request)
+                // CASE 4: FALLBACK / SPECIFIC (Treat as generic generator category)
                 else {
-                    // If the logic picked "Canteen" specifically, treat as specific request
-                    // BUT for the generator to fill it, we usually map it to a slot type.
-                    // If it's unknown, we default to "Special Activity".
-                    if (specialActivityNames.includes(assignedCategory)) {
-                         // Match found in specific specials list. 
-                         // We set it as "Special Activity" but could theoretically hint preference.
-                         // For now, map to generic special slot.
-                         block.event = "Special Activity";
-                         block.type = 'slot';
+                    if (assignedCategory && specialActivityNames.includes(assignedCategory)) {
+                        // Map to generic special slot
+                        block.event = "Special Activity";
+                        block.type = 'slot';
+                    } else if (fallbackActivity && specialActivityNames.includes(fallbackActivity)) {
+                        block.event = "Special Activity";
+                        block.type = 'slot';
                     } else {
-                         // Default fallback
-                         block.event = "General Activity Slot";
-                         block.type = 'slot';
+                        // Default fallback
+                        block.event = "General Activity Slot";
+                        block.type = 'slot';
                     }
                 }
             });
@@ -442,10 +446,9 @@
         const remainingBlocks = schedulableSlotBlocks.filter(b => 
             b.event !== 'League Game' && 
             b.event !== 'Specialty League' &&
-            !b.processed // <--- Crucial: Ignore Swims assigned in Pass 2.5
+            !b.processed
         );
 
-        // ... (Specialty League Logic) ...
         const specialtyLeagueGroups = {};
         specialtyLeagueBlocks.forEach(block => {
             const key = `${block.divName}-${block.startTime}`;
@@ -863,11 +866,17 @@
             if (pick) {
                 fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, false);
             } else {
-                fillBlock(block, {
-                    field: "Free",
-                    sport: null,
-                    _activity: "Free"
-                }, fieldUsageBySlot, false);
+                fillBlock(
+                    block,
+                    {
+                        field: "Free",
+                        sport: null,
+                        _activity: "Free"
+                    },
+                    fieldUsageBySlot,
+                    yesterdayHistory,
+                    false
+                );
             }
         }
 
@@ -878,6 +887,9 @@
             const historyToSave = rotationHistory;
             const timestamp = Date.now();
             
+            historyToSave.bunks = historyToSave.bunks || {};
+            historyToSave.leagues = historyToSave.leagues || {};
+
             availableDivisions.forEach(divName => {
                 (divisions[divName]?.bunks || []).forEach(bunk => {
                     const schedule = window.scheduleAssignments[bunk] || [];
@@ -971,8 +983,8 @@
         if (!window.unifiedTimes || startMin == null || endMin == null) return slots;
         for (let i = 0; i < window.unifiedTimes.length; i++) {
             const slot = window.unifiedTimes[i];
-            const slotStart = new Date(window.unifiedTimes[i].start).getHours() * 60 +
-                              new Date(window.unifiedTimes[i].start).getMinutes();
+            const d = new Date(slot.start);
+            const slotStart = d.getHours() * 60 + d.getMinutes();
             if (slotStart >= startMin && slotStart < endMin) slots.push(i);
         }
         return slots;
@@ -981,6 +993,7 @@
     function markFieldUsage(block, fieldName, fieldUsageBySlot) {
         if (!fieldName ||
             fieldName === "No Field" ||
+            !Array.isArray(window.allSchedulableNames) ||
             !window.allSchedulableNames.includes(fieldName)) return;
         for (const slotIndex of block.slots || []) {
             if (slotIndex === undefined) continue;
@@ -1004,8 +1017,8 @@
     function isTimeAvailable(slotIndex, fieldProps) {
         if (!window.unifiedTimes || !window.unifiedTimes[slotIndex]) return false;
         const slot = window.unifiedTimes[slotIndex];
-        const slotStartMin = new Date(slot.start).getHours() * 60 +
-                             new Date(slot.start).getMinutes();
+        const d = new Date(slot.start);
+        const slotStartMin = d.getHours() * 60 + d.getMinutes();
         const slotEndMin = slotStartMin + INCREMENT_MINS;
         const rules = (fieldProps.timeRules || []).map(r => {
             if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
@@ -1244,6 +1257,7 @@
         const fname = fieldLabel(pick.field);
         if (!fname) return true;
         if (!window.allSchedulableNames ||
+            !Array.isArray(window.allSchedulableNames) ||
             !window.allSchedulableNames.includes(fname)) return true;
         return canBlockFit(block, fname, activityProperties, fieldUsageBySlot, pick._activity);
     }
@@ -1267,6 +1281,7 @@
                 };
                 if (!isLeagueFill &&
                     fieldName &&
+                    Array.isArray(window.allSchedulableNames) &&
                     window.allSchedulableNames.includes(fieldName)) {
                     fieldUsageBySlot[slotIndex] =
                         fieldUsageBySlot[slotIndex] || {};
@@ -1478,6 +1493,7 @@
                 field: sa.name,
                 sport: null
             }))
+
         ];
         const h2hActivities = allActivities.filter(
             a => a.type === "field" && a.sport
