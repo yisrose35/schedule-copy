@@ -133,67 +133,61 @@
   // ASSIGN SPECIFIC SPECIAL NAMES (unchanged)
   // --------------------------------------------------------------------------
 
-  function assignSpecificSpecials(bunkNames, specialsPool, history) {
+ function assignSpecificSpecials(bunkNames, specialsPool, history) {
   const assignments = {};
   const remaining = new Set(bunkNames);
 
   if (!specialsPool || specialsPool.length === 0) {
-    bunkNames.forEach(b => assignments[b] = null);
+    bunkNames.forEach((b) => { assignments[b] = null; });
     return assignments;
-  }
-
-  // Track global usage of each special across ALL bunks
-  const globalCounts = {};
-  specialsPool.forEach(sp => globalCounts[sp] = 0);
-
-  // Count historical totals globally
-  for (const bunk in history.byBunk) {
-    const h = history.byBunk[bunk];
-    for (const sp of specialsPool) {
-      const c = h.specialsByName?.[sp] || 0;
-      globalCounts[sp] += c;
-    }
   }
 
   while (remaining.size > 0) {
     const candidates = Array.from(remaining);
 
-    // Build all (bunk, special) possible pairs
+    // Build all possible (bunk, special) combinations
     const pairs = [];
+
     for (const bunkName of candidates) {
       const h = ensureHistoryForBunk(history, bunkName);
-      for (const specialName of specialsPool) {
-        const bunkSpecialCount = getSpecialCountForBunk(h, specialName);
-        const bunkTotal = h.totalSpecials || 0;
-        const bunkFallback = h.totalFallbacks || 0;
-        const globalCount = globalCounts[specialName];
 
-        // Score = fairness metric
+      const totalSpecials = h.totalSpecials || 0;
+      const totalFallbacks = h.totalFallbacks || 0;
+
+      for (const specialName of specialsPool) {
+        const specialCount = getSpecialCountForBunk(h, specialName);
+
         pairs.push({
           bunkName,
           specialName,
-          score: (
-            bunkSpecialCount * 10000 +   // huge weight: avoid repeating specific special
-            bunkTotal * 200 +            // next: avoid repeating specials in general
-            globalCount * 150 +          // next: rotate specials globally
-            (100 - bunkFallback) * 1     // mild bonus for bunks that got fallback often
-          )
+          score: [
+            totalSpecials,    // Fairness A: fewest specials overall FIRST
+            specialCount,     // Fairness B: fewest of THIS special next
+            -totalFallbacks,  // Fairness C: bunks that get fallback more get priority
+            bunkName          // Fairness D: tie breaker alphabetically
+          ]
         });
       }
     }
 
-    // Sort by lowest score first (best candidate)
-    pairs.sort((a, b) => a.score - b.score);
+    // Sort lexicographically by the score array
+    pairs.sort((a, b) => {
+      for (let i = 0; i < a.score.length; i++) {
+        if (a.score[i] < b.score[i]) return -1;
+        if (a.score[i] > b.score[i]) return 1;
+      }
+      return 0;
+    });
 
+    // Pick the best bunk-special pair
     const chosen = pairs[0];
-    if (!chosen) break;
-
-    // Assign
     assignments[chosen.bunkName] = chosen.specialName;
     remaining.delete(chosen.bunkName);
 
-    // Update global counts
-    globalCounts[chosen.specialName]++;
+    // Update history so next assignment respects the new state
+    const h = ensureHistoryForBunk(history, chosen.bunkName);
+    h.totalSpecials = (h.totalSpecials || 0) + 1;
+    bumpSpecialCountForBunk(h, chosen.specialName);
   }
 
   return assignments;
