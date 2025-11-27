@@ -208,6 +208,12 @@ NS.run = function () {
 /* ============================================================================
    EXPORT
    ============================================================================ */
-global.SchedulerCore.runEngine = NS.run;
 
-})(typeof window !== "undefined" ? window : global);
+// Public API for the new 10-module engine
+NS.runEngine     = NS.run;             // legacy alias
+NS.run           = NS.run;             // main engine entry point
+NS.getFullContext = getFullContext;    // expose context builder
+
+// attach to window/global
+global.SchedulerCore = NS;
+
