@@ -78,36 +78,42 @@
     // MAIN ENTRY POINT
     // =====================================================================
     window.runSkeletonOptimizer = function(manualSkeleton) {
-        window.scheduleAssignments = {};
-        window.leagueAssignments = {};
-        window.unifiedTimes = [];
+    window.scheduleAssignments = {};
+    window.leagueAssignments = {};
+    window.unifiedTimes = [];
 
-        if (!manualSkeleton || manualSkeleton.length === 0) return false;
+    if (!manualSkeleton || manualSkeleton.length === 0) return false;
 
-        const {
-            divisions,
-            availableDivisions,
-            activityProperties,
-            allActivities,
-            h2hActivities,
-            fieldsBySport,
-            masterLeagues,
-            masterSpecialtyLeagues,
-            yesterdayHistory,
-            rotationHistory,
-            disabledLeagues,
-            disabledSpecialtyLeagues,
-            historicalCounts,
-            specialActivityNames,
-            disabledFields,
-            disabledSpecials,
-            dailyFieldAvailability,
-            dailyDisabledSportsByField
-        } = loadAndFilterData();
+    const {
+        divisions,
+        availableDivisions,
+        activityProperties,
+        allActivities,
+        h2hActivities,
+        fieldsBySport,
+        masterLeagues,
+        masterSpecialtyLeagues,
+        yesterdayHistory,
+        rotationHistory,
+        disabledLeagues,
+        disabledSpecialtyLeagues,
+        historicalCounts,
+        specialActivityNames,
+        disabledFields,
+        disabledSpecials,
+        dailyFieldAvailability,
+        dailyDisabledSportsByField
+    } = loadAndFilterData();
 
-        let fieldUsageBySlot = {};
-        window.fieldUsageBySlot = fieldUsageBySlot;
-        window.activityProperties = activityProperties;
+    let fieldUsageBySlot = {};
+    window.fieldUsageBySlot = fieldUsageBySlot;
+
+    // 🔹 NEW: keep track of which sports have already been used today per league
+    const dailyLeagueSportsUsage = window.dailyLeagueSportsUsage || {};
+    window.dailyLeagueSportsUsage = dailyLeagueSportsUsage;
+
+    window.activityProperties = activityProperties;
+
 
         // ============================================================
         // FAIRNESS ENGINE (Global Usage Buckets)
