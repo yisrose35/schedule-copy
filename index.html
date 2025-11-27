@@ -292,7 +292,7 @@
                 </div> <!-- /setup -->
 
                 <!-- ======================================================= -->
-                <!-- OTHER TABS (empty shells) -->
+                <!-- OTHER TABS -->
                 <!-- ======================================================= -->
                 <div id="fields" class="tab-content"></div>
                 <div id="special_activities" class="tab-content"></div>
@@ -318,21 +318,10 @@
                     <div id="scheduleTable"></div>
                 </div>
 
-                <div id="report" class="tab-content">
-                    <div id="report-content"></div>
-                </div>
-
-                <div id="print" class="tab-content">
-                    <div id="print-content"></div>
-                </div>
-
-                <div id="updates" class="tab-content">
-                    <div id="updates-content"></div>
-                </div>
-
-                <div id="helper" class="tab-content">
-                    <div id="helper-content"></div>
-                </div>
+                <div id="report" class="tab-content"><div id="report-content"></div></div>
+                <div id="print" class="tab-content"><div id="print-content"></div></div>
+                <div id="updates" class="tab-content"><div id="updates-content"></div></div>
+                <div id="helper" class="tab-content"><div id="helper-content"></div></div>
 
             </main> <!-- /app-content -->
 
@@ -343,7 +332,7 @@
 </div> <!-- /main-app-container -->
 
 <!-- =============================================================== -->
-<!-- SCRIPT LOADING -->
+<!-- SCRIPT LOADING ORDER (Corrected) -->
 <!-- =============================================================== -->
 
 <!-- CORE PLATFORM -->
@@ -351,7 +340,7 @@
 <script src="calendar.js" defer></script>
 <script src="app1.js" defer></script>
 
-<!-- NEW 10-MODULE LOGIC CORE -->
+<!-- ========== NEW 10-MODULE ENGINE (ORDER MATTERS!) ========== -->
 <script src="scheduler_core_utils.js" defer></script>
 <script src="scheduler_core_timegrid.js" defer></script>
 <script src="scheduler_core_field_usage.js" defer></script>
@@ -371,28 +360,40 @@
 <script src="master_schedule_builder.js" defer></script>
 <script src="daily_adjustments.js" defer></script>
 
-<!-- NEW global optimizer bridge for the 10-module engine -->
+<!-- ========== NEW GENERATE BUTTON BRIDGE (Corrected) ========== -->
 <script>
 window.runOptimizer = async function () {
-    const blocks = window.getMasterSkeleton?.() || [];
-    const ctx = window.getFullContext?.();
 
+    // 1. Get master blocks
+    const blocks = window.getMasterSkeleton?.() || [];
+
+    // 2. Ask new engine to build context
+    const ctx = SchedulerCore.getFullContext?.();
     if (!ctx) {
-        alert("Error: full context not ready.");
+        alert("Error: New engine context not ready.");
         return;
     }
 
-    const result = await SchedulerCore.engine.run(blocks, ctx);
+    try {
+        // 3. Run engine
+        const result = await SchedulerCore.run(blocks, ctx);
 
-    window.saveDailySchedule?.(result.schedule);
-    window.saveRotationHistory?.(result.rotationHistory);
+        // 4. Save schedule + history
+        window.saveDailySchedule?.(result.schedule);
+        window.saveRotationHistory?.(result.rotationHistory);
 
-    window.updateTable?.();
-    alert("Schedule generated successfully!");
+        // 5. Refresh daily view
+        window.updateTable?.();
+
+        alert("Schedule generated successfully!");
+    } catch (err) {
+        console.error(err);
+        alert("Engine Error: " + err.message);
+    }
 };
 </script>
 
-<!-- FINAL UI LAYERS -->
+<!-- UI LAYER -->
 <script src="scheduler_ui.js" defer></script>
 <script src="validator.js" defer></script>
 <script src="print_center.js" defer></script>
@@ -400,20 +401,19 @@ window.runOptimizer = async function () {
 <script src="updates.js" defer></script>
 
 <!-- =============================================================== -->
-<!-- TAB NAVIGATION -->
+<!-- TAB NAVIGATION (unchanged) -->
 <!-- =============================================================== -->
 <script>
 function showTab(id) {
-    document.querySelectorAll('.tab-content').forEach(el => {
-        el.classList.remove('active');
-    });
+    document.querySelectorAll('.tab-content').forEach(el =>
+        el.classList.remove('active')
+    );
     document.getElementById(id)?.classList.add('active');
 
-    document.querySelectorAll('.sidebar-item').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.tab === id);
-    });
+    document.querySelectorAll('.sidebar-item').forEach(btn =>
+        btn.classList.toggle('active', btn.dataset.tab === id)
+    );
 
-    // INIT WHEN TAB SHOWS
     if (id === 'setup') window.initApp1?.();
     if (id === 'fields') window.initFieldsTab?.();
     if (id === 'special_activities') window.initSpecialActivitiesTab?.();
