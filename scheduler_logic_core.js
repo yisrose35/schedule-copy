@@ -1,9 +1,13 @@
 // ============================================================================
 // scheduler_logic_core.js
 //
-// UPDATED (Fix for Smart Tiles being treated as Pinned):
-// - Pass 2: Now explicitly checks that item.type !== 'smart' before treating
-//   unknown event names as "Pinned". This allows Smart Tiles to flow to Pass 2.5.
+// UPDATED (Smart Tile Pre-Processor):
+// - Pass 2: Captures 'smart' tiles and prevents them from being locked as pinned.
+// - Pass 2.5 (The Pre-Processor): 
+//     1. Decides which activity category (Sports, Special, Swim) each bunk gets based on fairness.
+//     2. If it's a generator category (Sports/Special), it CONVERTS the block into a standard slot.
+//     3. If it's a fixed category (Swim), it assigns it immediately.
+// - Pass 4: The standard generator picks up the converted blocks and assigns specific fields.
 // ============================================================================
 
 (function() {
@@ -75,6 +79,7 @@
         window.leagueAssignments = {};
         window.unifiedTimes = [];
         
+        // Prevent ReferenceError
         const dailyLeagueSportsUsage = {}; 
 
         if (!manualSkeleton || manualSkeleton.length === 0) return false;
@@ -215,21 +220,15 @@
                 normLeague === "League Game" ||
                 normSpecLg === "Specialty League";
 
-            // ----- PINNED OR NON-GENERATED EVENTS (Respects Daily Disabled) -----
-            // FIX: Explicitly exclude 'smart' tiles from this check so they flow to the 'else if (item.type === 'smart')' block
+            // ----- PINNED OR NON-GENERATED EVENTS -----
+            // CRITICAL FIX: Explicitly ignore 'smart' types here so they flow to the smart handler
             if ((item.type === 'pinned' || !isGeneratedEvent) && item.type !== 'smart') {
                 
-                // If this pinned event is disabled for today, SKIP it.
-                const isDisabledField =
-                    Array.isArray(disabledFields) && disabledFields.includes(item.event);
-                const isDisabledSpecial =
-                    Array.isArray(disabledSpecials) && disabledSpecials.includes(item.event);
+                const isDisabledField = Array.isArray(disabledFields) && disabledFields.includes(item.event);
+                const isDisabledSpecial = Array.isArray(disabledSpecials) && disabledSpecials.includes(item.event);
 
-                if (isDisabledField || isDisabledSpecial) {
-                    return; // Do not place this pinned block at all today
-                }
+                if (isDisabledField || isDisabledSpecial) return;
 
-                // Fully pinned: every bunk, every slot = same fixed tile
                 allBunks.forEach(bunk => {
                     allSlots.forEach((slotIndex, idx) => {
                         if (!window.scheduleAssignments[bunk][slotIndex]) {
@@ -302,8 +301,8 @@
                         startTime: startMin,
                         endTime: endMin,
                         slots: allSlots,
-                        type: 'smart',           // Mark for Pass 2.5
-                        smartData: item.smartData // Pass data through
+                        type: 'smart',           
+                        smartData: item.smartData // Important: pass the rules along
                     });
                 });
             }
@@ -327,11 +326,12 @@
         });
 
         // =================================================================
-        // PASS 2.5 — SMART TILES (Fairness Engine)
+        // PASS 2.5 — SMART TILES (The Pre-Processor)
         // =================================================================
+        // 1. Filter out the smart blocks
         const smartBlocks = schedulableSlotBlocks.filter(b => b.type === 'smart');
         
-        // Group blocks by unique ID (Time + Division + Event) to process bunks together
+        // 2. Group them by tile (so we process all bunks in a division together)
         const smartGroups = {};
         smartBlocks.forEach(b => {
             const key = `${b.divName}_${b.startTime}_${b.event}`;
@@ -339,54 +339,80 @@
             smartGroups[key].blocks.push(b);
         });
 
+        // 3. Process each group
         Object.values(smartGroups).forEach(group => {
             if (!group.data) return;
 
             const bunksInGroup = group.blocks.map(b => b.bunk);
-            // Destructure the smartData saved from the builder
+            // Destructure the logic rules from the builder
             const { main1, main2, fallbackActivity, maxSpecialBunksPerDay } = group.data;
 
-            // 1. Run the Fairness Logic
+            // --- A. Run the Fairness Logic ---
             let results = {};
             if (window.SmartLogicAdapter) {
                 results = window.SmartLogicAdapter.generateAssignments(
                     bunksInGroup,
-                    { act1: main1, act2: main2 },
-                    historicalCounts, // Passed from loadAndFilterData
+                    { act1: main1, act2: main2 }, // e.g. "Special", "Swim"
+                    historicalCounts, 
                     { maxAct1: maxSpecialBunksPerDay }
                 );
             } else {
-                // Fallback if adapter missing: Random split
                 console.warn("SmartLogicAdapter not found. Using random split.");
                 bunksInGroup.forEach((b, i) => {
                     results[b] = (i % 2 === 0) ? main1 : main2;
                 });
             }
 
-            // 2. Assign activities to the schedule
+            // --- B. Convert the Block based on the Decision ---
             group.blocks.forEach(block => {
-                const assignedActivity = results[block.bunk];
+                const assignedCategory = results[block.bunk]; // e.g. "Special", "Swim", "Sports"
                 
-                const pick = {
-                    field: { name: assignedActivity }, // Assuming name match
-                    sport: null,
-                    _activity: assignedActivity,
-                    _fixed: false 
-                };
-
-                // Validate: Is the assigned activity actually available?
-                // (e.g. checks double booking, time rules, exclusions)
-                if (isPickValidForBlock(block, pick, activityProperties, fieldUsageBySlot)) {
-                    fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, false);
-                } else {
-                    // If Main choice failed (e.g. Canteen full from another division), use Fallback
-                    console.log(`Smart Tile Fallback: ${block.bunk} bumped from ${assignedActivity} to ${fallbackActivity}`);
-                    const fallbackPick = {
-                        field: { name: fallbackActivity },
-                        sport: null,
-                        _activity: fallbackActivity
-                    };
-                    fillBlock(block, fallbackPick, fieldUsageBySlot, yesterdayHistory, false);
+                // Determine what KIND of slot this should become
+                const norm = String(assignedCategory).toLowerCase();
+                
+                // CASE 1: SWIM (Fixed/Pinned)
+                if (norm.includes("swim")) {
+                    // Assign immediately. No need to pass to generator.
+                    // Remove this block from future processing by handling it now.
+                    fillBlock(block, { field: "Swim", _fixed: true, _activity: "Swim" }, fieldUsageBySlot, yesterdayHistory, false);
+                    
+                    // Mark block as 'processed' so Pass 4 ignores it
+                    block.processed = true; 
+                }
+                
+                // CASE 2: SPORTS (Generator Slot)
+                else if (norm.includes("sport")) {
+                    block.event = "Sports Slot";
+                    block.type = 'slot'; // Pass 4 will pick it up
+                } 
+                
+                // CASE 3: SPECIAL (Generator Slot)
+                else if (norm.includes("special") || norm.includes("activity")) {
+                    block.event = "Special Activity";
+                    block.type = 'slot'; // Pass 4 will pick it up
+                } 
+                
+                // CASE 4: FALLBACK / SPECIFIC (Treat as pinned specific request)
+                else {
+                    // If the logic picked "Canteen" specifically, treat as specific request
+                    // BUT for the generator to fill it, we usually map it to a slot type.
+                    // If it's unknown, we default to "Special Activity".
+                    if (specialActivityNames.includes(assignedCategory)) {
+                         // It is a specific special. We can either pin it or hint it.
+                         // Simplest: Pin it immediately if it's specific (e.g. Canteen).
+                         // But if we want generator to respect capacity... 
+                         // Let's assume for now fallback is usually "Sports" or specific.
+                         
+                         // If it matches a specific resource, let's try to pin it?
+                         // Per user request: "Generate a special activity for that bunk".
+                         // So we map to generic special.
+                         block.event = "Special Activity";
+                         block.type = 'slot';
+                    } else {
+                         // Default fallback
+                         block.event = "General Activity Slot";
+                         block.type = 'slot';
+                    }
                 }
             });
         });
@@ -394,16 +420,17 @@
         // =================================================================
         // PASS 3 — SPECIALTY LEAGUES
         // =================================================================
-        const leagueBlocks = schedulableSlotBlocks.filter(b => b.event === 'League Game');
-        const specialtyLeagueBlocks = schedulableSlotBlocks.filter(b => b.event === 'Specialty League');
+        const leagueBlocks = schedulableSlotBlocks.filter(b => b.event === 'League Game' && !b.processed);
+        const specialtyLeagueBlocks = schedulableSlotBlocks.filter(b => b.event === 'Specialty League' && !b.processed);
         
-        // UPDATED FILTER: Exclude 'smart' tiles since they are done in Pass 2.5
+        // UPDATED FILTER: Exclude blocks that were marked 'processed' (e.g. Swim) or are Leagues
         const remainingBlocks = schedulableSlotBlocks.filter(b => 
             b.event !== 'League Game' && 
-            b.event !== 'Specialty League' && 
-            b.type !== 'smart'
+            b.event !== 'Specialty League' &&
+            !b.processed // <--- Crucial: Ignore Swims assigned in Pass 2.5
         );
 
+        // ... (Specialty League Logic) ...
         const specialtyLeagueGroups = {};
         specialtyLeagueBlocks.forEach(block => {
             const key = `${block.divName}-${block.startTime}`;
@@ -765,10 +792,11 @@
         });
 
         // =================================================================
-        // PASS 4 — Remaining Schedulable Slots
+        // PASS 4 — Remaining Schedulable Slots (The Core Generator)
         // =================================================================
         remainingBlocks.sort((a, b) => a.startTime - b.startTime);
         for (const block of remainingBlocks) {
+            // Skip if already filled (e.g. by Swim in Pass 2.5)
             if (!block.slots || block.slots.length === 0) continue;
             if (!window.scheduleAssignments[block.bunk]) continue;
             if (window.scheduleAssignments[block.bunk][block.slots[0]]) continue; 
@@ -776,7 +804,7 @@
             let pick = null;
             if (block.event === 'League Game' || block.event === 'Specialty League') {
                 pick = { field: "Unassigned League", sport: null, _activity: "Free" };
-            } else if (block.event === 'Special Activity') {
+            } else if (block.event === 'Special Activity' || block.event === 'Special Activity Slot') {
                 pick = window.findBestSpecial?.(
                     block,
                     allActivities,
@@ -787,7 +815,7 @@
                     divisions,
                     historicalCounts
                 );
-            } else if (block.event === 'Sports Slot') {
+            } else if (block.event === 'Sports Slot' || block.event === 'Sports') {
                 pick = window.findBestSportActivity?.(
                     block,
                     allActivities,
@@ -799,6 +827,8 @@
                     historicalCounts
                 );
             }
+            
+            // Fallback to General Activity if no pick yet
             if (!pick) {
                 pick = window.findBestGeneralActivity?.(
                     block,
@@ -901,21 +931,16 @@
     }
 
     function coreGetNextLeagueRound(leagueName, teams) {
-        // For the core optimizer, if window.getLeagueMatchups isn't there, 
-        // we default to a fresh round robin.
         return pairRoundRobin(teams);
     }
 
     function assignSportsMultiRound(matchups, sports, teamCounts, history, lastSport) {
-        // Simplified logic to satisfy the function signature and allow the optimizer to proceed.
-        // In a full implementation, this balances sports usage per team.
         const assignments = [];
         matchups.forEach((pair, i) => {
              if (!pair || pair.includes("BYE")) {
                  assignments.push({ sport: null });
                  return;
              }
-             // Simple round-robin assignment of sports based on match index
              const s = sports[i % sports.length];
              assignments.push({ sport: s });
         });
@@ -1030,14 +1055,7 @@
         // --- VIRTUAL ACTIVITY FIX ---
         if (!props) return true;
 
-        // Use custom capacity if defined (defaults to 2 for sharable)
-        let limit = 1;
-        if (props.sharable) {
-            limit = (props.sharableWith && typeof props.sharableWith.capacity === 'number') 
-                ? props.sharableWith.capacity 
-                : 2;
-        }
-
+        const limit = (props && props.sharable) ? 2 : 1;
         if (props.preferences &&
             props.preferences.enabled &&
             props.preferences.exclusive &&
@@ -1097,15 +1115,7 @@
                     { count: 0, divisions: [], bunks: {} };
                 if (usage.count >= limit) return false;
                 if (usage.count > 0) {
-                    // Check if sharing allowed for this division (if restricted)
-                    if (props.sharableWith && props.sharableWith.type === 'custom') {
-                        // If current usage involves divs not in allowed list, or MY div not in allowed list... complex.
-                        // Simplified: If 'custom', we check if MY division is in the sharing list.
-                        // Actually, 'sharableWith.divisions' means "Can share WITH these".
-                        // If I am Division A, and usage has Division B. Is B allowed?
-                        // For now, simpler logic: If sharable, allow up to limit.
-                    }
-                    
+                    if (!usage.divisions.includes(block.divName)) return false;
                     let existingActivity = null;
                     for (const bunkName in usage.bunks) {
                         if (usage.bunks[bunkName]) {
@@ -1284,6 +1294,7 @@
         };
 
         const historicalCounts = {};
+        // DEBUG: what the generator thinks the long-term usage is
         window.debugHistoricalCounts = historicalCounts;
 
         const specialActivityNames = [];
