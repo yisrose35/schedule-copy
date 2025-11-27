@@ -539,133 +539,29 @@ function minutesToTime(min) {
 // - Merge into daily data BEFORE running optimizer.
 // =================================================================
 
-function applySmartTileOverridesForToday() {
-  if (!window.SmartTilesEngine) {
-    // SmartTilesEngine not loaded; skip.
-    return;
-  }
+function applySmartTileOverridesForToday(smartOverrides = []) {
+    // ALWAYS wipe old overrides
+    const clean = [];
 
-  const divisionsCfg = masterSettings.app1.divisions || {};
-  const specialActivitiesCfg = masterSettings.app1.specialActivities || [];
+    // Validate Smart Tile output before saving
+    smartOverrides.forEach(o => {
+        const props = window.activityProperties?.[o.activity];
+        if (!props || !props.available) return;
 
-  // Map eventId -> event for quick lookup
-  const eventById = {};
-  dailyOverrideSkeleton.forEach(ev => {
-    if (ev && ev.id) eventById[ev.id] = ev;
-  });
+        if (props.allowedDivisions &&
+            !props.allowedDivisions.includes(o.divName)) return;
 
-  // Collect "smart" events
-  const smartEvents = dailyOverrideSkeleton.filter(ev => ev && ev.type === 'smart' && ev.smartData);
-  if (smartEvents.length === 0) return;
-
-  // Group smart events by (division + smartData signature)
-  const groups = {};
-  smartEvents.forEach(ev => {
-    const sd = ev.smartData || {};
-    const key = [
-      ev.division || "UNKNOWN_DIV",
-      (sd.main1 || "").toLowerCase(),
-      (sd.main2 || "").toLowerCase(),
-      (sd.fallbackFor || "").toLowerCase(),
-      (sd.fallbackActivity || "").toLowerCase()
-    ].join("||");
-    if (!groups[key]) groups[key] = { division: ev.division, events: [] };
-    groups[key].events.push(ev);
-  });
-
-  const smartTileConfigs = [];
-  Object.values(groups).forEach(group => {
-    const events = group.events;
-    if (!events || events.length < 2) return; // need at least 2 blocks for a pair
-
-    // Use the first TWO events in this group as the Smart Tile pair
-    // (Order = order added to skeleton; typically matching time order.)
-    const ev1 = events[0];
-    const ev2 = events[1];
-
-    const divName = group.division;
-    const divCfg = divisionsCfg[divName] || {};
-    const bunkNames = (divCfg.bunks || []).slice();
-    if (bunkNames.length === 0) return;
-
-    const sd = ev1.smartData || {};
-    const maxSpecial = (typeof sd.maxSpecialBunksPerDay === "number" && sd.maxSpecialBunksPerDay > 0)
-      ? sd.maxSpecialBunksPerDay
-      : bunkNames.length;
-
-    const specialsPool = specialActivitiesCfg.map(s => s.name || s);
-
-    smartTileConfigs.push({
-      id: `${ev1.id}__${ev2.id}`,
-      division: divName,
-      bunkNames: bunkNames,
-      blocks: [
-        { id: ev1.id, label: `${ev1.startTime} - ${ev1.endTime}` },
-        { id: ev2.id, label: `${ev2.startTime} - ${ev2.endTime}` }
-      ],
-      specialsPool: specialsPool,
-      fallbackActivity: sd.fallbackActivity || "Sports Slot",
-      maxSpecialBunksPerDay: maxSpecial
+        clean.push(o);
     });
-  });
 
-  if (smartTileConfigs.length === 0) return;
+    // Save clean set
+    window.saveCurrentDailyData("bunkActivityOverrides", clean);
 
-  // Ensure history is loaded
-  if (!smartTileHistory) {
-    smartTileHistory = loadSmartTileHistory();
-  }
-
-  const result = window.SmartTilesEngine.runSmartTilesForDay(
-    smartTileConfigs,
-    smartTileHistory || { byBunk: {} }
-  );
-
-  smartTileHistory = result.updatedHistory || { byBunk: {} };
-  saveSmartTileHistory(smartTileHistory);
-
-  const smartOverrides = [];
-  const blockEventById = {};
-  smartEvents.forEach(ev => {
-    if (ev && ev.id) blockEventById[ev.id] = ev;
-  });
-
-  (result.overrides || []).forEach(o => {
-    const blockEvent = blockEventById[o.blockId];
-    if (!blockEvent) return;
-
-    let activityName;
-    if (o.activityType === "Swim") {
-      activityName = "Swim";
-    } else if (o.activityType === "Special") {
-      // If we know which special, schedule that; otherwise generic "Special Activity"
-      activityName = o.specialName || "Special Activity";
-    } else if (o.activityType === "Fallback") {
-      const sd = blockEvent.smartData || {};
-      activityName = sd.fallbackActivity || "Sports Slot";
-    } else {
-      // safety fallback
-      activityName = "General Activity Slot";
+    // Also update in-memory overrides
+    if (window.loadCurrentDailyData) {
+        const dd = window.loadCurrentDailyData() || {};
+        dd.bunkActivityOverrides = clean;
     }
-
-    smartOverrides.push({
-      id: uid(),
-      bunk: o.bunkName,
-      activity: activityName,
-      startTime: blockEvent.startTime,
-      endTime: blockEvent.endTime
-    });
-  });
-
-  if (smartOverrides.length === 0) return;
-
-  // Merge with existing bunkActivityOverrides
-  const dailyData = window.loadCurrentDailyData?.() || {};
-  const existing = dailyData.bunkActivityOverrides || [];
-  const merged = existing.concat(smartOverrides);
-
-  window.saveCurrentDailyData?.("bunkActivityOverrides", merged);
-  currentOverrides.bunkActivityOverrides = merged;
 }
 
 // =================================================================
