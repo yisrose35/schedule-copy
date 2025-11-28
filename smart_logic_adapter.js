@@ -32,6 +32,67 @@
 
             return false; // Swim / Lunch / Dismissal / etc.
         },
+        //---------------------------------------------------------------------
+// PREPROCESSOR — Finds Smart Tiles & builds Job Objects for logic_core
+//---------------------------------------------------------------------
+preprocessSmartTiles(manualSkeleton, dailyAdjustments, masterSpecials) {
+
+    const jobs = [];
+
+    for (const item of manualSkeleton) {
+        if (item.type !== "smart") continue;
+
+        const sd = item.smartData;
+        if (!sd) continue;
+
+        const startMin = this._parseTime(item.startTime);
+        const endMin = this._parseTime(item.endTime);
+
+        // Split into two halves
+        const mid = Math.floor((startMin + endMin) / 2);
+
+        const block1 = { startMin, endMin: mid };
+        const block2 = { startMin: mid, endMin };
+
+        jobs.push({
+            tileId: item.id,
+            division: item.division,
+            main1: sd.main1.trim(),
+            main2: sd.main2.trim(),
+            fallbackFor: sd.fallbackFor.trim(),
+            fallbackActivity: sd.fallbackActivity.trim(),
+
+            blocks: [block1, block2],
+
+            // keep full special definitions for capacity calc
+            masterSpecials: masterSpecials,
+            dailyAdjustments: dailyAdjustments
+        });
+    }
+
+    return jobs;
+},
+
+// Small helper for preprocess
+_parseTime(str) {
+    if (!str) return null;
+    let s = String(str).trim().toLowerCase();
+    let mer = null;
+    if (s.endsWith("am") || s.endsWith("pm")) {
+        mer = s.endsWith("am") ? "am" : "pm";
+        s = s.replace(/am|pm/g, "").trim();
+    }
+    const m = s.match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return null;
+    let hh = parseInt(m[1], 10);
+    const mm = parseInt(m[2], 10);
+    if (mer) {
+        if (hh === 12) hh = (mer === "am") ? 0 : 12;
+        else if (mer === "pm") hh += 12;
+    }
+    return hh * 60 + mm;
+},
+
 
         //---------------------------------------------------------------------
         // MAIN ENTRY — CALLED FROM scheduler_logic_core.js Pass 2.5
