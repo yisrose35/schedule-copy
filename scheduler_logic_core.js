@@ -317,87 +317,106 @@
             }
         });
 
-        // =====================================================================
-// PASS 2.5 — SMART TILES (PAIR-BASED)
-// =====================================================================
+        // ======================================================================
+// PASS 2.5 — SMART TILE PRE-PROCESSOR (NEW VERSION)
+// ======================================================================
 console.log("SMART-DEBUG: Entering Pass 2.5");
-console.log("SMART-DEBUG: manualSkeleton =", manualSkeleton);
 
-if (window.SmartLogicAdapter &&
-    typeof window.SmartLogicAdapter.preprocessSmartTiles === "function") {
+// Collect all smart tile jobs
+let smartJobs = [];
 
-    const dailyAdj = {
-        disabledSpecials: disabledSpecials
-    };
+if (window.SmartLogicAdapter && typeof SmartLogicAdapter.preprocessSmartTiles === "function") {
 
-    const jobs = window.SmartLogicAdapter.preprocessSmartTiles(
+    smartJobs = SmartLogicAdapter.preprocessSmartTiles(
         manualSkeleton,
-        dailyAdj,
-        masterSpecials
+        window.currentOverrides || {},
+        window.masterSpecials || []
     );
 
-    console.log("SMART-DEBUG: Jobs returned =", jobs);
-
-    if (!jobs || jobs.length === 0) {
-        console.log("SMART-DEBUG: No Smart Tile Jobs. Smart tiles will not generate.");
-    } else {
-        for (const job of jobs) {
-
-            console.log("SMART-DEBUG: Processing job =", job);
-
-            const divBunks = divisions[job.division]?.bunks || [];
-            if (divBunks.length === 0) continue;
-
-            const result = window.SmartLogicAdapter.generateAssignments(
-                divBunks,
-                job,
-                historicalCounts
-            );
-
-            console.log("SMART-DEBUG: Adapter assignments =", result);
-
-            const block1Slots = findSlotsForRange(job.block1.startMin, job.block1.endMin);
-            const block2Slots = findSlotsForRange(job.block2.startMin, job.block2.endMin);
-
-            if (block1Slots.length < 1 || block2Slots.length < 1) {
-                console.warn("SMART-DEBUG: Smart Tile Block missing slots:", job);
-                continue;
-            }
-
-            const applyDecision = (bunk, act, targetSlots) => {
-                if (window.SmartLogicAdapter.needsGeneration(act)) {
-                    schedulableSlotBlocks.push({
-                        divName: job.division,
-                        bunk,
-                        event: act,
-                        startTime: targetSlots[0],
-                        endTime: targetSlots[targetSlots.length - 1],
-                        slots: targetSlots
-                    });
-                } else {
-                    fillBlock(
-                        { bunk, divName: job.division, slots: targetSlots },
-                        { field: act, sport: null, _fixed: true, _activity: act },
-                        fieldUsageBySlot,
-                        yesterdayHistory,
-                        false
-                    );
-                }
-            };
-
-            Object.entries(result.block1Assignments).forEach(
-                ([bunk, act]) => applyDecision(bunk, act, block1Slots)
-            );
-
-            Object.entries(result.block2Assignments).forEach(
-                ([bunk, act]) => applyDecision(bunk, act, block2Slots)
-            );
-        }
-    }
+    console.log("SMART-DEBUG: Jobs returned =", smartJobs);
 
 } else {
-    console.warn("SmartLogicAdapter not enabled — SmartTiles skipped.");
+    console.warn("SmartLogicAdapter not found – Smart Tiles will be skipped.");
+    smartJobs = [];
 }
+
+// NOTHING TO DO
+if (!smartJobs.length) return;
+
+// ---------------------------------------------------------
+// GROUP SMART TILES BY DIVISION
+// ---------------------------------------------------------
+const smartByDiv = {};
+smartJobs.forEach(j => {
+    if (!smartByDiv[j.division]) smartByDiv[j.division] = [];
+    smartByDiv[j.division].push(j);
+});
+
+// ---------------------------------------------------------
+// PAIR SMART TILES (Adjacent two-block pairs)
+// ---------------------------------------------------------
+for (const div in smartByDiv) {
+
+    const tiles = smartByDiv[div];
+
+    // sort by start time
+    tiles.sort((a, b) => a.blockA.startMin - b.blockA.startMin);
+
+    // walk them two at a time
+    for (let i = 0; i < tiles.length - 1; i += 2) {
+
+        const blockA = tiles[i];
+        const blockB = tiles[i + 1];
+
+        console.log("SMART-DEBUG: Pairing blocks:", blockA, blockB);
+
+        // Combine into a job for the adapter
+        const job = {
+            division: div,
+            main1: blockA.main1,
+            main2: blockA.main2,
+            fallbackFor: blockA.fallbackFor,
+            fallbackActivity: blockA.fallbackActivity,
+            blockA: blockA.blockA,
+            blockB: blockB.blockA
+        };
+
+        // Get bunks in this division
+        const bunksInDiv = divisions[div]?.bunks || [];
+        const history = rotationHistory[div] || {};
+
+        const results = SmartLogicAdapter.generateAssignments(
+            bunksInDiv,
+            job,
+            history
+        );
+
+        console.log("SMART-DEBUG: Adapter assignments =", results);
+
+        // APPLY results into schedule blocks
+        applySmartAssignments(blockA.blockA, results.block1, generatedTiles);
+        applySmartAssignments(blockB.blockA, results.block2, generatedTiles);
+    }
+}
+
+// ======================================================================
+// PUT GENERATED SMART TILE SLOTS INTO THE OUTPUT
+// ======================================================================
+function applySmartAssignments(block, map, out) {
+    const { startMin, endMin } = block;
+
+    Object.entries(map).forEach(([bunk, activity]) => {
+        out.push({
+            type: "slot",
+            division: block.division || null,
+            startMin,
+            endMin,
+            bunk,
+            event: activity
+        });
+    });
+}
+
 
 
         // =================================================================
