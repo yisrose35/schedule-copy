@@ -318,99 +318,119 @@
         });
 
         // =================================================================
-        // PASS 2.5 — SMART TILES (The Adapter Integration)
-        // =================================================================
-        if (window.SmartLogicAdapter && typeof window.SmartLogicAdapter.preprocessSmartTiles === "function") {
-            const dailyAdjustments = {
-                disabledSpecials: disabledSpecials // used by adapter to filter capacity
-            };
-            
-            // 1. Build Jobs from the raw Skeleton
-            // We pass 'manualSkeleton' so the adapter can find type='smart' items
-            const jobs = window.SmartLogicAdapter.preprocessSmartTiles(
-                manualSkeleton, 
-                dailyAdjustments, 
-                masterSpecials // Pass full objects so adapter can read sharable capacity
-            );
-            
-            // 2. Process each Job
-            jobs.sort((a,b) => parseTimeToMinutes(a.startTime) - parseTimeToMinutes(b.startTime));
+// PASS 2.5 — SMART TILES (The Adapter Integration)
+// =================================================================
+console.log("SMART-DEBUG: Entering Pass 2.5");
 
-            jobs.forEach(job => {
-                const divBunks = divisions[job.division]?.bunks || [];
-                if (divBunks.length === 0) return;
+console.log("SMART-DEBUG: manualSkeleton =", manualSkeleton);
 
-                // 3. Ask Adapter for assignments based on fairness
-                const result = window.SmartLogicAdapter.generateAssignments(divBunks, job, historicalCounts);
-                
-                // 4. Determine Time Slots & Split
-                const startMin = parseTimeToMinutes(job.startTime);
-                const endMin = parseTimeToMinutes(job.endTime);
-                const allSlots = findSlotsForRange(startMin, endMin);
-                
-                // Block 1 = First Half, Block 2 = Second Half
-                const mid = Math.ceil(allSlots.length / 2);
-                const slots1 = allSlots.slice(0, mid);
-                const slots2 = allSlots.slice(mid);
+if (window.SmartLogicAdapter &&
+    typeof window.SmartLogicAdapter.preprocessSmartTiles === "function") {
 
-                // Helper to apply the decision
-                const applyDecision = (bunk, activityName, targetSlots) => {
-                    if (window.SmartLogicAdapter.needsGeneration(activityName)) {
-                        // "Sports", "Special", "GA" -> Defer to Pass 4
-                        schedulableSlotBlocks.push({
-                            divName: job.division,
-                            bunk: bunk,
-                            event: activityName,
-                            startTime: startMin, // Approximate, fine for Pass 4 sort
-                            endTime: endMin,
-                            slots: targetSlots
-                        });
-                        
-                        // Increment generic special count for fairness tracking within this run
-                        if (activityName.toLowerCase().includes('special')) {
-                            historicalCounts[bunk] = historicalCounts[bunk] || {};
-                            historicalCounts[bunk].specialCount = (historicalCounts[bunk].specialCount || 0) + 1;
-                        }
-                    } else {
-                        // Fixed Activity (e.g. Swim, Lunch, Fallback specific) -> Pin immediately
-                        fillBlock(
-                            { 
-                                slots: targetSlots, 
-                                bunk: bunk, 
-                                divName: job.division 
-                            },
-                            { 
-                                field: activityName, 
-                                sport: null, 
-                                _fixed: true, 
-                                _activity: activityName 
-                            },
-                            fieldUsageBySlot,
-                            yesterdayHistory,
-                            false
-                        );
-                    }
-                };
+    const dailyAdjustments = {
+        disabledSpecials: disabledSpecials
+    };
 
-                // SAFETY GUARD: Ensure valid objects
-const b1 = (result && result.block1 && typeof result.block1 === "object") ? result.block1 : {};
-const b2 = (result && result.block2 && typeof result.block2 === "object") ? result.block2 : {};
+    // 1. Build Jobs from raw Skeleton
+    const jobs = window.SmartLogicAdapter.preprocessSmartTiles(
+        manualSkeleton,
+        dailyAdjustments,
+        masterSpecials
+    );
 
-// Apply Block 1 assignments
-Object.entries(b1).forEach(([bunk, actName]) => {
-    applyDecision(bunk, actName, slots1);
-});
+    console.log("SMART-DEBUG: Jobs returned =", jobs);
 
-// Apply Block 2 assignments
-Object.entries(b2).forEach(([bunk, actName]) => {
-    applyDecision(bunk, actName, slots2);
-});
+    if (!jobs || jobs.length === 0) {
+        console.warn("SMART-DEBUG: No Smart Tile Jobs. Smart tiles will not generate.");
+    }
 
-            });
+    // 2. Process each job
+    jobs.sort((a, b) => parseTimeToMinutes(a.startTime) - parseTimeToMinutes(b.startTime));
 
-        } else {
-            console.warn("SmartLogicAdapter not found or invalid. Smart Tiles skipped.");
+    jobs.forEach(job => {
+        const divBunks = divisions[job.division]?.bunks || [];
+        if (divBunks.length === 0) {
+            console.warn("SMART-DEBUG: Job has no bunks:", job);
+            return;
         }
+
+        console.log("SMART-DEBUG: Processing job =", job);
+
+        // 3. Ask Adapter for assignments
+        const result = window.SmartLogicAdapter.generateAssignments(
+            divBunks,
+            job,
+            historicalCounts
+        );
+
+        console.log("SMART-DEBUG: Adapter assignments =", result);
+
+        // 4. Determine slots & split 50/50
+        const startMin = parseTimeToMinutes(job.startTime);
+        const endMin = parseTimeToMinutes(job.endTime);
+        const allSlots = findSlotsForRange(startMin, endMin);
+
+        if (!allSlots || allSlots.length < 2) {
+            console.error("SMART-DEBUG: Smart Tile does not have at least 2 slots:", job);
+            return;
+        }
+
+        const mid = Math.ceil(allSlots.length / 2);
+        const slots1 = allSlots.slice(0, mid);
+        const slots2 = allSlots.slice(mid);
+
+        // Helper to apply the decision
+        const applyDecision = (bunk, actName, targetSlots) => {
+            if (!actName) {
+                console.error("SMART-DEBUG: Missing activity name for bunk", bunk, job);
+                return;
+            }
+
+            if (window.SmartLogicAdapter.needsGeneration(actName)) {
+                console.log(`SMART-DEBUG: Adding schedulable block for ${bunk} => ${actName}`);
+                schedulableSlotBlocks.push({
+                    divName: job.division,
+                    bunk: bunk,
+                    event: actName,
+                    startTime: startMin,
+                    endTime: endMin,
+                    slots: targetSlots
+                });
+            } else {
+                console.log(`SMART-DEBUG: Pinning fixed block for ${bunk} => ${actName}`);
+                fillBlock(
+                    { slots: targetSlots, bunk, divName: job.division },
+                    {
+                        field: actName,
+                        sport: null,
+                        _fixed: true,
+                        _activity: actName
+                    },
+                    fieldUsageBySlot,
+                    yesterdayHistory,
+                    false
+                );
+            }
+        };
+
+        // SAFETY: Ensure objects exist
+        const b1 = (result && result.block1) ? result.block1 : {};
+        const b2 = (result && result.block2) ? result.block2 : {};
+
+        // Apply Block 1
+        Object.entries(b1).forEach(([bunk, act]) =>
+            applyDecision(bunk, act, slots1)
+        );
+
+        // Apply Block 2
+        Object.entries(b2).forEach(([bunk, act]) =>
+            applyDecision(bunk, act, slots2)
+        );
+    });
+
+} else {
+    console.warn("SmartLogicAdapter not found or invalid. Smart Tiles skipped.");
+}
 
         // =================================================================
         // PASS 3 — SPECIALTY LEAGUES
