@@ -107,7 +107,8 @@ window.SmartLogicAdapter = {
         // =====================================================================
         const bunkStats = bunks.map(b => ({
             bunk: b,
-            specialCount: (historical[b]?.special || 0)
+           specialCount: (historical[b]?.specialCount || 0)
+
         }));
 
         bunkStats.sort((a,b) => a.specialCount - b.specialCount);
