@@ -77,7 +77,7 @@
     // =====================================================================
     // MAIN ENTRY POINT
     // =====================================================================
-    window.runSkeletonOptimizer = function(manualSkeleton) {
+    window.runSkeletonOptimizer = function(manualSkeleton, externalOverrides) {
         window.scheduleAssignments = {};
         window.leagueAssignments = {};
         window.unifiedTimes = [];
@@ -317,69 +317,30 @@
             }
         });
 
-        // =================================================================
-// PASS 2.5 — SMART TILES  (NEW VERSION — NO generatedTiles)
+// =================================================================
+// PASS 2.5 — SMART TILES (Corrected)
 // =================================================================
 console.log("SMART-DEBUG: Entering Pass 2.5");
 
-// -----------------------------------------------------------------
-// FIX: Safety Check for currentOverrides
-// -----------------------------------------------------------------
-// If currentOverrides is missing (undefined), we create it locally 
-// to prevent the ReferenceError.
-if (typeof currentOverrides === 'undefined') {
-    console.warn("SMART-DEBUG: 'currentOverrides' was undefined. Initializing local fallback.");
-    // specific var/let declaration to bring it into scope
-    var currentOverrides = { bunkActivityOverrides: [] };
-}
-
-// Double check that the specific array exists inside it
+// Use external overrides if provided, else fallback locally
+const currentOverrides = externalOverrides || { bunkActivityOverrides: [] };
 if (!currentOverrides.bunkActivityOverrides) {
     currentOverrides.bunkActivityOverrides = [];
 }
-// -----------------------------------------------------------------
 
-
-//
-// 1) Collect Smart Tiles (now linked by time adjacency)
-//
-const smartGroups = {};
-manualSkeleton.forEach(item => {
-    if (item.type === "smart" && item.smartData) {
-        const div = item.division;
-        if (!smartGroups[div]) smartGroups[div] = [];
-        smartGroups[div].push(item);
-    }
-});
-
-//
-// 2) For every division, pair Smart Tiles and build job objects via Adapter
-//
+// 1) & 2) Process Smart Tiles via Adapter
+// Note: Adapter expects (rawSkeleton, dailyAdj, specials)
+// It handles finding 'smart' tiles and creating job objects (with split times)
 let smartJobs = [];
-
-Object.entries(smartGroups).forEach(([div, tiles]) => {
-    if (tiles.length < 2) return; // need two blocks to form a Smart Tile pair
-
-    tiles.sort((a, b) =>
-        parseTimeToMinutes(a.startTime) - parseTimeToMinutes(b.startTime)
-    );
-
-    // Create a job using improved pairing logic inside adapter
-    const job = SmartLogicAdapter.preprocessSmartPair(tiles, {
-        division: div,
-        historical: historicalCounts,
-        dailyAdjustments: currentOverrides, // Now safe to access
-        masterSpecials: masterSpecials
-    });
-
-    if (job) smartJobs.push(job);
-});
+if (window.SmartLogicAdapter && typeof window.SmartLogicAdapter.preprocessSmartTiles === 'function') {
+    smartJobs = window.SmartLogicAdapter.preprocessSmartTiles(manualSkeleton, currentOverrides, masterSpecials);
+} else {
+    console.error("SmartLogicAdapter.preprocessSmartTiles not found!");
+}
 
 console.log("SMART-DEBUG: Jobs to process =", smartJobs);
 
-//
 // 3) Run Adapter for each job
-//
 smartJobs.forEach(job => {
     console.log("SMART-DEBUG: Processing job =", job);
 
@@ -397,55 +358,88 @@ smartJobs.forEach(job => {
     const { block1Assignments, block2Assignments } = adapterResult;
     if (!block1Assignments || !block2Assignments) return;
 
-    //
-    // 4) Inject back into skeleton
-    //
-    const block1 = job.block1;
-    const block2 = job.block2;
-
-    // Find the matching two tiles inside manualSkeleton
-    const tile1 = manualSkeleton.find(
-        t =>
-            t.id === block1.id &&
-            t.type === "smart" &&
-            t.division === job.division
-    );
-    const tile2 = manualSkeleton.find(
-        t =>
-            t.id === block2.id &&
-            t.type === "smart" &&
-            t.division === job.division
-    );
-
-    if (!tile1 || !tile2) {
-        console.warn("SMART-ERROR: Missing tile pair, skipping.");
-        return;
-    }
-
-    //
-    // Convert assignment results into override entries
-    //
+    // 4) Inject back into overrides
+    // Unlike previous version, we don't look up tiles. We use the calculated times from the job blocks.
+    
+    // Block A Assignments
     Object.entries(block1Assignments).forEach(([bunk, act]) => {
-        // Safe push now that we guaranteed initialization at the top
         currentOverrides.bunkActivityOverrides.push({
             bunk,
-            startTime: tile1.startTime,
-            endTime: tile1.endTime,
+            startTime: minutesToTime(job.blockA.startMin), // convert back to string if needed by consumer, or keep mins? 
+            // The original consumer (Pass 1.5) uses parseTimeToMinutes on strings.
+            // Let's ensure format is compatible. 
+            // Actually Pass 1.5 logic reads from `dailyData.bunkActivityOverrides`.
+            // But here we are injecting into `currentOverrides` which is a live object passed in.
+            // Wait - Pass 1.5 runs at the START of this function.
+            // So these overrides won't take effect until ... wait.
+            // If we add them to `currentOverrides`, they are effectively "output" of this run.
+            // BUT for them to be scheduled *now*, we must manually trigger the scheduling logic for them HERE.
+            
+            // Re-use logic to push to assignments directly since Pass 1.5 already ran?
+            // Yes. We must schedule them immediately.
+            
             activity: act
+        });
+
+        // Schedule Block A
+        const slotsA = findSlotsForRange(job.blockA.startMin, job.blockA.endMin);
+        slotsA.forEach((slotIndex, idx) => {
+            if (!window.scheduleAssignments[bunk]) window.scheduleAssignments[bunk] = [];
+            if (!window.scheduleAssignments[bunk][slotIndex]) {
+                window.scheduleAssignments[bunk][slotIndex] = {
+                    field: { name: act },
+                    sport: null,
+                    continuation: (idx > 0),
+                    _fixed: true,
+                    _h2h: false,
+                    vs: null,
+                    _activity: act,
+                    _endTime: job.blockA.endMin
+                };
+            }
         });
     });
 
+    // Block B Assignments
     Object.entries(block2Assignments).forEach(([bunk, act]) => {
         currentOverrides.bunkActivityOverrides.push({
             bunk,
-            startTime: tile2.startTime,
-            endTime: tile2.endTime,
+            startTime: minutesToTime(job.blockB.startMin),
+            endTime: minutesToTime(job.blockB.endMin),
             activity: act
+        });
+
+        // Schedule Block B
+        const slotsB = findSlotsForRange(job.blockB.startMin, job.blockB.endMin);
+        slotsB.forEach((slotIndex, idx) => {
+            if (!window.scheduleAssignments[bunk]) window.scheduleAssignments[bunk] = [];
+            if (!window.scheduleAssignments[bunk][slotIndex]) {
+                window.scheduleAssignments[bunk][slotIndex] = {
+                    field: { name: act },
+                    sport: null,
+                    continuation: (idx > 0),
+                    _fixed: true,
+                    _h2h: false,
+                    vs: null,
+                    _activity: act,
+                    _endTime: job.blockB.endMin
+                };
+            }
         });
     });
 });
 
 console.log("SMART-DEBUG: PASS 2.5 COMPLETE");
+
+// Helper for internal time conversion just for this block
+function minutesToTime(min) {
+  const hh = Math.floor(min / 60);
+  const mm = min % 60;
+  const h = hh % 12 === 0 ? 12 : hh % 12;
+  const m = String(mm).padStart(2, '0');
+  const ampm = hh < 12 ? 'am' : 'pm';
+  return `${h}:${m}${ampm}`;
+}
 
 
         // =================================================================
