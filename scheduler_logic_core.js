@@ -347,10 +347,12 @@ smartJobs.forEach(job => {
     const bunks = window.divisions[job.division]?.bunks || [];
     if (bunks.length === 0) return;
 
+    // --- CRITICAL FIX: Pass specialActivityNames to adapter ---
     const adapterResult = SmartLogicAdapter.generateAssignments(
         bunks,
         job,
-        historicalCounts
+        historicalCounts,
+        specialActivityNames // Passing the list of known special activities
     );
 
     console.log("SMART-DEBUG: Adapter assignments =", adapterResult);
@@ -359,25 +361,12 @@ smartJobs.forEach(job => {
     if (!block1Assignments || !block2Assignments) return;
 
     // 4) Inject back into overrides
-    // Unlike previous version, we don't look up tiles. We use the calculated times from the job blocks.
-    
     // Block A Assignments
     Object.entries(block1Assignments).forEach(([bunk, act]) => {
         currentOverrides.bunkActivityOverrides.push({
             bunk,
-            startTime: minutesToTime(job.blockA.startMin), // convert back to string if needed by consumer, or keep mins? 
-            // The original consumer (Pass 1.5) uses parseTimeToMinutes on strings.
-            // Let's ensure format is compatible. 
-            // Actually Pass 1.5 logic reads from `dailyData.bunkActivityOverrides`.
-            // But here we are injecting into `currentOverrides` which is a live object passed in.
-            // Wait - Pass 1.5 runs at the START of this function.
-            // So these overrides won't take effect until ... wait.
-            // If we add them to `currentOverrides`, they are effectively "output" of this run.
-            // BUT for them to be scheduled *now*, we must manually trigger the scheduling logic for them HERE.
-            
-            // Re-use logic to push to assignments directly since Pass 1.5 already ran?
-            // Yes. We must schedule them immediately.
-            
+            startTime: minutesToTime(job.blockA.startMin), 
+            endTime: minutesToTime(job.blockA.endMin),
             activity: act
         });
 
