@@ -1,15 +1,16 @@
 // ============================================================================
 // scheduler_logic_core.js
 //
-// UPDATED (Smart Tile Pre-Processor):
-// - Pass 2: Captures 'smart' tiles and prevents them from being locked as pinned.
-// - Pass 2.5 (The Pre-Processor): 
-//     1. Groups Smart Tiles by (Time + Division + Event).
-//     2. Sorts these groups by time (Morning -> Afternoon).
-//     3. Calls the SmartLogicAdapter to decide activities based on fairness.
-//     4. Updates 'historicalCounts' IMMEDIATELY after each decision.
-//     5. Converts the block into a standard slot (Sports/Special) or assigns fixed (Swim).
-// - Pass 4: The standard generator picks up the converted blocks.
+// UPDATED (Smart Logic Step 3 Integration):
+// - Pass 2: Skips 'smart' tiles (delegates to Pass 2.5).
+// - Pass 2.5:
+//     1. Calls SmartLogicAdapter.preprocessSmartTiles to build Jobs from manualSkeleton.
+//     2. Iterates Jobs and calls SmartLogicAdapter.generateAssignments.
+//     3. Splits the time slot into Block 1 and Block 2.
+//     4. Applies assignments:
+//        - If Generated (Sports/Special): Pushes to 'schedulableSlotBlocks' for Pass 4.
+//        - If Fixed (Swim/Lunch): Calls fillBlock immediately.
+// - Pass 4: Standard generator picks up the converted blocks.
 // ============================================================================
 
 (function() {
@@ -93,6 +94,7 @@
             fieldsBySport,
             masterLeagues,
             masterSpecialtyLeagues,
+            masterSpecials, // Added for Adapter
             yesterdayHistory,
             rotationHistory,
             disabledLeagues,
@@ -201,8 +203,9 @@
         }
 
         // =================================================================
-        // PASS 2 — Pinned / Split / Slot / Smart Skeleton Blocks
+        // PASS 2 — Pinned / Split / Slot Blocks
         // =================================================================
+        // Note: We intentionally skip 'smart' tiles here; they are handled in Pass 2.5
         const schedulableSlotBlocks = [];
 
         manualSkeleton.forEach(item => {
@@ -225,7 +228,6 @@
                 normSpecLg === "Specialty League";
 
             // ----- PINNED OR NON-GENERATED EVENTS -----
-            // CRITICAL: ignore 'smart' so those flow to Smart Tile pass
             if ((item.type === 'pinned' || !isGeneratedEvent) && item.type !== 'smart') {
                 const isDisabledField = Array.isArray(disabledFields) && disabledFields.includes(item.event);
                 const isDisabledSpecial = Array.isArray(disabledSpecials) && disabledSpecials.includes(item.event);
@@ -294,21 +296,7 @@
                 pushGA(bunksTop, slotsSecond);
                 pinSwim(bunksBottom, slotsSecond);
             }
-            // NEW: Handle Smart Tiles (prepare for Pass 2.5)
-            else if (item.type === 'smart') {
-                allBunks.forEach(bunk => {
-                    schedulableSlotBlocks.push({
-                        divName: item.division,
-                        bunk: bunk,
-                        event: item.event,
-                        startTime: startMin,
-                        endTime: endMin,
-                        slots: allSlots,
-                        type: 'smart',
-                        smartData: item.smartData // rules from builder
-                    });
-                });
-            }
+            // SMART TILES are intentionally ignored here -> Pass 2.5
             else if (item.type === 'slot' && isGeneratedEvent) {
                 let normalizedEvent = null;
                 if (normalizeSpecialtyLeague(item.event)) normalizedEvent = "Specialty League";
@@ -330,21 +318,93 @@
         });
 
         // =================================================================
-        // PASS 2.5 — SMART TILES (Pre-Processor)
+        // PASS 2.5 — SMART TILES (The Adapter Integration)
         // =================================================================
-        // Delegate grouping, fairness, conversions, & history updates to adapter.
-        if (window.SmartLogicAdapter && typeof window.SmartLogicAdapter.processSmartTiles === "function") {
-            window.SmartLogicAdapter.processSmartTiles(
-                schedulableSlotBlocks,
-                historicalCounts,
-                specialActivityNames,
-                fillBlock,          // so adapter can pin Swim or specific picks
-                fieldUsageBySlot,
-                yesterdayHistory,
-                activityProperties  // capacity/time rules for fields & specials
+        if (window.SmartLogicAdapter && typeof window.SmartLogicAdapter.preprocessSmartTiles === "function") {
+            const dailyAdjustments = {
+                disabledSpecials: disabledSpecials // used by adapter to filter capacity
+            };
+            
+            // 1. Build Jobs from the raw Skeleton
+            // We pass 'manualSkeleton' so the adapter can find type='smart' items
+            const jobs = window.SmartLogicAdapter.preprocessSmartTiles(
+                manualSkeleton, 
+                dailyAdjustments, 
+                masterSpecials // Pass full objects so adapter can read sharable capacity
             );
+            
+            // 2. Process each Job
+            jobs.sort((a,b) => parseTimeToMinutes(a.startTime) - parseTimeToMinutes(b.startTime));
+
+            jobs.forEach(job => {
+                const divBunks = divisions[job.division]?.bunks || [];
+                if (divBunks.length === 0) return;
+
+                // 3. Ask Adapter for assignments based on fairness
+                const result = window.SmartLogicAdapter.generateAssignments(divBunks, job, historicalCounts);
+                
+                // 4. Determine Time Slots & Split
+                const startMin = parseTimeToMinutes(job.startTime);
+                const endMin = parseTimeToMinutes(job.endTime);
+                const allSlots = findSlotsForRange(startMin, endMin);
+                
+                // Block 1 = First Half, Block 2 = Second Half
+                const mid = Math.ceil(allSlots.length / 2);
+                const slots1 = allSlots.slice(0, mid);
+                const slots2 = allSlots.slice(mid);
+
+                // Helper to apply the decision
+                const applyDecision = (bunk, activityName, targetSlots) => {
+                    if (window.SmartLogicAdapter.needsGeneration(activityName)) {
+                        // "Sports", "Special", "GA" -> Defer to Pass 4
+                        schedulableSlotBlocks.push({
+                            divName: job.division,
+                            bunk: bunk,
+                            event: activityName,
+                            startTime: startMin, // Approximate, fine for Pass 4 sort
+                            endTime: endMin,
+                            slots: targetSlots
+                        });
+                        
+                        // Increment generic special count for fairness tracking within this run
+                        if (activityName.toLowerCase().includes('special')) {
+                            historicalCounts[bunk] = historicalCounts[bunk] || {};
+                            historicalCounts[bunk].specialCount = (historicalCounts[bunk].specialCount || 0) + 1;
+                        }
+                    } else {
+                        // Fixed Activity (e.g. Swim, Lunch, Fallback specific) -> Pin immediately
+                        fillBlock(
+                            { 
+                                slots: targetSlots, 
+                                bunk: bunk, 
+                                divName: job.division 
+                            },
+                            { 
+                                field: activityName, 
+                                sport: null, 
+                                _fixed: true, 
+                                _activity: activityName 
+                            },
+                            fieldUsageBySlot,
+                            yesterdayHistory,
+                            false
+                        );
+                    }
+                };
+
+                // Apply Block 1
+                Object.entries(result.block1).forEach(([bunk, actName]) => {
+                    applyDecision(bunk, actName, slots1);
+                });
+
+                // Apply Block 2
+                Object.entries(result.block2).forEach(([bunk, actName]) => {
+                    applyDecision(bunk, actName, slots2);
+                });
+            });
+
         } else {
-            console.warn("SmartLogicAdapter.processSmartTiles not loaded. Smart tiles may not function correctly.");
+            console.warn("SmartLogicAdapter not found or invalid. Smart Tiles skipped.");
         }
 
         // =================================================================
@@ -1567,6 +1627,7 @@
             fieldsBySport,
             masterLeagues,
             masterSpecialtyLeagues,
+            masterSpecials, // Added so adapter can access full special defs
             yesterdayHistory,
             rotationHistory,
             disabledLeagues,
