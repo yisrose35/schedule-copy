@@ -48,6 +48,15 @@
 // ============================================================================
 
 window.SmartLogicAdapter = {
+    needsGeneration: function(activityName) {
+    if (!activityName) return false;
+    const n = activityName.toLowerCase();
+    if (n.includes("general activity") || n === "activity") return true;
+    if (n.includes("sports") || n.includes("sport")) return true;
+    if (n.includes("special")) return true;
+    return false; // e.g. Swim, Lunch, etc.
+},
+
     /**
      * Generates assignments for the Smart Tile pair.
      *
