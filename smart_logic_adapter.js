@@ -1,5 +1,5 @@
 // ============================================================================
-// SmartLogicAdapter V11
+// SmartLogicAdapter V12
 // - Supports separate Smart Tile blocks (block A, block B)
 // - Full fairness + special capacity
 // - Updated for "Swap & Fallback" logic:
