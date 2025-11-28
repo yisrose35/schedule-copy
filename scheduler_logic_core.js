@@ -317,106 +317,116 @@
             }
         });
 
-        // ======================================================================
-// PASS 2.5 — SMART TILE PRE-PROCESSOR (NEW VERSION)
-// ======================================================================
+        // =================================================================
+// PASS 2.5 — SMART TILES  (NEW VERSION — NO generatedTiles)
+// =================================================================
 console.log("SMART-DEBUG: Entering Pass 2.5");
 
-// Collect all smart tile jobs
-let smartJobs = [];
-
-if (window.SmartLogicAdapter && typeof SmartLogicAdapter.preprocessSmartTiles === "function") {
-
-    smartJobs = SmartLogicAdapter.preprocessSmartTiles(
-        manualSkeleton,
-        window.currentOverrides || {},
-        window.masterSpecials || []
-    );
-
-    console.log("SMART-DEBUG: Jobs returned =", smartJobs);
-
-} else {
-    console.warn("SmartLogicAdapter not found – Smart Tiles will be skipped.");
-    smartJobs = [];
-}
-
-// NOTHING TO DO
-if (!smartJobs.length) return;
-
-// ---------------------------------------------------------
-// GROUP SMART TILES BY DIVISION
-// ---------------------------------------------------------
-const smartByDiv = {};
-smartJobs.forEach(j => {
-    if (!smartByDiv[j.division]) smartByDiv[j.division] = [];
-    smartByDiv[j.division].push(j);
+//
+// 1) Collect Smart Tiles (now linked by time adjacency)
+//
+const smartGroups = {};
+manualSkeleton.forEach(item => {
+    if (item.type === "smart" && item.smartData) {
+        const div = item.division;
+        if (!smartGroups[div]) smartGroups[div] = [];
+        smartGroups[div].push(item);
+    }
 });
 
-// ---------------------------------------------------------
-// PAIR SMART TILES (Adjacent two-block pairs)
-// ---------------------------------------------------------
-for (const div in smartByDiv) {
+//
+// 2) For every division, pair Smart Tiles and build job objects via Adapter
+//
+let smartJobs = [];
 
-    const tiles = smartByDiv[div];
+Object.entries(smartGroups).forEach(([div, tiles]) => {
+    if (tiles.length < 2) return; // need two blocks to form a Smart Tile pair
 
-    // sort by start time
-    tiles.sort((a, b) => a.blockA.startMin - b.blockA.startMin);
+    tiles.sort((a, b) =>
+        parseTimeToMinutes(a.startTime) - parseTimeToMinutes(b.startTime)
+    );
 
-    // walk them two at a time
-    for (let i = 0; i < tiles.length - 1; i += 2) {
+    // Create a job using improved pairing logic inside adapter
+    const job = SmartLogicAdapter.preprocessSmartPair(tiles, {
+        division: div,
+        historical: historicalCounts,
+        dailyAdjustments: currentOverrides,
+        masterSpecials: masterSpecials
+    });
 
-        const blockA = tiles[i];
-        const blockB = tiles[i + 1];
+    if (job) smartJobs.push(job);
+});
 
-        console.log("SMART-DEBUG: Pairing blocks:", blockA, blockB);
+console.log("SMART-DEBUG: Jobs to process =", smartJobs);
 
-        // Combine into a job for the adapter
-        const job = {
-            division: div,
-            main1: blockA.main1,
-            main2: blockA.main2,
-            fallbackFor: blockA.fallbackFor,
-            fallbackActivity: blockA.fallbackActivity,
-            blockA: blockA.blockA,
-            blockB: blockB.blockA
-        };
+//
+// 3) Run Adapter for each job
+//
+smartJobs.forEach(job => {
+    console.log("SMART-DEBUG: Processing job =", job);
 
-        // Get bunks in this division
-        const bunksInDiv = divisions[div]?.bunks || [];
-        const history = rotationHistory[div] || {};
+    const bunks = window.divisions[job.division]?.bunks || [];
+    if (bunks.length === 0) return;
 
-        const results = SmartLogicAdapter.generateAssignments(
-            bunksInDiv,
-            job,
-            history
-        );
+    const adapterResult = SmartLogicAdapter.generateAssignments(
+        bunks,
+        job,
+        historicalCounts
+    );
 
-        console.log("SMART-DEBUG: Adapter assignments =", results);
+    console.log("SMART-DEBUG: Adapter assignments =", adapterResult);
 
-        // APPLY results into schedule blocks
-        applySmartAssignments(blockA.blockA, results.block1, generatedTiles);
-        applySmartAssignments(blockB.blockA, results.block2, generatedTiles);
+    const { block1Assignments, block2Assignments } = adapterResult;
+    if (!block1Assignments || !block2Assignments) return;
+
+    //
+    // 4) Inject back into skeleton
+    //
+    const block1 = job.block1;
+    const block2 = job.block2;
+
+    // Find the matching two tiles inside manualSkeleton
+    const tile1 = manualSkeleton.find(
+        t =>
+            t.id === block1.id &&
+            t.type === "smart" &&
+            t.division === job.division
+    );
+    const tile2 = manualSkeleton.find(
+        t =>
+            t.id === block2.id &&
+            t.type === "smart" &&
+            t.division === job.division
+    );
+
+    if (!tile1 || !tile2) {
+        console.warn("SMART-ERROR: Missing tile pair, skipping.");
+        return;
     }
-}
 
-// ======================================================================
-// PUT GENERATED SMART TILE SLOTS INTO THE OUTPUT
-// ======================================================================
-function applySmartAssignments(block, map, out) {
-    const { startMin, endMin } = block;
-
-    Object.entries(map).forEach(([bunk, activity]) => {
-        out.push({
-            type: "slot",
-            division: block.division || null,
-            startMin,
-            endMin,
+    //
+    // Convert assignment results into override entries
+    //
+    Object.entries(block1Assignments).forEach(([bunk, act]) => {
+        currentOverrides.bunkActivityOverrides.push({
             bunk,
-            event: activity
+            startTime: tile1.startTime,
+            endTime: tile1.endTime,
+            activity: act
         });
     });
-}
 
+    Object.entries(block2Assignments).forEach(([bunk, act]) => {
+        currentOverrides.bunkActivityOverrides.push({
+            bunk,
+            startTime: tile2.startTime,
+            endTime: tile2.endTime,
+            activity: act
+        });
+    });
+});
+
+console.log("SMART-DEBUG: PASS 2.5 COMPLETE");
 
 
         // =================================================================
