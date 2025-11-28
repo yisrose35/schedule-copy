@@ -313,85 +313,85 @@ function addDropListeners(gridContainer) {
         };
 
       // --- SMART TILE (matches master schedule Smart Tile logic) ---
-      } else if (tileData.type === 'smart') {
-        let startTime, endTime, startMin, endMin;
-        while (true) {
-          startTime = prompt(`Smart Tile for ${divName}.\n\nEnter Start Time:`, defaultStartTime);
-          if (!startTime) return;
-          startMin = validateTime(startTime, true);
-          if (startMin !== null) break;
-        }
-        while (true) {
-          endTime = prompt(`Enter End Time:`);
-          if (!endTime) return;
-          endMin = validateTime(endTime, false);
-          if (endMin !== null) {
-            if (endMin <= startMin) alert("End time must be after start time.");
-            else break;
-          }
-        }
+     } else if (tileData.type === 'smart') {
+    let startTime, endTime, startMin, endMin;
 
-        // 1. Ask for Main Activities
-        const rawMains = prompt("Enter the 2 MAIN activities separated by a slash or comma (e.g., 'Swim / Special'):");
-        if (!rawMains) return;
-        const mains = rawMains.split(/,|\//).map(s => s.trim()).filter(s => s);
-        if (mains.length < 2) {
-          alert("Please enter two distinct activities.");
-          return;
-        }
-        const [act1, act2] = mains;
+    while (true) {
+      startTime = prompt(
+        `Smart Tile for ${divName}.\n\nEnter Start Time:`,
+        defaultStartTime
+      );
+      if (!startTime) return;
+      startMin = validateTime(startTime, true);
+      if (startMin !== null) break;
+    }
 
-        // 2. Ask for Fallback Target
-        const targetChoice = prompt(
-          `Which activity has a constraint (needs a fallback)?\n\n1: ${act1}\n2: ${act2}`
-        );
-        if (!targetChoice) return;
-        let fallbackTarget;
-        let fallbackActivity = "None";
+    while (true) {
+      endTime = prompt(`Enter End Time:`);
+      if (!endTime) return;
+      endMin = validateTime(endTime, false);
+      if (endMin !== null) {
+        if (endMin <= startMin) alert("End time must be after start time.");
+        else break;
+      }
+    }
 
-        if (targetChoice.trim() === '1' || targetChoice.trim() === act1) {
-          fallbackTarget = act1;
-        } else if (targetChoice.trim() === '2' || targetChoice.trim() === act2) {
-          fallbackTarget = act2;
-        } else {
-          alert("Invalid choice.");
-          return;
-        }
+    // --- Ask for Main 1 + Main 2 ---
+    const rawMains = prompt(
+      "Enter the TWO MAIN activities (e.g., Swim / Special):"
+    );
+    if (!rawMains) return;
 
-        // 3. Ask for the Fallback Activity
-        fallbackActivity = prompt(
-          `If "${fallbackTarget}" is unavailable, what should be played instead? (e.g., 'Sports')`
-        );
-        if (!fallbackActivity) return;
+    const mains = rawMains
+      .split(/,|\//)
+      .map(s => s.trim())
+      .filter(Boolean);
 
-        // 4. OPTIONAL: Max bunks that can receive the constrained activity per day
-        //    (e.g., how many bunks can get "Special" today across this Smart Tile pair)
-        let maxSpecialBunksPerDay = null;
-        const capStr = prompt(
-          `Optional: Max number of bunks that can receive "${fallbackTarget}" per day (across this Smart Tile pair).\nLeave blank for no limit.`
-        );
-        if (capStr && capStr.trim()) {
-          const n = parseInt(capStr.trim(), 10);
-          if (!Number.isNaN(n) && n > 0) {
-            maxSpecialBunksPerDay = n;
-          }
-        }
+    if (mains.length < 2) {
+      alert("Please enter TWO distinct activities.");
+      return;
+    }
 
-        newEvent = {
-          id: `evt_${Math.random().toString(36).slice(2, 9)}`,
-          type: 'smart',
-          event: `${act1} / ${act2}`, // Display name
-          division: divName,
-          startTime: startTime,
-          endTime: endTime,
-          smartData: {
-            main1: act1,
-            main2: act2,
-            fallbackFor: fallbackTarget,
-            fallbackActivity: fallbackActivity,
-            maxSpecialBunksPerDay: maxSpecialBunksPerDay
-          }
-        };
+    const [main1, main2] = mains;
+
+    // --- Ask which activity has fallback ---
+    const pick = prompt(
+      `Which activity requires a fallback?\n\n1: ${main1}\n2: ${main2}`
+    );
+    if (!pick) return;
+
+    let fallbackFor;
+    if (pick.trim() === "1" || pick.trim().toLowerCase() === main1.toLowerCase()) {
+      fallbackFor = main1;
+    } else if (pick.trim() === "2" || pick.trim().toLowerCase() === main2.toLowerCase()) {
+      fallbackFor = main2;
+    } else {
+      alert("Invalid choice.");
+      return;
+    }
+
+    // --- Fallback Activity ---
+    const fallbackActivity = prompt(
+      `If "${fallbackFor}" is unavailable, what should be played?\nExample: Sports`
+    );
+    if (!fallbackActivity) return;
+
+    // --- Create Event EXACTLY Like Master Builder ---
+    newEvent = {
+      id: `evt_${Math.random().toString(36).slice(2, 9)}`,
+      type: "smart",
+      event: `${main1} / ${main2}`,
+      division: divName,
+      startTime,
+      endTime,
+      smartData: {
+        main1,
+        main2,
+        fallbackFor,
+        fallbackActivity
+      }
+    };
+}
 
       // --- Pinned tiles ---
       } else if (['lunch','snacks','custom','dismissal','swim'].includes(tileData.type)) {
