@@ -151,8 +151,16 @@
         // PASS 1.5 — Bunk-Specific Pinned Overrides
         // =================================================================
         try {
+            // Note: externalOverrides might contain new overrides from Smart Tiles later, 
+            // but for Pinned ones, we look at the daily data usually.
+            // If externalOverrides has specific pins passed in, we should use them too.
+            // However, Smart Tile overrides are generated in Pass 2.5 and injected then.
             const dailyData = window.loadCurrentDailyData?.() || {};
             const bunkOverrides = dailyData.bunkActivityOverrides || [];
+            
+            // Merge with any pre-existing external overrides if they are Pinned types
+            // (Usually externalOverrides is empty at start, filled in 2.5)
+            
             bunkOverrides.forEach(override => {
                 const startMin = parseTimeToMinutes(override.startTime);
                 const endMin = parseTimeToMinutes(override.endTime);
@@ -363,58 +371,72 @@ smartJobs.forEach(job => {
     // 4) Inject back into overrides
     // Block A Assignments
     Object.entries(block1Assignments).forEach(([bunk, act]) => {
-        currentOverrides.bunkActivityOverrides.push({
-            bunk,
-            startTime: minutesToTime(job.blockA.startMin), 
-            endTime: minutesToTime(job.blockA.endMin),
-            activity: act
-        });
-
         // Schedule Block A
         const slotsA = findSlotsForRange(job.blockA.startMin, job.blockA.endMin);
-        slotsA.forEach((slotIndex, idx) => {
-            if (!window.scheduleAssignments[bunk]) window.scheduleAssignments[bunk] = [];
-            if (!window.scheduleAssignments[bunk][slotIndex]) {
-                window.scheduleAssignments[bunk][slotIndex] = {
-                    field: { name: act },
-                    sport: null,
-                    continuation: (idx > 0),
-                    _fixed: true,
-                    _h2h: false,
-                    vs: null,
-                    _activity: act,
-                    _endTime: job.blockA.endMin
-                };
-            }
-        });
+        
+        // If the activity is "Sports" (fallback), we should push to schedulableSlotBlocks instead of pinning
+        if (act === "Sports" || act === "Sports Slot") {
+             schedulableSlotBlocks.push({
+                divName: job.division,
+                bunk: bunk,
+                event: "Sports Slot",
+                startTime: job.blockA.startMin,
+                endTime: job.blockA.endMin,
+                slots: slotsA
+            });
+        } else {
+            // Otherwise Pin it (Special or Swim)
+            slotsA.forEach((slotIndex, idx) => {
+                if (!window.scheduleAssignments[bunk]) window.scheduleAssignments[bunk] = [];
+                if (!window.scheduleAssignments[bunk][slotIndex]) {
+                    window.scheduleAssignments[bunk][slotIndex] = {
+                        field: { name: act },
+                        sport: null,
+                        continuation: (idx > 0),
+                        _fixed: true,
+                        _h2h: false,
+                        vs: null,
+                        _activity: act,
+                        _endTime: job.blockA.endMin
+                    };
+                }
+            });
+        }
     });
 
     // Block B Assignments
     Object.entries(block2Assignments).forEach(([bunk, act]) => {
-        currentOverrides.bunkActivityOverrides.push({
-            bunk,
-            startTime: minutesToTime(job.blockB.startMin),
-            endTime: minutesToTime(job.blockB.endMin),
-            activity: act
-        });
-
         // Schedule Block B
         const slotsB = findSlotsForRange(job.blockB.startMin, job.blockB.endMin);
-        slotsB.forEach((slotIndex, idx) => {
-            if (!window.scheduleAssignments[bunk]) window.scheduleAssignments[bunk] = [];
-            if (!window.scheduleAssignments[bunk][slotIndex]) {
-                window.scheduleAssignments[bunk][slotIndex] = {
-                    field: { name: act },
-                    sport: null,
-                    continuation: (idx > 0),
-                    _fixed: true,
-                    _h2h: false,
-                    vs: null,
-                    _activity: act,
-                    _endTime: job.blockB.endMin
-                };
-            }
-        });
+        
+        // If the activity is "Sports" (fallback), push to schedulableSlotBlocks
+        if (act === "Sports" || act === "Sports Slot") {
+             schedulableSlotBlocks.push({
+                divName: job.division,
+                bunk: bunk,
+                event: "Sports Slot",
+                startTime: job.blockB.startMin,
+                endTime: job.blockB.endMin,
+                slots: slotsB
+            });
+        } else {
+            // Otherwise Pin it
+            slotsB.forEach((slotIndex, idx) => {
+                if (!window.scheduleAssignments[bunk]) window.scheduleAssignments[bunk] = [];
+                if (!window.scheduleAssignments[bunk][slotIndex]) {
+                    window.scheduleAssignments[bunk][slotIndex] = {
+                        field: { name: act },
+                        sport: null,
+                        continuation: (idx > 0),
+                        _fixed: true,
+                        _h2h: false,
+                        vs: null,
+                        _activity: act,
+                        _endTime: job.blockB.endMin
+                    };
+                }
+            });
+        }
     });
 });
 
