@@ -1,180 +1,266 @@
 // ============================================================================
-// smart_logic_adapter.js
+// smart_logic_adapter.js  (VERSION 6.0 — FINAL)
+// ============================================================================
 //
-// NEW VERSION with:
-// - main1 / main2 / fallback logic
-// - dynamic special capacity (block-based)
-// - fairness
-// - fallback fairness logic
-// - debug logging
+// PURPOSE:
+//   • Preprocess Smart Tiles (split into 2 blocks)
+//   • Determine special capacities (block1 & block2)
+//   • Assign Main1 / Main2 / Fallback correctly
+//   • Enforce strict pairing rules:
+//         - If bunk gets Main2 → must get Main1 in the other block
+//         - If bunk gets fallback for Main2 → also must get Main1
+//         - If bunk gets Main1 and main1 is special → must get Main2
+//   • Ensure Main1 NEVER disappears (Swim stays Swim)
+//   • Fairness: lowest specialCount bunks get special first
+//
+// Exports:
+//      SmartLogicAdapter = {
+//          needsGeneration()
+//          preprocessSmartTiles()
+//          generateAssignments()
+//      }
 // ============================================================================
 
 (function () {
     "use strict";
 
-    // -----------------------------------------------------------
-    // Helper: do we need scheduler_core generation?
-    // -----------------------------------------------------------
-    function needsGeneration(actName) {
-        if (!actName) return false;
-        const s = actName.toLowerCase();
-
+    // ---------------------------------------------------------------
+    // #1 — Identify activities that require generation
+    // ---------------------------------------------------------------
+    function needsGeneration(name) {
+        if (!name) return false;
+        const n = name.toLowerCase();
         return (
-            s.includes("sport") ||
-            s.includes("general activity") ||
-            s.includes("ga") ||
-            s.includes("special")
+            n.includes("special") ||
+            n.includes("general activity") ||
+            n.includes("ga") ||
+            n.includes("sport")
         );
     }
 
-    // -----------------------------------------------------------
-    // STEP 1 — Detect Smart Tiles in Skeleton
-    // -----------------------------------------------------------
-   function preprocessSmartTiles(rawSkeleton, dailyAdjustments, masterSpecials) {
-    console.log("ADAPTER-DEBUG: preprocessSmartTiles called");
-    console.log("ADAPTER-DEBUG: rawSkeleton =", rawSkeleton);
+    // ---------------------------------------------------------------
+    // #2 — Convert "11:00am" → minutes
+    // ---------------------------------------------------------------
+    function parseTime(str) {
+        if (!str) return null;
+        let s = str.toLowerCase().trim();
+        let mer = null;
 
-    const smartItems = rawSkeleton.filter(item => item.type === "smart");
-
-    console.log("ADAPTER-DEBUG: smartItems found =", smartItems);
-
-    const jobs = [];
-
-    smartItems.forEach(item => {
-        // SUPPORT BOTH formats: smartConfig and smartData
-        const cfg = item.smartConfig || item.smartData;
-        if (!cfg) {
-            console.log("ADAPTER-DEBUG: Smart tile missing config → SKIPPED:", item);
-            return;
+        if (s.endsWith("am") || s.endsWith("pm")) {
+            mer = s.endsWith("am") ? "am" : "pm";
+            s = s.replace(/am|pm/g, "").trim();
         }
 
-        const j = {
-            division: item.division,
-            startTime: item.startTime,
-            endTime: item.endTime,
+        const m = s.match(/^(\d{1,2}):(\d{2})$/);
+        if (!m) return null;
 
-            main1: cfg.main1,
-            main2: cfg.main2,
+        let hh = parseInt(m[1]);
+        const mm = parseInt(m[2]);
 
-            // new unified fallback format
-            fallback1:
-                cfg.fallback1 ||
-                (cfg.fallbackFor === cfg.main1 ? cfg.fallbackActivity : null),
+        if (mer) {
+            if (hh === 12) hh = (mer === "am") ? 0 : 12;
+            else if (mer === "pm") hh += 12;
+        }
+        return hh * 60 + mm;
+    }
 
-            fallback2:
-                cfg.fallback2 ||
-                (cfg.fallbackFor === cfg.main2 ? cfg.fallbackActivity : null),
-
-            allowFallback1: cfg.allowFallback1 ?? true,
-            allowFallback2: cfg.allowFallback2 ?? true,
-
-            specialFields: computeSpecialCapacityForBlock(
-                item.startTime,
-                item.endTime,
-                dailyAdjustments,
-                masterSpecials
-            )
-        };
-
-        jobs.push(j);
-    });
-
-    console.log("ADAPTER-DEBUG: jobs =", jobs);
-    return jobs;
-}
-
-    // -----------------------------------------------------------
-    // STEP 2 — Compute Block-Specific Special Capacity
-    // -----------------------------------------------------------
-    function computeSpecialCapacityForBlock(startTime, endTime, dailyAdjustments, masterSpecials) {
+    // ---------------------------------------------------------------
+    // #3 — Compute Special Capacity for a specific block
+    // ---------------------------------------------------------------
+    function computeBlockSpecialCapacity(startMin, endMin, masterSpecials, dailyAdjustments) {
         const disabled = dailyAdjustments.disabledSpecials || [];
+        const daily = dailyAdjustments.dailyFieldAvailability || {};
 
-        const items = [];
+        let total = 0;
 
         masterSpecials.forEach(sp => {
+            if (!sp.available) return;
             if (disabled.includes(sp.name)) return;
 
-            if (sp.sharableWith?.type === "all") {
-                // sharable = 2
-                items.push({
-                    name: sp.name,
-                    capacity: 2,
-                    raw: sp
-                });
-            } else {
-                // not sharable = 1
-                items.push({
-                    name: sp.name,
-                    capacity: 1,
-                    raw: sp
-                });
-            }
+            const globalOK = isAllowed(sp.timeRules, startMin, endMin);
+            const localOK = isAllowed(daily[sp.name] || [], startMin, endMin);
+            if (!globalOK || !localOK) return;
+
+            const cap = sp.sharableWith?.capacity || 1;
+            total += cap;
         });
 
-        return items;
+        return total;
     }
 
-    // -----------------------------------------------------------
-    // STEP 3 — Assign bunks for the pair of blocks
-    // -----------------------------------------------------------
-    function generateAssignments(bunks, job, historical) {
-        console.log("ADAPTER-DEBUG: generateAssignments called", job);
-        const { main1, main2, fallback1, fallback2 } = job;
+    function isAllowed(rules, startMin, endMin) {
+        if (!rules || rules.length === 0) return true;
 
-        historical = historical || {};
-        bunks = [...bunks];
+        let allow = false;
+        rules.forEach(rule => {
+            const rs = parseTime(rule.start);
+            const re = parseTime(rule.end);
+            if (rs == null || re == null) return;
 
-        function getSpecialGap(b) {
-            return (historical[b]?.specialCount || 0);
+            const overlaps = !(re <= startMin || rs >= endMin);
+
+            if (rule.type === "Available" && overlaps) allow = true;
+            if (rule.type === "Unavailable" && overlaps) allow = false;
+        });
+
+        return allow;
+    }
+
+    // ---------------------------------------------------------------
+    // #4 — Preprocess Smart Tiles (splits each into 2 blocks)
+    // ---------------------------------------------------------------
+    function preprocessSmartTiles(rawSkeleton, dailyAdjustments, masterSpecials) {
+        const jobs = [];
+
+        rawSkeleton.forEach(item => {
+            if (item.type !== "smart") return;
+            if (!item.smartData) return;
+
+            const startMin = parseTime(item.startTime);
+            const endMin   = parseTime(item.endTime);
+            const mid      = Math.floor((startMin + endMin) / 2);
+
+            const block1 = { startMin, endMin: mid };
+            const block2 = { startMin: mid, endMin };
+
+            jobs.push({
+                tileId: item.id,
+                division: item.division,
+
+                main1: item.smartData.main1.trim(),
+                main2: item.smartData.main2.trim(),
+                fallbackFor: item.smartData.fallbackFor.trim(),
+                fallbackActivity: item.smartData.fallbackActivity.trim(),
+
+                blocks: [ block1, block2 ],
+
+                masterSpecials,
+                dailyAdjustments
+            });
+        });
+
+        return jobs;
+    }
+
+    // ---------------------------------------------------------------
+    // #5 — Main Assignment Engine
+    // ---------------------------------------------------------------
+    function generateAssignments(bunks, job, historical = {}) {
+
+        const { main1, main2, fallbackFor, fallbackActivity } = job;
+        const block1 = job.blocks[0];
+        const block2 = job.blocks[1];
+
+        const isMain1Special = main1.toLowerCase().includes("special");
+        const isMain2Special = main2.toLowerCase().includes("special");
+
+        // Compute capacities
+        const cap1 = computeBlockSpecialCapacity(
+            block1.startMin, block1.endMin, job.masterSpecials, job.dailyAdjustments
+        );
+        const cap2 = computeBlockSpecialCapacity(
+            block2.startMin, block2.endMin, job.masterSpecials, job.dailyAdjustments
+        );
+
+        // Sort bunks by fairness (lowest special count first)
+        const stats = bunks
+            .map(b => ({ bunk: b, specialCount: historical[b]?.specialCount || 0 }))
+            .sort((a, b) => a.specialCount - b.specialCount);
+
+        const block1Assign = {};
+        const block2Assign = {};
+
+        let used1 = 0;
+        let used2 = 0;
+
+        const block1WantsSpecial = isMain1Special;
+        const block2WantsSpecial = isMain2Special;
+
+        // -------- PASS 1 — Give limited special slots to lowest-count bunks ----------
+        for (const { bunk } of stats) {
+            // Try block1 special
+            if (block1WantsSpecial && used1 < cap1) {
+                block1Assign[bunk] = main1;
+                used1++;
+                continue;
+            }
+            // Try block2 special
+            if (block2WantsSpecial && used2 < cap2) {
+                block2Assign[bunk] = main2;
+                used2++;
+                continue;
+            }
         }
 
-        bunks.sort((a, b) => getSpecialGap(a) - getSpecialGap(b));
+        // -------- PASS 2 — Enforce absolute pairing rules ----------
+        for (const { bunk } of stats) {
+            const g1 = block1Assign[bunk];
+            const g2 = block2Assign[bunk];
 
-        const block1 = {};
-        const block2 = {};
-
-        const specialsThisBlock = job.specialFields || [];
-        const maxSpecialCapacity = specialsThisBlock.reduce((sum, s) => sum + (s.capacity || 1), 0);
-
-        let usedSpecialsBlock1 = 0;
-        let usedSpecialsBlock2 = 0;
-
-        const specialName1 = main1.toLowerCase().includes("special") ? main1 :
-                             main1.toLowerCase().includes("ga") ? "Special Activity" : null;
-        const specialName2 = main2.toLowerCase().includes("special") ? main2 :
-                             main2.toLowerCase().includes("ga") ? "Special Activity" : null;
-
-        bunks.forEach(b => {
-            const canUseSpecialB1 = specialName1 && usedSpecialsBlock1 < maxSpecialCapacity;
-            const canUseSpecialB2 = specialName2 && usedSpecialsBlock2 < maxSpecialCapacity;
-
-            if (canUseSpecialB1) {
-                block1[b] = main1;
-                usedSpecialsBlock1++;
-            } else {
-                block1[b] = fallback1 || main2 || main1;
+            // SPECIAL IN BLOCK1 → MUST GET MAIN1 IN BLOCK2
+            if (g1 === main2 || g1 === fallbackActivity) {
+                block2Assign[bunk] = main1;
             }
 
-            if (canUseSpecialB2) {
-                block2[b] = main2;
-                usedSpecialsBlock2++;
-            } else {
-                block2[b] = fallback2 || main1 || main2;
+            // SPECIAL IN BLOCK2 → MUST GET MAIN1 IN BLOCK1
+            if (g2 === main2 || g2 === fallbackActivity) {
+                block1Assign[bunk] = main1;
             }
-        });
+        }
 
-        console.log("ADAPTER-DEBUG: block1 assignments =", block1);
-        console.log("ADAPTER-DEBUG: block2 assignments =", block2);
+        // -------- PASS 3 — Fill remaining bunks ----------
+        for (const { bunk } of stats) {
+            const g1 = block1Assign[bunk];
+            const g2 = block2Assign[bunk];
 
-        return { block1, block2 };
+            if (!g1 && !g2) {
+                // Fallback rules
+                if (fallbackFor === main1) {
+                    block1Assign[bunk] = fallbackActivity;
+                    block2Assign[bunk] = main2;
+                } else if (fallbackFor === main2) {
+                    block1Assign[bunk] = main1;
+                    block2Assign[bunk] = fallbackActivity;
+                } else {
+                    // Default Main1 → Main2
+                    block1Assign[bunk] = main1;
+                    block2Assign[bunk] = main2;
+                }
+                continue;
+            }
+
+            if (g1 && !g2) {
+                if (g1 === main2 || g1 === fallbackActivity) {
+                    block2Assign[bunk] = main1;
+                } else {
+                    block2Assign[bunk] = main2;
+                }
+                continue;
+            }
+
+            if (!g1 && g2) {
+                if (g2 === main2 || g2 === fallbackActivity) {
+                    block1Assign[bunk] = main1;
+                } else {
+                    block1Assign[bunk] = main1;
+                }
+                continue;
+            }
+        }
+
+        return {
+            block1Assignments: block1Assign,
+            block2Assignments: block2Assign
+        };
     }
 
-    // -----------------------------------------------------------
-    // Expose
-    // -----------------------------------------------------------
+    // ---------------------------------------------------------------
+    // EXPORT
+    // ---------------------------------------------------------------
     window.SmartLogicAdapter = {
         needsGeneration,
         preprocessSmartTiles,
         generateAssignments
     };
+
 })();
