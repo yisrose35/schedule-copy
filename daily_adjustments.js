@@ -313,85 +313,84 @@ function addDropListeners(gridContainer) {
         };
 
       // --- SMART TILE (matches master schedule Smart Tile logic) ---
-     } else if (tileData.type === 'smart') {
-    let startTime, endTime, startMin, endMin;
+      } else if (tileData.type === 'smart') {
+        let startTime, endTime, startMin, endMin;
 
-    while (true) {
-      startTime = prompt(
-        `Smart Tile for ${divName}.\n\nEnter Start Time:`,
-        defaultStartTime
-      );
-      if (!startTime) return;
-      startMin = validateTime(startTime, true);
-      if (startMin !== null) break;
-    }
+        while (true) {
+          startTime = prompt(
+            `Smart Tile for ${divName}.\n\nEnter Start Time:`,
+            defaultStartTime
+          );
+          if (!startTime) return;
+          startMin = validateTime(startTime, true);
+          if (startMin !== null) break;
+        }
 
-    while (true) {
-      endTime = prompt(`Enter End Time:`);
-      if (!endTime) return;
-      endMin = validateTime(endTime, false);
-      if (endMin !== null) {
-        if (endMin <= startMin) alert("End time must be after start time.");
-        else break;
-      }
-    }
+        while (true) {
+          endTime = prompt(`Enter End Time:`);
+          if (!endTime) return;
+          endMin = validateTime(endTime, false);
+          if (endMin !== null) {
+            if (endMin <= startMin) alert("End time must be after start time.");
+            else break;
+          }
+        }
 
-    // --- Ask for Main 1 + Main 2 ---
-    const rawMains = prompt(
-      "Enter the TWO MAIN activities (e.g., Swim / Special):"
-    );
-    if (!rawMains) return;
+        // --- Ask for Main 1 + Main 2 ---
+        const rawMains = prompt(
+          "Enter the TWO MAIN activities (e.g., Swim / Special):"
+        );
+        if (!rawMains) return;
 
-    const mains = rawMains
-      .split(/,|\//)
-      .map(s => s.trim())
-      .filter(Boolean);
+        const mains = rawMains
+          .split(/,|\//)
+          .map(s => s.trim())
+          .filter(Boolean);
 
-    if (mains.length < 2) {
-      alert("Please enter TWO distinct activities.");
-      return;
-    }
+        if (mains.length < 2) {
+          alert("Please enter TWO distinct activities.");
+          return;
+        }
 
-    const [main1, main2] = mains;
+        const [main1, main2] = mains;
 
-    // --- Ask which activity has fallback ---
-    const pick = prompt(
-      `Which activity requires a fallback?\n\n1: ${main1}\n2: ${main2}`
-    );
-    if (!pick) return;
+        // --- Ask which activity has fallback ---
+        const pick = prompt(
+          `Which activity requires a fallback?\n\n1: ${main1}\n2: ${main2}`
+        );
+        if (!pick) return;
 
-    let fallbackFor;
-    if (pick.trim() === "1" || pick.trim().toLowerCase() === main1.toLowerCase()) {
-      fallbackFor = main1;
-    } else if (pick.trim() === "2" || pick.trim().toLowerCase() === main2.toLowerCase()) {
-      fallbackFor = main2;
-    } else {
-      alert("Invalid choice.");
-      return;
-    }
+        let fallbackFor;
+        if (pick.trim() === "1" || pick.trim().toLowerCase() === main1.toLowerCase()) {
+          fallbackFor = main1;
+        } else if (pick.trim() === "2" || pick.trim().toLowerCase() === main2.toLowerCase()) {
+          fallbackFor = main2;
+        } else {
+          alert("Invalid choice.");
+          return;
+        }
 
-    // --- Fallback Activity ---
-    const fallbackActivity = prompt(
-      `If "${fallbackFor}" is unavailable, what should be played?\nExample: Sports`
-    );
-    if (!fallbackActivity) return;
+        // --- Fallback Activity ---
+        const fallbackActivity = prompt(
+          `If "${fallbackFor}" is unavailable, what should be played?\nExample: Sports`
+        );
+        if (!fallbackActivity) return;
 
-    // --- Create Event EXACTLY Like Master Builder ---
-    newEvent = {
-      id: `evt_${Math.random().toString(36).slice(2, 9)}`,
-      type: "smart",
-      event: `${main1} / ${main2}`,
-      division: divName,
-      startTime,
-      endTime,
-      smartData: {
-        main1,
-        main2,
-        fallbackFor,
-        fallbackActivity
-      }
-    };
-}
+        // --- Create Event EXACTLY Like Master Builder ---
+        newEvent = {
+          id: `evt_${Math.random().toString(36).slice(2, 9)}`,
+          type: "smart",
+          event: `${main1} / ${main2}`,
+          division: divName,
+          startTime,
+          endTime,
+          smartData: {
+            main1,
+            main2,
+            fallbackFor,
+            fallbackActivity
+          }
+        };
 
       // --- Pinned tiles ---
       } else if (['lunch','snacks','custom','dismissal','swim'].includes(tileData.type)) {
@@ -488,6 +487,7 @@ function renderEventTile(event, top, height) {
     <div style="font-size:0.75em;border-top:1px dotted #01579b;margin-top:2px;padding-top:1px;">
       Fallback: ${event.smartData.fallbackActivity}
       <br>
+
       For: ${event.smartData.fallbackFor}
     </div>
   `;
