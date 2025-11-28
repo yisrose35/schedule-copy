@@ -322,6 +322,24 @@
 // =================================================================
 console.log("SMART-DEBUG: Entering Pass 2.5");
 
+// -----------------------------------------------------------------
+// FIX: Safety Check for currentOverrides
+// -----------------------------------------------------------------
+// If currentOverrides is missing (undefined), we create it locally 
+// to prevent the ReferenceError.
+if (typeof currentOverrides === 'undefined') {
+    console.warn("SMART-DEBUG: 'currentOverrides' was undefined. Initializing local fallback.");
+    // specific var/let declaration to bring it into scope
+    var currentOverrides = { bunkActivityOverrides: [] };
+}
+
+// Double check that the specific array exists inside it
+if (!currentOverrides.bunkActivityOverrides) {
+    currentOverrides.bunkActivityOverrides = [];
+}
+// -----------------------------------------------------------------
+
+
 //
 // 1) Collect Smart Tiles (now linked by time adjacency)
 //
@@ -350,7 +368,7 @@ Object.entries(smartGroups).forEach(([div, tiles]) => {
     const job = SmartLogicAdapter.preprocessSmartPair(tiles, {
         division: div,
         historical: historicalCounts,
-        dailyAdjustments: currentOverrides,
+        dailyAdjustments: currentOverrides, // Now safe to access
         masterSpecials: masterSpecials
     });
 
@@ -408,6 +426,7 @@ smartJobs.forEach(job => {
     // Convert assignment results into override entries
     //
     Object.entries(block1Assignments).forEach(([bunk, act]) => {
+        // Safe push now that we guaranteed initialization at the top
         currentOverrides.bunkActivityOverrides.push({
             bunk,
             startTime: tile1.startTime,
