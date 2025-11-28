@@ -350,46 +350,85 @@ function addDropListeners(selector){
         const e1=mapEventNameForOptimizer(n1), e2=mapEventNameForOptimizer(n2);
         newEvent={id:`evt_${Math.random().toString(36).slice(2,9)}`, type:'split', event:`${n1} / ${n2}`, division:divName, startTime:st, endTime:et, subEvents:[e1,e2]};
 
-      } else if(tileData.type==='smart'){
-        // --- SMART TILE LOGIC (NEW) ---
-        let st,et,sm,em;
-        while(true){ st=prompt(`Smart Tile for ${divName}.\n\nEnter Start Time:`,defaultStart); if(!st) return; sm=validate(st,true); if(sm!==null) break; }
-        while(true){ et=prompt(`Enter End Time:`); if(!et) return; em=validate(et,false); if(em!==null){ if(em<=sm) alert("End must be after start."); else break; } }
-        
-        // 1. Ask for Main Activities
-        const rawMains=prompt("Enter the 2 MAIN activities separated by a slash or comma (e.g., 'Swim / Special'):");
-        if(!rawMains) return;
-        const mains=rawMains.split(/,|\//).map(s=>s.trim()).filter(s=>s);
-        if(mains.length<2){ alert("Please enter two distinct activities."); return; }
-        const [act1, act2] = mains;
+     } else if (tileData.type === 'smart') {
 
-        // 2. Ask for Fallback Target
-        const targetChoice = prompt(`Which activity has a constraint (needs a fallback)?\n\n1: ${act1}\n2: ${act2}`);
-        if(!targetChoice) return;
-        let fallbackTarget, fallbackActivity="None";
+    // --- SMART TILE LOGIC (UPDATED FOR ADAPTER V5) ---
+    let st, et, sm, em;
 
-        if(targetChoice.trim()==='1' || targetChoice.trim()===act1) fallbackTarget=act1;
-        else if(targetChoice.trim()==='2' || targetChoice.trim()===act2) fallbackTarget=act2;
-        else { alert("Invalid choice."); return; }
+    while (true) {
+        st = prompt(`Smart Tile for ${divName}.\n\nEnter Start Time:`, defaultStart);
+        if (!st) return;
+        sm = validate(st, true);
+        if (sm !== null) break;
+    }
 
-        // 3. Ask for the Fallback Activity
-        fallbackActivity = prompt(`If "${fallbackTarget}" is unavailable, what should be played instead? (e.g., 'Sports')`);
-        if(!fallbackActivity) return;
+    while (true) {
+        et = prompt(`Enter End Time:`);
+        if (!et) return;
+        em = validate(et, false);
+        if (em !== null) {
+            if (em <= sm) alert("End must be after start.");
+            else break;
+        }
+    }
 
-        newEvent={
-          id:`evt_${Math.random().toString(36).slice(2,9)}`,
-          type:'smart',
-          event:`${act1} / ${act2}`, // Display name
-          division:divName,
-          startTime:st,
-          endTime:et,
-          smartData: {
-            main1: act1,
-            main2: act2,
-            fallbackFor: fallbackTarget,
-            fallbackActivity: fallbackActivity
-          }
-        };
+    // 1. Ask for Main Activities
+    const rawMains = prompt(
+        "Enter the TWO MAIN activities separated by slash or comma:\nExample:   Swim / Special"
+    );
+    if (!rawMains) return;
+
+    const mains = rawMains
+        .split(/,|\//)
+        .map(s => s.trim())
+        .filter(Boolean);
+
+    if (mains.length < 2) {
+        alert("Please enter two distinct activities.");
+        return;
+    }
+
+    const [main1, main2] = mains;
+
+    // 2. Ask which main has the constraint (needs fallback)
+    const fallbackPick = prompt(
+        `Which activity requires a fallback if unavailable?\n\n1: ${main1}\n2: ${main2}`
+    );
+    if (!fallbackPick) return;
+
+    let fallbackFor;
+
+    if (fallbackPick.trim() === "1" || fallbackPick.trim().toLowerCase() === main1.toLowerCase()) {
+        fallbackFor = main1;
+    } else if (fallbackPick.trim() === "2" || fallbackPick.trim().toLowerCase() === main2.toLowerCase()) {
+        fallbackFor = main2;
+    } else {
+        alert("Invalid selection.");
+        return;
+    }
+
+    // 3. Ask what the fallback activity actually is
+    const fallbackActivity = prompt(
+        `If "${fallbackFor}" is full/unavailable, what should be played instead?\nExample: Sports`
+    );
+    if (!fallbackActivity) return;
+
+    // --- FINAL SMART TILE OBJECT ---
+    newEvent = {
+        id: `evt_${Math.random().toString(36).slice(2, 9)}`,
+        type: "smart",
+        event: `${main1} / ${main2}`,   // display text
+        division: divName,
+        startTime: st,
+        endTime: et,
+        smartData: {
+            main1,
+            main2,
+            fallbackFor,
+            fallbackActivity
+        }
+    };
+}
 
       } else if(['lunch','snacks','custom','dismissal','swim'].includes(tileData.type)){
         eventType='pinned';
