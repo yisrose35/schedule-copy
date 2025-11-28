@@ -30,41 +30,58 @@
     // -----------------------------------------------------------
     // STEP 1 — Detect Smart Tiles in Skeleton
     // -----------------------------------------------------------
-    function preprocessSmartTiles(rawSkeleton, dailyAdjustments, masterSpecials) {
-        console.log("ADAPTER-DEBUG: preprocessSmartTiles called");
-        console.log("ADAPTER-DEBUG: rawSkeleton =", rawSkeleton);
+   function preprocessSmartTiles(rawSkeleton, dailyAdjustments, masterSpecials) {
+    console.log("ADAPTER-DEBUG: preprocessSmartTiles called");
+    console.log("ADAPTER-DEBUG: rawSkeleton =", rawSkeleton);
 
-        const smartItems = rawSkeleton.filter(item => item.type === "smart");
+    const smartItems = rawSkeleton.filter(item => item.type === "smart");
 
-        console.log("ADAPTER-DEBUG: smartItems found =", smartItems);
+    console.log("ADAPTER-DEBUG: smartItems found =", smartItems);
 
-        const jobs = [];
+    const jobs = [];
 
-        smartItems.forEach(item => {
-            if (!item.smartConfig) return;
+    smartItems.forEach(item => {
+        // SUPPORT BOTH formats: smartConfig and smartData
+        const cfg = item.smartConfig || item.smartData;
+        if (!cfg) {
+            console.log("ADAPTER-DEBUG: Smart tile missing config → SKIPPED:", item);
+            return;
+        }
 
-            const j = {
-                division: item.division,
-                startTime: item.startTime,
-                endTime: item.endTime,
-                main1: item.smartConfig.main1,
-                main2: item.smartConfig.main2,
-                fallback2: item.smartConfig.fallback2,
-                fallback1: item.smartConfig.fallback1,
-                allowFallback1: item.smartConfig.allowFallback1,
-                allowFallback2: item.smartConfig.allowFallback2,
-                // For capacity logic:
-                specialFields: computeSpecialCapacityForBlock(
-                    item.startTime, item.endTime, dailyAdjustments, masterSpecials
-                )
-            };
+        const j = {
+            division: item.division,
+            startTime: item.startTime,
+            endTime: item.endTime,
 
-            jobs.push(j);
-        });
+            main1: cfg.main1,
+            main2: cfg.main2,
 
-        console.log("ADAPTER-DEBUG: jobs =", jobs);
-        return jobs;
-    }
+            // new unified fallback format
+            fallback1:
+                cfg.fallback1 ||
+                (cfg.fallbackFor === cfg.main1 ? cfg.fallbackActivity : null),
+
+            fallback2:
+                cfg.fallback2 ||
+                (cfg.fallbackFor === cfg.main2 ? cfg.fallbackActivity : null),
+
+            allowFallback1: cfg.allowFallback1 ?? true,
+            allowFallback2: cfg.allowFallback2 ?? true,
+
+            specialFields: computeSpecialCapacityForBlock(
+                item.startTime,
+                item.endTime,
+                dailyAdjustments,
+                masterSpecials
+            )
+        };
+
+        jobs.push(j);
+    });
+
+    console.log("ADAPTER-DEBUG: jobs =", jobs);
+    return jobs;
+}
 
     // -----------------------------------------------------------
     // STEP 2 — Compute Block-Specific Special Capacity
