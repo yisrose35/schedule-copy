@@ -80,7 +80,14 @@ window.SmartLogicAdapter = {
         // 1. DETERMINE BLOCK CAPACITIES
         // =====================================================================
         const blockCaps = blockPair.map(block => {
-            return computeBlockSpecialCapacity(block.startMin, block.endMin, debug);
+            return computeBlockSpecialCapacity(
+   block.startMin, 
+   block.endMin, 
+   window.masterSpecials || [], 
+   window.currentOverrides || {}, 
+   debug
+)
+
         });
 
         const cap1 = blockCaps[0];
