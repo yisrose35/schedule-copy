@@ -228,7 +228,7 @@ window.SmartLogicAdapter = {
 /**
  * Computes how many "Special Activity" slots are available in this block.
  */
-function computeBlockSpecialCapacity(startMin, endMin, debug) {
+function computeBlockSpecialCapacity(startMin, endMin, specialDefs, dailyAdjustments, debug) {
     const specials = window.getGlobalSpecialActivities?.() || [];
     const daily = window.currentOverrides?.dailyFieldAvailability || {};
 
