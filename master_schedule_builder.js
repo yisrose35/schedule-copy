@@ -103,12 +103,14 @@ function renderTemplateUI(){
 
   ui.innerHTML=`
     <div class="template-toolbar" style="display:flex;flex-wrap:wrap;gap:20px;align-items:flex-end;">
-      <div class="template-group" id="load-template-group"><label>Load Template</label><br>
+      <div class="template-group" id="load-template-group"><label>Load Template</label>
+
         <select id="template-load-select"><option value="">-- Select template --</option>${loadOptions}</select>
       </div>
       <div class="template-group"><label>Save Current Grid as</label><input type="text" id="template-save-name" placeholder="e.g., Friday Short Day"></div>
       <div class="template-group">
-        <label>&nbsp;</label><br>
+        <label>&nbsp;</label>
+
         <button id="template-save-btn" style="padding:8px 12px;background:#007bff;color:#fff;border:none;border-radius:5px;">Save</button>
         <button id="template-clear-btn" style="padding:8px 12px;background:#ff9800;color:#fff;border:none;border-radius:5px;margin-left:8px;">New Grid</button>
       </div>
@@ -119,6 +121,7 @@ function renderTemplateUI(){
         <h4>Day of Week Assignments</h4>
         <div class="assignments-grid" style="display:flex;flex-wrap:wrap;gap:15px;">
           ${["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Default"].map(day=>`<br>
+
           <div class="day-assignment" style="display:flex;flex-direction:column;min-width:150px;">
             <label>${day}:</label>
             <select data-day="${day}">${loadOptions}</select>
@@ -428,7 +431,6 @@ function addDropListeners(selector){
             fallbackActivity
         }
     };
-}
 
       } else if(['lunch','snacks','custom','dismissal','swim'].includes(tileData.type)){
         eventType='pinned';
@@ -494,10 +496,10 @@ function renderEventTile(event, top, height){
      innerHtml += `<div style="font-size:0.75em;border-top:1px dotted #01579b;margin-top:2px;padding-top:1px;">F: ${event.smartData.fallbackActivity} (if ${event.smartData.fallbackFor.substring(0,4)}. busy)</div>`;
   }
 
-  return `
-  <div class="grid-event" data-event-id="${event.id}" title="Click to remove"
-    style="${style};padding:2px 5px;border-radius:4px;text-align:center;margin:0 1px;font-size:.9em;position:absolute;top:${top}px;height:${height}px;width:calc(100% - 4px);box-sizing:border-box;overflow:hidden;cursor:pointer;">
-    ${innerHtml}
+  return `<br>
+  <div class="grid-event" data-event-id="${event.id}" title="Click to remove"<br>
+    style="${style};padding:2px 5px;border-radius:4px;text-align:center;margin:0 1px;font-size:.9em;position:absolute;top:${top}px;height:${height}px;width:calc(100% - 4px);box-sizing:border-box;overflow:hidden;cursor:pointer;"><br>
+    ${innerHtml}<br>
   </div>`;
 }
 
