@@ -1,5 +1,5 @@
 // ============================================================================
-// SmartLogicAdapter V9
+// SmartLogicAdapter V10
 // - Supports separate Smart Tile blocks (block A, block B)
 // - Full fairness + special capacity
 // - Updated for "Swap & Fallback" logic:
@@ -62,101 +62,86 @@
             const fbFor = job.fallbackFor;
             const fbAct = job.fallbackActivity;
 
-            // Determine which activity is the "Special" one (limited capacity)
-            // It could be Main 1 or Main 2.
-            // Priority: Explicit match in specialNames list, OR includes 'special' in text.
-            const isSpecial1 = specialNames.includes(main1) || main1.toLowerCase().includes("special");
-            const isSpecial2 = specialNames.includes(main2) || main2.toLowerCase().includes("special");
+            // 1. Identify which is the "Limited/Special" activity
+            let specialAct = main1;
+            let openAct = main2;
 
-            let specialAct = null;
-            let openAct = null;
+            const norm1 = main1.toLowerCase();
+            const norm2 = main2.toLowerCase();
+            
+            const isSwim1 = norm1.includes('swim');
+            const isSwim2 = norm2.includes('swim');
+            
+            const isSpec1 = specialNames.includes(main1) || norm1.includes('special');
+            const isSpec2 = specialNames.includes(main2) || norm2.includes('special');
 
-            // Heuristic: If both special, pick one? Or if only one is special?
-            // Usually Smart Tiles are "Open vs Special".
-            // If both are open (e.g. Swim vs Sports), treating one as "Special" forces strict rotation.
-            if (isSpecial1 && !isSpecial2) {
-                specialAct = main1;
-                openAct = main2;
-            } else if (isSpecial2 && !isSpecial1) {
-                specialAct = main2;
-                openAct = main1;
+            if (isSpec1 && !isSpec2) {
+                specialAct = main1; openAct = main2;
+            } else if (isSpec2 && !isSpec1) {
+                specialAct = main2; openAct = main1;
+            } else if (isSwim1 && !isSwim2) {
+                // If 1 is Swim, 2 is Special (Swim is almost always the Open one)
+                specialAct = main2; openAct = main1;
+            } else if (isSwim2 && !isSwim1) {
+                // If 2 is Swim, 1 is Special
+                specialAct = main1; openAct = main2;
             } else {
-                // Both special or both open. Treat Main 2 as the "Special" target for logic purposes
-                specialAct = main2;
-                openAct = main1;
+                // Default fallback: Main 2 is Special (arbitrary but consistent)
+                specialAct = main2; openAct = main1;
             }
 
-            const cap = 2; // Hardcoded limit for the "Special" activity (per division)
+            const cap = 2; // Fixed capacity per division-block for the "Special" activity
+
+            // 2. Sort bunks by history (least played special goes first)
+            const sortedBunks = [...bunks].sort((a, b) => {
+                const countA = historical[a]?.[specialAct] || 0;
+                const countB = historical[b]?.[specialAct] || 0;
+                return countA - countB;
+            });
 
             const block1 = {};
             const block2 = {};
+            const bunksWhoGotSpecialInB1 = new Set();
 
-            // FAIRNESS SORT
-            // Sort by who has done the "Special" activity the least
-            const sorted = [...bunks].sort(
-                (a, b) =>
-                    (historical[a]?.[specialAct] || 0) -
-                    (historical[b]?.[specialAct] || 0)
-            );
-
-            // TRACKING
-            const assignedToSpecialInBlock1 = new Set();
-
-            // === BLOCK 1 LOGIC ===
-            // Fill Special up to capacity. Rest go to Open.
-            let usedCap1 = 0;
-            
-            for (const bunk of sorted) {
-                if (usedCap1 < cap) {
+            // 3. Block 1 Assignment
+            let countB1 = 0;
+            for (const bunk of sortedBunks) {
+                if (countB1 < cap) {
                     block1[bunk] = specialAct;
-                    assignedToSpecialInBlock1.add(bunk);
-                    usedCap1++;
+                    bunksWhoGotSpecialInB1.add(bunk);
+                    countB1++;
                 } else {
                     block1[bunk] = openAct;
                 }
             }
 
-            // === BLOCK 2 LOGIC ===
-            // 1. People who did Special in Block 1 MUST go to Open/Swap (Priority 1)
-            // 2. People who did Open in Block 1 SHOULD go to Special (Priority 2)
-            //    BUT if Special is full, they go to Fallback.
+            // 4. Block 2 Assignment
+            let countB2 = 0;
             
-            let usedCap2 = 0;
-
-            // We iterate bunks again to assign Block 2. 
-            // We want to prioritize filling the Special with NEW people.
+            // Group 1: People who had Special in B1 -> MUST go to Open
+            const groupFromSpecial = sortedBunks.filter(b => bunksWhoGotSpecialInB1.has(b));
             
-            // Filter bunks who didn't get special in Block 1
-            const waitingForSpecial = bunks.filter(b => !assignedToSpecialInBlock1.has(b));
-            // Sort them again by fairness just in case (though list order is roughly fair already)
-            waitingForSpecial.sort(
-                (a, b) => (historical[a]?.[specialAct] || 0) - (historical[b]?.[specialAct] || 0)
-            );
+            // Group 2: People who had Open in B1 -> Priority for Special
+            // Re-sort them by fairness just in case, though original sort likely holds
+            const groupFromOpen = sortedBunks.filter(b => !bunksWhoGotSpecialInB1.has(b));
+            
+            // Assign Group 1 (Swap to Open)
+            for (const bunk of groupFromSpecial) {
+                block2[bunk] = openAct; 
+            }
 
-            // Assign them first
-            for (const bunk of waitingForSpecial) {
-                if (usedCap2 < cap) {
+            // Assign Group 2 (Fill Special, then Fallback)
+            for (const bunk of groupFromOpen) {
+                if (countB2 < cap) {
                     block2[bunk] = specialAct;
-                    usedCap2++;
+                    countB2++;
                 } else {
-                    // Special is full! They must take fallback.
-                    // If the Special matches the 'fallbackFor' target, give fallback.
-                    // Otherwise give the fallback activity directly.
+                    // Overflow -> Fallback
                     block2[bunk] = fbAct;
                 }
             }
 
-            // Now handle the people who DID get special in Block 1
-            const hadSpecial = bunks.filter(b => assignedToSpecialInBlock1.has(b));
-            for (const bunk of hadSpecial) {
-                // They swap to Open
-                block2[bunk] = openAct;
-            }
-
-            return {
-                block1Assignments: block1,
-                block2Assignments: block2
-            };
+            return { block1Assignments: block1, block2Assignments: block2 };
         }
     };
 
