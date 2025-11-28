@@ -483,6 +483,16 @@ function renderEventTile(event, top, height) {
   if (event.type === 'smart' && event.smartData) {
     innerHtml += `<div style="font-size:0.75em;border-top:1px dotted #01579b;margin-top:2px;padding-top:1px;">F: ${event.smartData.fallbackActivity} (if ${event.smartData.fallbackFor.substring(0,4)}. busy)</div>`;
   }
+  if (event.type === "smart" && event.smartData) {
+  innerHtml += `
+    <div style="font-size:0.75em;border-top:1px dotted #01579b;margin-top:2px;padding-top:1px;">
+      Fallback: ${event.smartData.fallbackActivity}
+      <br>
+      For: ${event.smartData.fallbackFor}
+    </div>
+  `;
+}
+
 
   return `
     <div class="grid-event"
