@@ -1,10 +1,13 @@
 // ============================================================================
-// SmartLogicAdapter V10
+// SmartLogicAdapter V11
 // - Supports separate Smart Tile blocks (block A, block B)
 // - Full fairness + special capacity
 // - Updated for "Swap & Fallback" logic:
 //   Block 1: Special fills to cap, rest get Open
-//   Block 2: Swaps! Open people get Special (to cap), rest get Fallback
+//   Block 2: 
+//      - Those who had Special in B1 -> MUST go to Open
+//      - Those who had Open in B1 -> Priority for Special (to cap), remainder to Fallback
+//      - NO ONE repeats Open (Swim) if they did it in B1.
 // ============================================================================
 
 (function () {
@@ -59,7 +62,6 @@
 
             const main1 = job.main1.trim();
             const main2 = job.main2.trim();
-            const fbFor = job.fallbackFor;
             const fbAct = job.fallbackActivity;
 
             // 1. Identify which is the "Limited/Special" activity
@@ -102,6 +104,7 @@
             const block1 = {};
             const block2 = {};
             const bunksWhoGotSpecialInB1 = new Set();
+            const bunksWhoGotOpenInB1 = new Set();
 
             // 3. Block 1 Assignment
             let countB1 = 0;
@@ -112,18 +115,18 @@
                     countB1++;
                 } else {
                     block1[bunk] = openAct;
+                    bunksWhoGotOpenInB1.add(bunk);
                 }
             }
 
             // 4. Block 2 Assignment
             let countB2 = 0;
             
-            // Group 1: People who had Special in B1 -> MUST go to Open
+            // Group 1: People who had Special in B1 -> MUST go to Open (Swap)
             const groupFromSpecial = sortedBunks.filter(b => bunksWhoGotSpecialInB1.has(b));
             
             // Group 2: People who had Open in B1 -> Priority for Special
-            // Re-sort them by fairness just in case, though original sort likely holds
-            const groupFromOpen = sortedBunks.filter(b => !bunksWhoGotSpecialInB1.has(b));
+            const groupFromOpen = sortedBunks.filter(b => bunksWhoGotOpenInB1.has(b));
             
             // Assign Group 1 (Swap to Open)
             for (const bunk of groupFromSpecial) {
@@ -131,6 +134,7 @@
             }
 
             // Assign Group 2 (Fill Special, then Fallback)
+            // They CANNOT go to Open because they just did it.
             for (const bunk of groupFromOpen) {
                 if (countB2 < cap) {
                     block2[bunk] = specialAct;
