@@ -574,7 +574,8 @@ function runOptimizer() {
     console.error("Error while applying Smart Tile overrides:", e);
   }
 
-  const success = window.runSkeletonOptimizer(dailyOverrideSkeleton);
+  // PASS LOCAL OVERRIDES (currentOverrides) to Core logic
+  const success = window.runSkeletonOptimizer(dailyOverrideSkeleton, currentOverrides);
   if (success) {
     alert("Schedule Generated Successfully!");
     window.showTab?.('schedule');
