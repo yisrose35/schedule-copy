@@ -392,15 +392,20 @@
                     }
                 };
 
-                // Apply Block 1
-                Object.entries(result.block1).forEach(([bunk, actName]) => {
-                    applyDecision(bunk, actName, slots1);
-                });
+                // SAFETY GUARD: Ensure valid objects
+const b1 = (result && result.block1 && typeof result.block1 === "object") ? result.block1 : {};
+const b2 = (result && result.block2 && typeof result.block2 === "object") ? result.block2 : {};
 
-                // Apply Block 2
-                Object.entries(result.block2).forEach(([bunk, actName]) => {
-                    applyDecision(bunk, actName, slots2);
-                });
+// Apply Block 1 assignments
+Object.entries(b1).forEach(([bunk, actName]) => {
+    applyDecision(bunk, actName, slots1);
+});
+
+// Apply Block 2 assignments
+Object.entries(b2).forEach(([bunk, actName]) => {
+    applyDecision(bunk, actName, slots2);
+});
+
             });
 
         } else {
