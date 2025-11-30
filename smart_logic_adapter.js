@@ -1,5 +1,5 @@
 // ============================================================================
-// SmartLogicAdapter V12
+// SmartLogicAdapter V13
 // - Supports separate Smart Tile blocks (block A, block B)
 // - Full fairness + special capacity
 // - Updated for "Swap & Fallback" logic:
@@ -62,7 +62,8 @@
 
             const main1 = job.main1.trim();
             const main2 = job.main2.trim();
-            const fbAct = job.fallbackActivity;
+            // Safety: Ensure fallback exists
+            const fbAct = job.fallbackActivity || "Sports";
 
             // 1. Identify which is the "Limited/Special" activity
             let specialAct = main1;
@@ -74,31 +75,39 @@
             const isSwim1 = norm1.includes('swim');
             const isSwim2 = norm2.includes('swim');
             
+            // Explicit checks against known special names
             const isSpec1 = specialNames.includes(main1) || norm1.includes('special');
             const isSpec2 = specialNames.includes(main2) || norm2.includes('special');
 
-            if (isSpec1 && !isSpec2) {
-                specialAct = main1; openAct = main2;
-            } else if (isSpec2 && !isSpec1) {
-                specialAct = main2; openAct = main1;
-            } else if (isSwim1 && !isSwim2) {
-                // If 1 is Swim, 2 is Special (Swim is almost always the Open one)
-                specialAct = main2; openAct = main1;
+            if (isSwim1 && !isSwim2) {
+                // Strongest rule: If 1 is Swim, 2 MUST be Special (Open vs Special)
+                specialAct = main2; 
+                openAct = main1;
             } else if (isSwim2 && !isSwim1) {
-                // If 2 is Swim, 1 is Special
-                specialAct = main1; openAct = main2;
+                // Strongest rule: If 2 is Swim, 1 MUST be Special
+                specialAct = main1; 
+                openAct = main2;
+            } else if (isSpec1 && !isSpec2) {
+                specialAct = main1; 
+                openAct = main2;
+            } else if (isSpec2 && !isSpec1) {
+                specialAct = main2; 
+                openAct = main1;
             } else {
                 // Default fallback: Main 2 is Special (arbitrary but consistent)
-                specialAct = main2; openAct = main1;
+                specialAct = main2; 
+                openAct = main1;
             }
 
             const cap = 2; // Fixed capacity per division-block for the "Special" activity
 
             // 2. Sort bunks by history (least played special goes first)
+            // Added Math.random() for tie-breaking stability on identical history
             const sortedBunks = [...bunks].sort((a, b) => {
                 const countA = historical[a]?.[specialAct] || 0;
                 const countB = historical[b]?.[specialAct] || 0;
-                return countA - countB;
+                if (countA !== countB) return countA - countB;
+                return 0.5 - Math.random();
             });
 
             const block1 = {};
@@ -123,9 +132,11 @@
             let countB2 = 0;
             
             // Group 1: People who had Special in B1 -> MUST go to Open (Swap)
+            // They just had Special, so they go to Open.
             const groupFromSpecial = sortedBunks.filter(b => bunksWhoGotSpecialInB1.has(b));
             
-            // Group 2: People who had Open in B1 -> Priority for Special
+            // Group 2: People who had Open in B1.
+            // They CANNOT go to Open again. They want Special.
             const groupFromOpen = sortedBunks.filter(b => bunksWhoGotOpenInB1.has(b));
             
             // Assign Group 1 (Swap to Open)
@@ -134,7 +145,6 @@
             }
 
             // Assign Group 2 (Fill Special, then Fallback)
-            // They CANNOT go to Open because they just did it.
             for (const bunk of groupFromOpen) {
                 if (countB2 < cap) {
                     block2[bunk] = specialAct;
@@ -145,6 +155,10 @@
                 }
             }
 
+            console.log(`[SmartAdapter] Div: ${job.division} | Special: ${specialAct} | Open: ${openAct} | Fallback: ${fbAct}`);
+            console.log("Block 1:", block1);
+            console.log("Block 2:", block2);
+
             return { block1Assignments: block1, block2Assignments: block2 };
         }
     };
@@ -154,6 +168,7 @@
     // ==============================================================
 
     function parse(str) {
+        if (!str) return 0;
         let s = str.trim().toLowerCase();
         let am = s.endsWith("am");
         let pm = s.endsWith("pm");
@@ -162,7 +177,7 @@
         let hh = h;
         if (pm && h !== 12) hh += 12;
         if (am && h === 12) hh = 0;
-        return hh * 60 + m;
+        return hh * 60 + (m || 0);
     }
 
 })();
