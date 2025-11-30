@@ -198,197 +198,197 @@
         }
 
         // ============================================================================
-// PASS 2 — Pinned / Split / Slot Blocks  (NO SMART TILES HERE)
-// ============================================================================
-const schedulableSlotBlocks = [];
+        // PASS 2 — Pinned / Split / Slot Blocks  (NO SMART TILES HERE)
+        // ============================================================================
+        const schedulableSlotBlocks = [];
 
-manualSkeleton.forEach(item => {
+        manualSkeleton.forEach(item => {
 
-    const allBunks = divisions[item.division]?.bunks || [];
-    if (allBunks.length === 0) return;
+            const allBunks = divisions[item.division]?.bunks || [];
+            if (allBunks.length === 0) return;
 
-    const startMin = parseTimeToMinutes(item.startTime);
-    const endMin = parseTimeToMinutes(item.endTime);
-    const slots = findSlotsForRange(startMin, endMin);
-    if (slots.length === 0) return;
+            const startMin = parseTimeToMinutes(item.startTime);
+            const endMin = parseTimeToMinutes(item.endTime);
+            const slots = findSlotsForRange(startMin, endMin);
+            if (slots.length === 0) return;
 
-    // Normalize event
-    const normGA = normalizeGA(item.event);
-    const normLeague = normalizeLeague(item.event);
-    const normSpecLg = normalizeSpecialtyLeague(item.event);
+            // Normalize event
+            const normGA = normalizeGA(item.event);
+            const normLeague = normalizeLeague(item.event);
+            const normSpecLg = normalizeSpecialtyLeague(item.event);
 
-    const eventName = normGA || normLeague || normSpecLg || item.event;
-    const isGenerated =
-        GENERATED_EVENTS.includes(eventName) ||
-        normGA === "General Activity Slot" ||
-        normLeague === "League Game" ||
-        normSpecLg === "Specialty League";
+            const eventName = normGA || normLeague || normSpecLg || item.event;
+            const isGenerated =
+                GENERATED_EVENTS.includes(eventName) ||
+                normGA === "General Activity Slot" ||
+                normLeague === "League Game" ||
+                normSpecLg === "Specialty League";
 
-    // --- IGNORE SMART TILES HERE (PASS 2.5 handles them) ---
-    if (item.type === "smart") {
-        return;
-    }
+            // --- IGNORE SMART TILES HERE (PASS 2.5 handles them) ---
+            if (item.type === "smart") {
+                return;
+            }
 
-    // --- PINNED / NON-GENERATED ---
-    if ((item.type === "pinned" || !isGenerated) && item.type !== "split") {
-        allBunks.forEach(bunk => {
-            slots.forEach((slotIndex, idx) => {
-                window.scheduleAssignments[bunk][slotIndex] = {
-                    field: { name: eventName },
-                    sport: null,
-                    continuation: idx > 0,
-                    _fixed: true,
-                    _activity: eventName
-                };
+            // --- PINNED / NON-GENERATED ---
+            if ((item.type === "pinned" || !isGenerated) && item.type !== "split") {
+                allBunks.forEach(bunk => {
+                    slots.forEach((slotIndex, idx) => {
+                        window.scheduleAssignments[bunk][slotIndex] = {
+                            field: { name: eventName },
+                            sport: null,
+                            continuation: idx > 0,
+                            _fixed: true,
+                            _activity: eventName
+                        };
+                    });
+                });
+                return;
+            }
+
+            // --- SPLIT: Swim + GA ---
+            if (item.type === "split") {
+
+                const swimName = "Swim";
+                const gaName = normGA || "General Activity Slot";
+
+                const mid = Math.ceil(allBunks.length / 2);
+                const bTop = allBunks.slice(0, mid);
+                const bBot = allBunks.slice(mid);
+
+                const slotMid = Math.ceil(slots.length / 2);
+                const slotsA = slots.slice(0, slotMid);
+                const slotsB = slots.slice(slotMid);
+
+                // Swim A
+                bTop.forEach(bunk => {
+                    slotsA.forEach((slot, idx) => {
+                        window.scheduleAssignments[bunk][slot] = {
+                            field: { name: swimName },
+                            sport: null,
+                            continuation: idx > 0,
+                            _fixed: true,
+                            _activity: swimName
+                        };
+                    });
+                });
+
+                // GA for bottom on A
+                bBot.forEach(bunk => {
+                    schedulableSlotBlocks.push({
+                        divName: item.division,
+                        bunk,
+                        event: gaName,
+                        startTime: startMin,
+                        endTime: endMin,
+                        slots: slotsA
+                    });
+                });
+
+                // GA top on B
+                bTop.forEach(bunk => {
+                    schedulableSlotBlocks.push({
+                        divName: item.division,
+                        bunk,
+                        event: gaName,
+                        startTime: startMin,
+                        endTime: endMin,
+                        slots: slotsB
+                    });
+                });
+
+                // Swim bottom on B
+                bBot.forEach(bunk => {
+                    slotsB.forEach((slot, idx) => {
+                        window.scheduleAssignments[bunk][slot] = {
+                            field: { name: swimName },
+                            sport: null,
+                            continuation: idx > 0,
+                            _fixed: true,
+                            _activity: swimName
+                        };
+                    });
+                });
+
+                return;
+            }
+
+            // --- REGULAR GENERATED SLOT ---
+            if (item.type === "slot" && isGenerated) {
+                allBunks.forEach(bunk => {
+                    schedulableSlotBlocks.push({
+                        divName: item.division,
+                        bunk,
+                        event: eventName,
+                        startTime: startMin,
+                        endTime: endMin,
+                        slots
+                    });
+                });
+            }
+        });
+
+        // ============================================================================
+        // PASS 2.5 — SMART TILES → produce EVENT BLOCKS only
+        // ============================================================================
+        const smartTileBlocks = [];
+
+        let smartJobs = [];
+        if (window.SmartLogicAdapter) {
+            smartJobs = SmartLogicAdapter.preprocessSmartTiles(
+                manualSkeleton,
+                externalOverrides,
+                masterSpecials
+            );
+        }
+
+        smartJobs.forEach(job => {
+
+            const bunks = divisions[job.division]?.bunks || [];
+            if (bunks.length === 0) return;
+
+            const { block1Assignments, block2Assignments } =
+                SmartLogicAdapter.generateAssignments(
+                    bunks,
+                    job,
+                    historicalCounts,
+                    specialActivityNames,
+                    activityProperties,
+                    masterFields,
+                    dailyFieldAvailability,
+                    yesterdayHistory
+                );
+
+            function pushSmartEvent(bunk, act, startMin, endMin) {
+                const lower = act.toLowerCase();
+                let evt;
+                if (lower.includes("special")) evt = "Special Activity Slot";
+                else if (lower.includes("sport")) evt = "Sports Slot";
+                else evt = "General Activity Slot";
+
+                const slots = findSlotsForRange(startMin, endMin);
+                smartTileBlocks.push({
+                    divName: job.division,
+                    bunk,
+                    event: evt,
+                    startTime: startMin,
+                    endTime: endMin,
+                    slots,
+                    fromSmartTile: true
+                });
+            }
+
+            // Block A
+            Object.entries(block1Assignments).forEach(([bunk, act]) => {
+                pushSmartEvent(bunk, act, job.blockA.startMin, job.blockA.endMin);
             });
+
+            // Block B
+            if (job.blockB) {
+                Object.entries(block2Assignments).forEach(([bunk, act]) => {
+                    pushSmartEvent(bunk, act, job.blockB.startMin, job.blockB.endMin);
+                });
+            }
         });
-        return;
-    }
-
-    // --- SPLIT: Swim + GA ---
-    if (item.type === "split") {
-
-        const swimName = "Swim";
-        const gaName = normGA || "General Activity Slot";
-
-        const mid = Math.ceil(allBunks.length / 2);
-        const bTop = allBunks.slice(0, mid);
-        const bBot = allBunks.slice(mid);
-
-        const slotMid = Math.ceil(slots.length / 2);
-        const slotsA = slots.slice(0, slotMid);
-        const slotsB = slots.slice(slotMid);
-
-        // Swim A
-        bTop.forEach(bunk => {
-            slotsA.forEach((slot, idx) => {
-                window.scheduleAssignments[bunk][slot] = {
-                    field: { name: swimName },
-                    sport: null,
-                    continuation: idx > 0,
-                    _fixed: true,
-                    _activity: swimName
-                };
-            });
-        });
-
-        // GA for bottom on A
-        bBot.forEach(bunk => {
-            schedulableSlotBlocks.push({
-                divName: item.division,
-                bunk,
-                event: gaName,
-                startTime: startMin,
-                endTime: endMin,
-                slots: slotsA
-            });
-        });
-
-        // GA top on B
-        bTop.forEach(bunk => {
-            schedulableSlotBlocks.push({
-                divName: item.division,
-                bunk,
-                event: gaName,
-                startTime: startMin,
-                endTime: endMin,
-                slots: slotsB
-            });
-        });
-
-        // Swim bottom on B
-        bBot.forEach(bunk => {
-            slotsB.forEach((slot, idx) => {
-                window.scheduleAssignments[bunk][slot] = {
-                    field: { name: swimName },
-                    sport: null,
-                    continuation: idx > 0,
-                    _fixed: true,
-                    _activity: swimName
-                };
-            });
-        });
-
-        return;
-    }
-
-    // --- REGULAR GENERATED SLOT ---
-    if (item.type === "slot" && isGenerated) {
-        allBunks.forEach(bunk => {
-            schedulableSlotBlocks.push({
-                divName: item.division,
-                bunk,
-                event: eventName,
-                startTime: startMin,
-                endTime: endMin,
-                slots
-            });
-        });
-    }
-});
-
-  // ============================================================================
-// PASS 2.5 — SMART TILES → produce EVENT BLOCKS only
-// ============================================================================
-const smartTileBlocks = [];
-
-let smartJobs = [];
-if (window.SmartLogicAdapter) {
-    smartJobs = SmartLogicAdapter.preprocessSmartTiles(
-        manualSkeleton,
-        externalOverrides,
-        masterSpecials
-    );
-}
-
-smartJobs.forEach(job => {
-
-    const bunks = divisions[job.division]?.bunks || [];
-    if (bunks.length === 0) return;
-
-    const { block1Assignments, block2Assignments } =
-        SmartLogicAdapter.generateAssignments(
-            bunks,
-            job,
-            historicalCounts,
-            specialActivityNames,
-            activityProperties,
-            masterFields,
-            dailyFieldAvailability,
-            yesterdayHistory
-        );
-
-    function pushSmartEvent(bunk, act, startMin, endMin) {
-        const lower = act.toLowerCase();
-        let evt;
-        if (lower.includes("special")) evt = "Special Activity Slot";
-        else if (lower.includes("sport")) evt = "Sports Slot";
-        else evt = "General Activity Slot";
-
-        const slots = findSlotsForRange(startMin, endMin);
-        smartTileBlocks.push({
-            divName: job.division,
-            bunk,
-            event: evt,
-            startTime: startMin,
-            endTime: endMin,
-            slots,
-            fromSmartTile: true
-        });
-    }
-
-    // Block A
-    Object.entries(block1Assignments).forEach(([bunk, act]) => {
-        pushSmartEvent(bunk, act, job.blockA.startMin, job.blockA.endMin);
-    });
-
-    // Block B
-    if (job.blockB) {
-        Object.entries(block2Assignments).forEach(([bunk, act]) => {
-            pushSmartEvent(bunk, act, job.blockB.startMin, job.blockB.endMin);
-        });
-    }
-});
 
 
         // =================================================================
@@ -877,797 +877,798 @@ smartJobs.forEach(job => {
             }
         });
 
-  // ============================================================================
-// PASS 4 — GENERATION (Smart Tiles FIRST, then normal blocks)
-// ============================================================================
-const allGeneratorBlocks = [
-    ...smartTileBlocks,
-    ...remainingBlocks
-];
+        // ============================================================================
+        // PASS 4 — GENERATION (Smart Tiles FIRST, then normal blocks)
+        // ============================================================================
+        const allGeneratorBlocks = [
+            ...smartTileBlocks,
+            ...remainingBlocks
+        ];
 
-allGeneratorBlocks.sort((a, b) => a.startTime - b.startTime);
+        allGeneratorBlocks.sort((a, b) => a.startTime - b.startTime);
 
-for (const block of allGeneratorBlocks) {
+        for (const block of allGeneratorBlocks) {
 
-    if (!block.slots?.length) continue;
-    if (!window.scheduleAssignments[block.bunk]) continue;
+            if (!block.slots?.length) continue;
+            if (!window.scheduleAssignments[block.bunk]) continue;
 
-    // Skip if pinned already filled
-    if (window.scheduleAssignments[block.bunk][block.slots[0]]) continue;
+            // Skip if pinned already filled
+            if (window.scheduleAssignments[block.bunk][block.slots[0]]) continue;
 
-    let pick = null;
+            let pick = null;
 
-    if (block.event === "Special Activity Slot") {
-        pick = window.findBestSpecial?.(
-            block,
-            allActivities,
-            fieldUsageBySlot,
-            yesterdayHistory,
-            activityProperties,
-            rotationHistory,
-            divisions,
-            historicalCounts
-        );
-    }
-    else if (block.event === "Sports Slot") {
-        pick = window.findBestSportActivity?.(
-            block,
-            allActivities,
-            fieldUsageBySlot,
-            yesterdayHistory,
-            activityProperties,
-            rotationHistory,
-            divisions,
-            historicalCounts
-        );
-    }
-    else if (block.event === "General Activity Slot") {
-        pick = window.findBestGeneralActivity?.(
-            block,
-            allActivities,
-            h2hActivities,
-            fieldUsageBySlot,
-            yesterdayHistory,
-            activityProperties,
-            rotationHistory,
-            divisions,
-            historicalCounts
-        );
-    }
-
-    if (!pick) {
-        pick = window.findBestGeneralActivity?.(
-            block,
-            allActivities,
-            h2hActivities,
-            fieldUsageBySlot,
-            yesterdayHistory,
-            activityProperties,
-            rotationHistory,
-            divisions,
-            historicalCounts
-        );
-    }
-
-    if (!pick) {
-        pick = { field: "General Activity", sport: null, _activity: "General Activity" };
-    }
-
-    fillBlock(block, pick, fieldUsageBySlot);
-}
-
-// ============================================================================
-// PASS 5 — Update Rotation History (v36)
-// ============================================================================
-
-try {
-    const now = Date.now();
-    const hist = rotationHistory;   // shorter alias
-
-    availableDivisions.forEach(divName => {
-
-        const bunksInDiv = divisions[divName]?.bunks || [];
-        if (!bunksInDiv.length) return;
-
-        bunksInDiv.forEach(bunk => {
-
-            const schedule = window.scheduleAssignments[bunk] || [];
-            hist.bunks[bunk] = hist.bunks[bunk] || {};
-
-            let lastAct = null;
-
-            for (const entry of schedule) {
-
-                if (!entry || entry.continuation) {
-                    // Continuation rows do NOT count for history
-                    continue;
-                }
-
-                const act = entry._activity;
-                if (!act) continue;
-
-                // New activity change
-                if (act !== lastAct) {
-
-                    // --- DO NOT count fallback activities as “Special” ---
-                    // If the activity is a pure fallback (determined in Adapter),
-                    // Adapter NEVER marks fallback as a generated slot.
-                    // Therefore: if act came from fallback, it will not appear as
-                    // a “Special Activity Slot” or “Sports Slot”; so it will not
-                    // be used for Smart Tile fairness.
-                    hist.bunks[bunk][act] = now;
-
-                    // --- League Tracking (H2H) ---
-                    if (entry._h2h &&
-                        act !== "League" &&
-                        act !== "No Game") {
-
-                        const leagueEntry = Object.entries(masterLeagues).find(
-                            ([lgName, lg]) =>
-                                lg.enabled &&
-                                lg.divisions?.includes(divName)
-                        );
-
-                        if (leagueEntry) {
-                            const leagueName = leagueEntry[0];
-                            hist.leagues[leagueName] =
-                                hist.leagues[leagueName] || {};
-                            hist.leagues[leagueName][act] = now;
-                        }
-                    }
-
-                    lastAct = act;
-                }
+            if (block.event === "Special Activity Slot") {
+                pick = window.findBestSpecial?.(
+                    block,
+                    allActivities,
+                    fieldUsageBySlot,
+                    yesterdayHistory,
+                    activityProperties,
+                    rotationHistory,
+                    divisions,
+                    historicalCounts
+                );
             }
-        });
-    });
-
-    // Save history
-    window.saveRotationHistory?.(hist);
-    console.log("PASS 5: Rotation history updated.");
-
-} catch (err) {
-    console.error("PASS 5: Failed to update rotation history.", err);
-}
-
-    // =====================================================================
-    // HELPER FUNCTIONS
-    // =====================================================================
-
-    // --- League Helpers ---
-    function shuffleArray(array) {
-        for (let i = array.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [array[i], array[j]] = [array[j], array[i]];
-        }
-    }
-
-    function pairRoundRobin(teams) {
-        if (teams.length < 2) return [];
-        const t = teams.slice();
-        if (t.length % 2 !== 0) t.push("BYE");
-        const pairs = [];
-        const half = t.length / 2;
-        const top = t.slice(0, half);
-        const bottom = t.slice(half).reverse();
-        for (let i = 0; i < half; i++) {
-            pairs.push([top[i], bottom[i]]);
-        }
-        return pairs;
-    }
-
-    function coreGetNextLeagueRound(leagueName, teams) {
-        return pairRoundRobin(teams);
-    }
-
-    function assignSportsMultiRound(matchups, sports, teamCounts, history, lastSport) {
-        const assignments = [];
-        matchups.forEach((pair, i) => {
-            if (!pair || pair.includes("BYE")) {
-                assignments.push({ sport: null });
-                return;
+            else if (block.event === "Sports Slot") {
+                pick = window.findBestSportActivity?.(
+                    block,
+                    allActivities,
+                    fieldUsageBySlot,
+                    yesterdayHistory,
+                    activityProperties,
+                    rotationHistory,
+                    divisions,
+                    historicalCounts
+                );
             }
-            const s = sports[i % sports.length];
-            assignments.push({ sport: s });
-        });
-        return {
-            assignments,
-            updatedTeamCounts: teamCounts || {},
-            updatedLastSports: lastSport || {}
-        };
-    }
-
-    function findSlotsForRange(startMin, endMin) {
-        const slots = [];
-        if (!window.unifiedTimes || startMin == null || endMin == null) return slots;
-        for (let i = 0; i < window.unifiedTimes.length; i++) {
-            const slot = window.unifiedTimes[i];
-            const d = new Date(slot.start);
-            const slotStart = d.getHours() * 60 + d.getMinutes();
-            if (slotStart >= startMin && slotStart < endMin) slots.push(i);
-        }
-        return slots;
-    }
-
-    function markFieldUsage(block, fieldName, fieldUsageBySlot) {
-        if (!fieldName ||
-            fieldName === "No Field" ||
-            !window.allSchedulableNames ||
-            !window.allSchedulableNames.includes(fieldName)) {
-            return;
-        }
-        for (const slotIndex of block.slots || []) {
-            if (slotIndex === undefined) continue;
-            fieldUsageBySlot[slotIndex] = fieldUsageBySlot[slotIndex] || {};
-            const usage = fieldUsageBySlot[slotIndex][fieldName] ||
-                { count: 0, divisions: [], bunks: {} };
-            usage.count++;
-            if (!usage.divisions.includes(block.divName))
-                usage.divisions.push(block.divName);
-            const blockActivity =
-                block._activity ||
-                block.sport ||
-                (block.event === 'League Game' ? 'League' : block.event);
-            if (block.bunk && blockActivity) {
-                usage.bunks[block.bunk] = blockActivity;
+            else if (block.event === "General Activity Slot") {
+                pick = window.findBestGeneralActivity?.(
+                    block,
+                    allActivities,
+                    h2hActivities,
+                    fieldUsageBySlot,
+                    yesterdayHistory,
+                    activityProperties,
+                    rotationHistory,
+                    divisions,
+                    historicalCounts
+                );
             }
-            fieldUsageBySlot[slotIndex][fieldName] = usage;
-        }
-    }
 
-    function isTimeAvailable(slotIndex, fieldProps) {
-        if (!window.unifiedTimes || !window.unifiedTimes[slotIndex]) return false;
-        const slot = window.unifiedTimes[slotIndex];
-        const slotStartMin = new Date(slot.start).getHours() * 60 +
-                             new Date(slot.start).getMinutes();
-        const slotEndMin = slotStartMin + INCREMENT_MINS;
-        const rules = (fieldProps.timeRules || []).map(r => {
-            if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
-            return {
-                ...r,
-                startMin: parseTimeToMinutes(r.start),
-                endMin: parseTimeToMinutes(r.end)
-            };
-        });
-
-        if (rules.length === 0) return fieldProps.available;
-        if (!fieldProps.available) return false;
-
-        const hasAvailableRules = rules.some(r => r.type === 'Available');
-        let isAvailable = !hasAvailableRules;
-
-        for (const rule of rules) {
-            if (rule.type === 'Available') {
-                if (rule.startMin == null || rule.endMin == null) continue;
-                if (slotStartMin >= rule.startMin && slotEndMin <= rule.endMin) {
-                    isAvailable = true;
-                    break;
-                }
+            if (!pick) {
+                pick = window.findBestGeneralActivity?.(
+                    block,
+                    allActivities,
+                    h2hActivities,
+                    fieldUsageBySlot,
+                    yesterdayHistory,
+                    activityProperties,
+                    rotationHistory,
+                    divisions,
+                    historicalCounts
+                );
             }
-        }
-        for (const rule of rules) {
-            if (rule.type === 'Unavailable') {
-                if (rule.startMin == null || rule.endMin == null) continue;
-                if (slotStartMin < rule.endMin && slotEndMin > rule.startMin) {
-                    isAvailable = false;
-                    break;
-                }
+
+            if (!pick) {
+                pick = { field: "General Activity", sport: null, _activity: "General Activity" };
             }
-        }
-        return isAvailable;
-    }
 
-    function getBlockTimeRange(block) {
-        let blockStartMin = (typeof block.startTime === "number") ? block.startTime : null;
-        let blockEndMin = (typeof block.endTime === "number") ? block.endTime : null;
-        if ((blockStartMin == null || blockEndMin == null) &&
-            window.unifiedTimes &&
-            Array.isArray(block.slots) &&
-            block.slots.length > 0) {
-            const minIndex = Math.min(...block.slots);
-            const maxIndex = Math.max(...block.slots);
-            const firstSlot = window.unifiedTimes[minIndex];
-            const lastSlot = window.unifiedTimes[maxIndex];
-            if (firstSlot && lastSlot) {
-                const firstStart = new Date(firstSlot.start);
-                const lastStart = new Date(lastSlot.start);
-                blockStartMin = firstStart.getHours() * 60 + firstStart.getMinutes();
-                blockEndMin = lastStart.getHours() * 60 +
-                              lastStart.getMinutes() +
-                              INCREMENT_MINS;
-            }
-        }
-        return { blockStartMin, blockEndMin };
-    }
-
-    function canBlockFit(block, fieldName, activityProperties, fieldUsageBySlot, proposedActivity) {
-        if (!fieldName) return false;
-        const props = activityProperties[fieldName];
-
-        // If no props, treat as virtual/unconstrained
-        if (!props) return true;
-
-        const limit = (props && props.sharable) ? 2 : 1;
-
-        if (props.preferences &&
-            props.preferences.enabled &&
-            props.preferences.exclusive &&
-            !props.preferences.list.includes(block.divName)) {
-            return false;
+            fillBlock(block, pick, fieldUsageBySlot);
         }
 
-        if (props &&
-            Array.isArray(props.allowedDivisions) &&
-            props.allowedDivisions.length > 0 &&
-            !props.allowedDivisions.includes(block.divName)) {
-            return false;
-        }
-
-        const limitRules = props.limitUsage;
-        if (limitRules && limitRules.enabled) {
-            if (!limitRules.divisions[block.divName]) return false;
-            const allowedBunks = limitRules.divisions[block.divName];
-            if (allowedBunks.length > 0 &&
-                block.bunk &&
-                !allowedBunks.includes(block.bunk)) {
-                return false;
-            }
-        }
-
-        const { blockStartMin, blockEndMin } = getBlockTimeRange(block);
-        const rules = (props.timeRules || []).map(r => {
-            if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
-            return {
-                ...r,
-                startMin: parseTimeToMinutes(r.start),
-                endMin: parseTimeToMinutes(r.end)
-            };
-        });
-
-        if (rules.length > 0) {
-            if (!props.available) return false;
-            const hasAvailableRules = rules.some(r => r.type === 'Available');
-            if (blockStartMin != null && blockEndMin != null) {
-                if (hasAvailableRules) {
-                    let insideAvailable = false;
-                    for (const rule of rules) {
-                        if (rule.type !== 'Available' ||
-                            rule.startMin == null ||
-                            rule.endMin == null) continue;
-                        if (blockStartMin >= rule.startMin &&
-                            blockEndMin <= rule.endMin) {
-                            insideAvailable = true;
-                            break;
-                        }
-                    }
-                    if (!insideAvailable) return false;
-                }
-                for (const rule of rules) {
-                    if (rule.type !== 'Unavailable' ||
-                        rule.startMin == null ||
-                        rule.endMin == null) continue;
-                    if (blockStartMin < rule.endMin &&
-                        blockEndMin > rule.startMin) {
-                        return false;
-                    }
-                }
-            }
-            for (const slotIndex of block.slots || []) {
-                if (slotIndex === undefined) return false;
-                const usage = fieldUsageBySlot[slotIndex]?.[fieldName] ||
-                    { count: 0, divisions: [], bunks: {} };
-                if (usage.count >= limit) return false;
-                if (usage.count > 0) {
-                    if (!usage.divisions.includes(block.divName)) return false;
-                    let existingActivity = null;
-                    for (const bunkName in usage.bunks) {
-                        if (usage.bunks[bunkName]) {
-                            existingActivity = usage.bunks[bunkName];
-                            break;
-                        }
-                    }
-                    if (existingActivity &&
-                        proposedActivity &&
-                        existingActivity !== proposedActivity) {
-                        return false;
-                    }
-                }
-                if (!isTimeAvailable(slotIndex, props)) return false;
-            }
-        } else {
-            if (!props.available) return false;
-            for (const slotIndex of block.slots || []) {
-                if (slotIndex === undefined) return false;
-                const usage = fieldUsageBySlot[slotIndex]?.[fieldName] ||
-                    { count: 0, divisions: [], bunks: {} };
-                if (usage.count >= limit) return false;
-                if (usage.count > 0) {
-                    let existingActivity = null;
-                    for (const bunkName in usage.bunks) {
-                        if (usage.bunks[bunkName]) {
-                            existingActivity = usage.bunks[bunkName];
-                            break;
-                        }
-                    }
-                    if (existingActivity &&
-                        proposedActivity &&
-                        existingActivity !== proposedActivity) {
-                        return false;
-                    }
-                }
-            }
-        }
-        return true;
-    }
-
-    function canLeagueGameFit(block, fieldName, fieldUsageBySlot, activityProperties) {
-        if (!fieldName) return false;
-        const props = activityProperties[fieldName];
-        if (!props) return false;
-        const limit = 1;
-
-        if (props.preferences &&
-            props.preferences.enabled &&
-            props.preferences.exclusive &&
-            !props.preferences.list.includes(block.divName)) {
-            return false;
-        }
-        if (props &&
-            Array.isArray(props.allowedDivisions) &&
-            props.allowedDivisions.length > 0 &&
-            !props.allowedDivisions.includes(block.divName)) {
-            return false;
-        }
-
-        const limitRules = props.limitUsage;
-        if (limitRules && limitRules.enabled) {
-            if (!limitRules.divisions[block.divName]) return false;
-        }
-
-        const { blockStartMin, blockEndMin } = getBlockTimeRange(block);
-        const rules = (props.timeRules || []).map(r => {
-            if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
-            return {
-                ...r,
-                startMin: parseTimeToMinutes(r.start),
-                endMin: parseTimeToMinutes(r.end)
-            };
-        });
-
-        if (rules.length > 0) {
-            if (!props.available) return false;
-            const hasAvailableRules = rules.some(r => r.type === 'Available');
-            if (blockStartMin != null && blockEndMin != null) {
-                if (hasAvailableRules) {
-                    let insideAvailable = false;
-                    for (const rule of rules) {
-                        if (rule.type !== 'Available' ||
-                            rule.startMin == null ||
-                            rule.endMin == null) continue;
-                        if (blockStartMin >= rule.startMin &&
-                            blockEndMin <= rule.endMin) {
-                            insideAvailable = true;
-                            break;
-                        }
-                    }
-                    if (!insideAvailable) return false;
-                }
-                for (const rule of rules) {
-                    if (rule.type !== 'Unavailable' ||
-                        rule.startMin == null ||
-                        rule.endMin == null) continue;
-                    if (blockStartMin < rule.endMin &&
-                        blockEndMin > rule.startMin) {
-                        return false;
-                    }
-                }
-            }
-            for (const slotIndex of block.slots || []) {
-                if (slotIndex === undefined) return false;
-                const usage = fieldUsageBySlot[slotIndex]?.[fieldName] ||
-                    { count: 0, divisions: [] };
-                if (usage.count >= limit) return false;
-                if (!isTimeAvailable(slotIndex, props)) return false;
-            }
-        } else {
-            if (!props.available) return false;
-            for (const slotIndex of block.slots || []) {
-                if (slotIndex === undefined) return false;
-                const usage = fieldUsageBySlot[slotIndex]?.[fieldName] ||
-                    { count: 0, divisions: [] };
-                if (usage.count >= limit) return false;
-            }
-        }
-        return true;
-    }
-
-    function isPickValidForBlock(block, pick, activityProperties, fieldUsageBySlot) {
-        if (!pick) return false;
-        const fname = fieldLabel(pick.field);
-        if (!fname) return true;
-        if (!window.allSchedulableNames ||
-            !window.allSchedulableNames.includes(fname)) {
-            return true;
-        }
-        return canBlockFit(block, fname, activityProperties, fieldUsageBySlot, pick._activity);
-    }
-
-  /**
- * fillBlock V36 — FINAL
- * ----------------------------------------------
- * • NEVER overwrite pinned / fixed / SmartTile
- * • Sharable: capacity from sharableWith or sharable
- * • markFieldUsage included
- * • continuation handled
- * • _activity always set
- */
-function fillBlock(block, pick, fieldUsageBySlot) {
-
-    const fieldName = pick.field?.name || pick.field;
-    const props = activityProperties[fieldName];
-
-    const sharableCap =
-        props?.sharableWith?.capacity ??
-        (props?.sharableWith?.type === "all" ? 2 :
-         props?.sharable ? 2 : 1);
-
-    for (const [idx, slotIndex] of block.slots.entries()) {
-
-        if (!window.scheduleAssignments[block.bunk][slotIndex]) {
-
-            window.scheduleAssignments[block.bunk][slotIndex] = {
-                field: fieldName,
-                sport: pick.sport,
-                continuation: idx > 0,
-                _fixed: pick._fixed || false,
-                _activity: pick._activity || pick.sport || fieldName
-            };
-        }
-
-        fieldUsageBySlot[slotIndex] = fieldUsageBySlot[slotIndex] || {};
-        const usage = fieldUsageBySlot[slotIndex][fieldName] || {
-            count: 0,
-            bunks: {},
-            divisions: []
-        };
-
-        if (usage.count < sharableCap) {
-            usage.count++;
-            usage.bunks[block.bunk] = pick._activity || pick.sport || fieldName;
-            if (!usage.divisions.includes(block.divName))
-                usage.divisions.push(block.divName);
-            fieldUsageBySlot[slotIndex][fieldName] = usage;
-        }
-    }
-}
-
-    function loadAndFilterData() {
-        const globalSettings = window.loadGlobalSettings?.() || {};
-        const app1Data = globalSettings.app1 || {};
-        const masterFields = app1Data.fields || [];
-        const masterDivisions = app1Data.divisions || {};
-        const masterSpecials = app1Data.specialActivities || [];
-        const masterLeagues = globalSettings.leaguesByName || {};
-        const masterSpecialtyLeagues = globalSettings.specialtyLeagues || {};
-
-        const dailyData = window.loadCurrentDailyData?.() || {};
-        const dailyFieldAvailability = dailyData.dailyFieldAvailability || {};
-        const dailyOverrides = dailyData.overrides || {};
-        const disabledLeagues = dailyOverrides.leagues || [];
-        const disabledSpecialtyLeagues = dailyData.disabledSpecialtyLeagues || [];
-        const dailyDisabledSportsByField = dailyData.dailyDisabledSportsByField || {};
-        const disabledFields = dailyOverrides.disabledFields || [];
-        const disabledSpecials = dailyOverrides.disabledSpecials || [];
-
-        const rotationHistoryRaw = window.loadRotationHistory?.() || {};
-        const rotationHistory = {
-            bunks: rotationHistoryRaw.bunks || {},
-            leagues: rotationHistoryRaw.leagues || {},
-            leagueTeamSports: rotationHistoryRaw.leagueTeamSports || {},
-            leagueTeamLastSport: rotationHistoryRaw.leagueTeamLastSport || {}
-        };
-
-        const historicalCounts = {};
-        window.debugHistoricalCounts = historicalCounts;
-
-        const specialActivityNames = [];
+        // ============================================================================
+        // PASS 5 — Update Rotation History (v36)
+        // ============================================================================
 
         try {
-            const allDaily = window.loadAllDailyData?.() || {};
-            const manualOffsets = globalSettings.manualUsageOffsets || {};
+            const now = Date.now();
+            const hist = rotationHistory;   // shorter alias
 
-            Object.values(allDaily).forEach(day => {
-                const sched = day.scheduleAssignments || {};
-                Object.keys(sched).forEach(b => {
-                    if (!historicalCounts[b]) historicalCounts[b] = {};
-                    (sched[b] || []).forEach(e => {
-                        if (e && e._activity && !e.continuation) {
-                            historicalCounts[b][e._activity] =
-                                (historicalCounts[b][e._activity] || 0) + 1;
+            availableDivisions.forEach(divName => {
+
+                const bunksInDiv = divisions[divName]?.bunks || [];
+                if (!bunksInDiv.length) return;
+
+                bunksInDiv.forEach(bunk => {
+
+                    const schedule = window.scheduleAssignments[bunk] || [];
+                    hist.bunks[bunk] = hist.bunks[bunk] || {};
+
+                    let lastAct = null;
+
+                    for (const entry of schedule) {
+
+                        if (!entry || entry.continuation) {
+                            // Continuation rows do NOT count for history
+                            continue;
                         }
-                    });
-                });
-            });
 
-            Object.keys(manualOffsets).forEach(b => {
-                if (!historicalCounts[b]) historicalCounts[b] = {};
-                Object.keys(manualOffsets[b]).forEach(act => {
-                    const offset = manualOffsets[b][act] || 0;
-                    const current = historicalCounts[b][act] || 0;
-                    historicalCounts[b][act] = Math.max(0, current + offset);
-                });
-            });
+                        const act = entry._activity;
+                        if (!act) continue;
 
-            masterSpecials.forEach(s => specialActivityNames.push(s.name));
+                        // New activity change
+                        if (act !== lastAct) {
 
-        } catch (e) {
-            console.error("Error calculating historical counts:", e);
-        }
+                            // --- DO NOT count fallback activities as “Special” ---
+                            // If the activity is a pure fallback (determined in Adapter),
+                            // Adapter NEVER marks fallback as a generated slot.
+                            // Therefore: if act came from fallback, it will not appear as
+                            // a “Special Activity Slot” or “Sports Slot”; so it will not
+                            // be used for Smart Tile fairness.
+                            hist.bunks[bunk][act] = now;
 
-        const overrides = {
-            bunks: dailyOverrides.bunks || [],
-            leagues: disabledLeagues
-        };
+                            // --- League Tracking (H2H) ---
+                            if (entry._h2h &&
+                                act !== "League" &&
+                                act !== "No Game") {
 
-        const availableDivisions = (app1Data.availableDivisions || []).filter(
-            divName => !overrides.bunks.includes(divName)
-        );
+                                const leagueEntry = Object.entries(masterLeagues).find(
+                                    ([lgName, lg]) =>
+                                        lg.enabled &&
+                                        lg.divisions?.includes(divName)
+                                );
 
-        const divisions = {};
-        for (const divName of availableDivisions) {
-            if (!masterDivisions[divName]) continue;
-            divisions[divName] = JSON.parse(JSON.stringify(masterDivisions[divName]));
-            divisions[divName].bunks =
-                (divisions[divName].bunks || [])
-                    .filter(bunkName => !overrides.bunks.includes(bunkName));
-        }
+                                if (leagueEntry) {
+                                    const leagueName = leagueEntry[0];
+                                    hist.leagues[leagueName] =
+                                        hist.leagues[leagueName] || {};
+                                    hist.leagues[leagueName][act] = now;
+                                }
+                            }
 
-        function parseTimeRule(rule) {
-            if (!rule || !rule.type) return null;
-            if (typeof rule.startMin === "number" &&
-                typeof rule.endMin === "number") {
-                return {
-                    type: rule.type,
-                    startMin: rule.startMin,
-                    endMin: rule.endMin
-                };
-            }
-            const startMin = parseTimeToMinutes(rule.start);
-            const endMin = parseTimeToMinutes(rule.end);
-            if (startMin == null || endMin == null) return null;
-            return {
-                type: rule.type,
-                startMin,
-                endMin,
-                start: rule.start,
-                end: rule.end
-            };
-        }
-
-        const activityProperties = {};
-        const allMasterActivities = [
-            ...masterFields.filter(f => !disabledFields.includes(f.name)),
-            ...masterSpecials.filter(s => !disabledSpecials.includes(s.name))
-        ];
-        const availableActivityNames = [];
-
-        allMasterActivities.forEach(f => {
-            let finalRules;
-            const dailyRules = dailyFieldAvailability[f.name];
-            if (dailyRules && dailyRules.length > 0) {
-                finalRules = dailyRules.map(parseTimeRule).filter(Boolean);
-            } else {
-                finalRules = (f.timeRules || []).map(parseTimeRule).filter(Boolean);
-            }
-
-            const isMasterAvailable = f.available !== false;
-
-            let allowedDivisions = null;
-            if (Array.isArray(f.allowedDivisions) && f.allowedDivisions.length > 0) {
-                allowedDivisions = f.allowedDivisions.slice();
-            } else if (f.divisionAvailability &&
-                       f.divisionAvailability.mode === 'specific' &&
-                       Array.isArray(f.divisionAvailability.divisions) &&
-                       f.divisionAvailability.divisions.length > 0) {
-                allowedDivisions = f.divisionAvailability.divisions.slice();
-            } else if (Array.isArray(f.sharableWith?.divisions) &&
-                       f.sharableWith.divisions.length > 0) {
-                allowedDivisions = f.sharableWith.divisions.slice();
-            }
-
-            activityProperties[f.name] = {
-                available: isMasterAvailable,
-                sharable: f.sharableWith?.type === 'all' ||
-                          f.sharableWith?.type === 'custom',
-                sharableWith: f.sharableWith,
-                allowedDivisions,
-                limitUsage: f.limitUsage || { enabled: false, divisions: {} },
-                preferences: f.preferences ||
-                    { enabled: false, exclusive: false, list: [] },
-                timeRules: finalRules
-            };
-
-            if (isMasterAvailable) {
-                availableActivityNames.push(f.name);
-            }
-        });
-
-        window.allSchedulableNames = availableActivityNames;
-
-        const availFields = masterFields.filter(f =>
-            availableActivityNames.includes(f.name)
-        );
-        const availSpecials = masterSpecials.filter(s =>
-            availableActivityNames.includes(s.name)
-        );
-
-        const fieldsBySport = {};
-        availFields.forEach(f => {
-            if (Array.isArray(f.activities)) {
-                f.activities.forEach(sport => {
-                    const isDisabledToday =
-                        dailyDisabledSportsByField[f.name]?.includes(sport);
-                    if (!isDisabledToday) {
-                        fieldsBySport[sport] = fieldsBySport[sport] || [];
-                        fieldsBySport[sport].push(f.name);
+                            lastAct = act;
+                        }
                     }
                 });
+            });
+
+            // Save history
+            window.saveRotationHistory?.(hist);
+            console.log("PASS 5: Rotation history updated.");
+
+        } catch (err) {
+            console.error("PASS 5: Failed to update rotation history.", err);
+        }
+
+        // =====================================================================
+        // HELPER FUNCTIONS
+        // =====================================================================
+
+        // --- League Helpers ---
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
             }
-        });
+        }
 
-        const allActivities = [
-            ...availFields
-                .flatMap(f => (f.activities || [])
-                    .map(act => ({
-                        type: "field",
-                        field: f.name,
-                        sport: act
-                    })))
-                .filter(a =>
-                    !a.field ||
-                    !a.sport ||
-                    !dailyDisabledSportsByField[a.field]?.includes(a.sport)
-                ),
-            ...availSpecials.map(sa => ({
-                type: "special",
-                field: sa.name,
-                sport: null
-            }))
-        ];
+        function pairRoundRobin(teams) {
+            if (teams.length < 2) return [];
+            const t = teams.slice();
+            if (t.length % 2 !== 0) t.push("BYE");
+            const pairs = [];
+            const half = t.length / 2;
+            const top = t.slice(0, half);
+            const bottom = t.slice(half).reverse();
+            for (let i = 0; i < half; i++) {
+                pairs.push([top[i], bottom[i]]);
+            }
+            return pairs;
+        }
 
-        const h2hActivities = allActivities.filter(
-            a => a.type === "field" && a.sport
-        );
+        function coreGetNextLeagueRound(leagueName, teams) {
+            return pairRoundRobin(teams);
+        }
 
-        const yesterdayData = window.loadPreviousDailyData?.() || {};
-        const yesterdayHistory = {
-            schedule: yesterdayData.scheduleAssignments || {},
-            leagues: yesterdayData.leagueAssignments || {}
-        };
+        function assignSportsMultiRound(matchups, sports, teamCounts, history, lastSport) {
+            const assignments = [];
+            matchups.forEach((pair, i) => {
+                if (!pair || pair.includes("BYE")) {
+                    assignments.push({ sport: null });
+                    return;
+                }
+                const s = sports[i % sports.length];
+                assignments.push({ sport: s });
+            });
+            return {
+                assignments,
+                updatedTeamCounts: teamCounts || {},
+                updatedLastSports: lastSport || {}
+            };
+        }
 
-        return {
-            divisions,
-            availableDivisions,
-            activityProperties,
-            allActivities,
-            h2hActivities,
-            fieldsBySport,
-            masterLeagues,
-            masterSpecialtyLeagues,
-            masterSpecials, // Added so adapter can access full special defs
-            yesterdayHistory,
-            rotationHistory,
-            disabledLeagues,
-            disabledSpecialtyLeagues,
-            historicalCounts,
-            specialActivityNames,
-            disabledFields,
-            disabledSpecials,
-            dailyFieldAvailability,
-            dailyDisabledSportsByField,
-            masterFields 
-        };
-    }
+        function findSlotsForRange(startMin, endMin) {
+            const slots = [];
+            if (!window.unifiedTimes || startMin == null || endMin == null) return slots;
+            for (let i = 0; i < window.unifiedTimes.length; i++) {
+                const slot = window.unifiedTimes[i];
+                const d = new Date(slot.start);
+                const slotStart = d.getHours() * 60 + d.getMinutes();
+                if (slotStart >= startMin && slotStart < endMin) slots.push(i);
+            }
+            return slots;
+        }
+
+        function markFieldUsage(block, fieldName, fieldUsageBySlot) {
+            if (!fieldName ||
+                fieldName === "No Field" ||
+                !window.allSchedulableNames ||
+                !window.allSchedulableNames.includes(fieldName)) {
+                return;
+            }
+            for (const slotIndex of block.slots || []) {
+                if (slotIndex === undefined) continue;
+                fieldUsageBySlot[slotIndex] = fieldUsageBySlot[slotIndex] || {};
+                const usage = fieldUsageBySlot[slotIndex][fieldName] ||
+                    { count: 0, divisions: [], bunks: {} };
+                usage.count++;
+                if (!usage.divisions.includes(block.divName))
+                    usage.divisions.push(block.divName);
+                const blockActivity =
+                    block._activity ||
+                    block.sport ||
+                    (block.event === 'League Game' ? 'League' : block.event);
+                if (block.bunk && blockActivity) {
+                    usage.bunks[block.bunk] = blockActivity;
+                }
+                fieldUsageBySlot[slotIndex][fieldName] = usage;
+            }
+        }
+
+        function isTimeAvailable(slotIndex, fieldProps) {
+            if (!window.unifiedTimes || !window.unifiedTimes[slotIndex]) return false;
+            const slot = window.unifiedTimes[slotIndex];
+            const slotStartMin = new Date(slot.start).getHours() * 60 +
+                                 new Date(slot.start).getMinutes();
+            const slotEndMin = slotStartMin + INCREMENT_MINS;
+            const rules = (fieldProps.timeRules || []).map(r => {
+                if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
+                return {
+                    ...r,
+                    startMin: parseTimeToMinutes(r.start),
+                    endMin: parseTimeToMinutes(r.end)
+                };
+            });
+
+            if (rules.length === 0) return fieldProps.available;
+            if (!fieldProps.available) return false;
+
+            const hasAvailableRules = rules.some(r => r.type === 'Available');
+            let isAvailable = !hasAvailableRules;
+
+            for (const rule of rules) {
+                if (rule.type === 'Available') {
+                    if (rule.startMin == null || rule.endMin == null) continue;
+                    if (slotStartMin >= rule.startMin && slotEndMin <= rule.endMin) {
+                        isAvailable = true;
+                        break;
+                    }
+                }
+            }
+            for (const rule of rules) {
+                if (rule.type === 'Unavailable') {
+                    if (rule.startMin == null || rule.endMin == null) continue;
+                    if (slotStartMin < rule.endMin && slotEndMin > rule.startMin) {
+                        isAvailable = false;
+                        break;
+                    }
+                }
+            }
+            return isAvailable;
+        }
+
+        function getBlockTimeRange(block) {
+            let blockStartMin = (typeof block.startTime === "number") ? block.startTime : null;
+            let blockEndMin = (typeof block.endTime === "number") ? block.endTime : null;
+            if ((blockStartMin == null || blockEndMin == null) &&
+                window.unifiedTimes &&
+                Array.isArray(block.slots) &&
+                block.slots.length > 0) {
+                const minIndex = Math.min(...block.slots);
+                const maxIndex = Math.max(...block.slots);
+                const firstSlot = window.unifiedTimes[minIndex];
+                const lastSlot = window.unifiedTimes[maxIndex];
+                if (firstSlot && lastSlot) {
+                    const firstStart = new Date(firstSlot.start);
+                    const lastStart = new Date(lastSlot.start);
+                    blockStartMin = firstStart.getHours() * 60 + firstStart.getMinutes();
+                    blockEndMin = lastStart.getHours() * 60 +
+                                  lastStart.getMinutes() +
+                                  INCREMENT_MINS;
+                }
+            }
+            return { blockStartMin, blockEndMin };
+        }
+
+        function canBlockFit(block, fieldName, activityProperties, fieldUsageBySlot, proposedActivity) {
+            if (!fieldName) return false;
+            const props = activityProperties[fieldName];
+
+            // If no props, treat as virtual/unconstrained
+            if (!props) return true;
+
+            const limit = (props && props.sharable) ? 2 : 1;
+
+            if (props.preferences &&
+                props.preferences.enabled &&
+                props.preferences.exclusive &&
+                !props.preferences.list.includes(block.divName)) {
+                return false;
+            }
+
+            if (props &&
+                Array.isArray(props.allowedDivisions) &&
+                props.allowedDivisions.length > 0 &&
+                !props.allowedDivisions.includes(block.divName)) {
+                return false;
+            }
+
+            const limitRules = props.limitUsage;
+            if (limitRules && limitRules.enabled) {
+                if (!limitRules.divisions[block.divName]) return false;
+                const allowedBunks = limitRules.divisions[block.divName];
+                if (allowedBunks.length > 0 &&
+                    block.bunk &&
+                    !allowedBunks.includes(block.bunk)) {
+                    return false;
+                }
+            }
+
+            const { blockStartMin, blockEndMin } = getBlockTimeRange(block);
+            const rules = (props.timeRules || []).map(r => {
+                if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
+                return {
+                    ...r,
+                    startMin: parseTimeToMinutes(r.start),
+                    endMin: parseTimeToMinutes(r.end)
+                };
+            });
+
+            if (rules.length > 0) {
+                if (!props.available) return false;
+                const hasAvailableRules = rules.some(r => r.type === 'Available');
+                if (blockStartMin != null && blockEndMin != null) {
+                    if (hasAvailableRules) {
+                        let insideAvailable = false;
+                        for (const rule of rules) {
+                            if (rule.type !== 'Available' ||
+                                rule.startMin == null ||
+                                rule.endMin == null) continue;
+                            if (blockStartMin >= rule.startMin &&
+                                blockEndMin <= rule.endMin) {
+                                insideAvailable = true;
+                                break;
+                            }
+                        }
+                        if (!insideAvailable) return false;
+                    }
+                    for (const rule of rules) {
+                        if (rule.type !== 'Unavailable' ||
+                            rule.startMin == null ||
+                            rule.endMin == null) continue;
+                        if (blockStartMin < rule.endMin &&
+                            blockEndMin > rule.startMin) {
+                            return false;
+                        }
+                    }
+                }
+                for (const slotIndex of block.slots || []) {
+                    if (slotIndex === undefined) return false;
+                    const usage = fieldUsageBySlot[slotIndex]?.[fieldName] ||
+                        { count: 0, divisions: [], bunks: {} };
+                    if (usage.count >= limit) return false;
+                    if (usage.count > 0) {
+                        if (!usage.divisions.includes(block.divName)) return false;
+                        let existingActivity = null;
+                        for (const bunkName in usage.bunks) {
+                            if (usage.bunks[bunkName]) {
+                                existingActivity = usage.bunks[bunkName];
+                                break;
+                            }
+                        }
+                        if (existingActivity &&
+                            proposedActivity &&
+                            existingActivity !== proposedActivity) {
+                            return false;
+                        }
+                    }
+                    if (!isTimeAvailable(slotIndex, props)) return false;
+                }
+            } else {
+                if (!props.available) return false;
+                for (const slotIndex of block.slots || []) {
+                    if (slotIndex === undefined) return false;
+                    const usage = fieldUsageBySlot[slotIndex]?.[fieldName] ||
+                        { count: 0, divisions: [], bunks: {} };
+                    if (usage.count >= limit) return false;
+                    if (usage.count > 0) {
+                        let existingActivity = null;
+                        for (const bunkName in usage.bunks) {
+                            if (usage.bunks[bunkName]) {
+                                existingActivity = usage.bunks[bunkName];
+                                break;
+                            }
+                        }
+                        if (existingActivity &&
+                            proposedActivity &&
+                            existingActivity !== proposedActivity) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+
+        function canLeagueGameFit(block, fieldName, fieldUsageBySlot, activityProperties) {
+            if (!fieldName) return false;
+            const props = activityProperties[fieldName];
+            if (!props) return false;
+            const limit = 1;
+
+            if (props.preferences &&
+                props.preferences.enabled &&
+                props.preferences.exclusive &&
+                !props.preferences.list.includes(block.divName)) {
+                return false;
+            }
+            if (props &&
+                Array.isArray(props.allowedDivisions) &&
+                props.allowedDivisions.length > 0 &&
+                !props.allowedDivisions.includes(block.divName)) {
+                return false;
+            }
+
+            const limitRules = props.limitUsage;
+            if (limitRules && limitRules.enabled) {
+                if (!limitRules.divisions[block.divName]) return false;
+            }
+
+            const { blockStartMin, blockEndMin } = getBlockTimeRange(block);
+            const rules = (props.timeRules || []).map(r => {
+                if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
+                return {
+                    ...r,
+                    startMin: parseTimeToMinutes(r.start),
+                    endMin: parseTimeToMinutes(r.end)
+                };
+            });
+
+            if (rules.length > 0) {
+                if (!props.available) return false;
+                const hasAvailableRules = rules.some(r => r.type === 'Available');
+                if (blockStartMin != null && blockEndMin != null) {
+                    if (hasAvailableRules) {
+                        let insideAvailable = false;
+                        for (const rule of rules) {
+                            if (rule.type !== 'Available' ||
+                                rule.startMin == null ||
+                                rule.endMin == null) continue;
+                            if (blockStartMin >= rule.startMin &&
+                                blockEndMin <= rule.endMin) {
+                                insideAvailable = true;
+                                break;
+                            }
+                        }
+                        if (!insideAvailable) return false;
+                    }
+                    for (const rule of rules) {
+                        if (rule.type !== 'Unavailable' ||
+                            rule.startMin == null ||
+                            rule.endMin == null) continue;
+                        if (blockStartMin < rule.endMin &&
+                            blockEndMin > rule.startMin) {
+                            return false;
+                        }
+                    }
+                }
+                for (const slotIndex of block.slots || []) {
+                    if (slotIndex === undefined) return false;
+                    const usage = fieldUsageBySlot[slotIndex]?.[fieldName] ||
+                        { count: 0, divisions: [] };
+                    if (usage.count >= limit) return false;
+                    if (!isTimeAvailable(slotIndex, props)) return false;
+                }
+            } else {
+                if (!props.available) return false;
+                for (const slotIndex of block.slots || []) {
+                    if (slotIndex === undefined) return false;
+                    const usage = fieldUsageBySlot[slotIndex]?.[fieldName] ||
+                        { count: 0, divisions: [] };
+                    if (usage.count >= limit) return false;
+                }
+            }
+            return true;
+        }
+
+        function isPickValidForBlock(block, pick, activityProperties, fieldUsageBySlot) {
+            if (!pick) return false;
+            const fname = fieldLabel(pick.field);
+            if (!fname) return true;
+            if (!window.allSchedulableNames ||
+                !window.allSchedulableNames.includes(fname)) {
+                return true;
+            }
+            return canBlockFit(block, fname, activityProperties, fieldUsageBySlot, pick._activity);
+        }
+
+        /**
+         * fillBlock V36 — FINAL
+         * ----------------------------------------------
+         * • NEVER overwrite pinned / fixed / SmartTile
+         * • Sharable: capacity from sharableWith or sharable
+         * • markFieldUsage included
+         * • continuation handled
+         * • _activity always set
+         */
+        function fillBlock(block, pick, fieldUsageBySlot) {
+
+            const fieldName = pick.field?.name || pick.field;
+            const props = activityProperties[fieldName];
+
+            const sharableCap =
+                props?.sharableWith?.capacity ??
+                (props?.sharableWith?.type === "all" ? 2 :
+                props?.sharable ? 2 : 1);
+
+            for (const [idx, slotIndex] of block.slots.entries()) {
+
+                if (!window.scheduleAssignments[block.bunk][slotIndex]) {
+
+                    window.scheduleAssignments[block.bunk][slotIndex] = {
+                        field: fieldName,
+                        sport: pick.sport,
+                        continuation: idx > 0,
+                        _fixed: pick._fixed || false,
+                        _activity: pick._activity || pick.sport || fieldName
+                    };
+                }
+
+                fieldUsageBySlot[slotIndex] = fieldUsageBySlot[slotIndex] || {};
+                const usage = fieldUsageBySlot[slotIndex][fieldName] || {
+                    count: 0,
+                    bunks: {},
+                    divisions: []
+                };
+
+                if (usage.count < sharableCap) {
+                    usage.count++;
+                    usage.bunks[block.bunk] = pick._activity || pick.sport || fieldName;
+                    if (!usage.divisions.includes(block.divName))
+                        usage.divisions.push(block.divName);
+                    fieldUsageBySlot[slotIndex][fieldName] = usage;
+                }
+            }
+        }
+
+        function loadAndFilterData() {
+            const globalSettings = window.loadGlobalSettings?.() || {};
+            const app1Data = globalSettings.app1 || {};
+            const masterFields = app1Data.fields || [];
+            const masterDivisions = app1Data.divisions || {};
+            const masterSpecials = app1Data.specialActivities || [];
+            const masterLeagues = globalSettings.leaguesByName || {};
+            const masterSpecialtyLeagues = globalSettings.specialtyLeagues || {};
+
+            const dailyData = window.loadCurrentDailyData?.() || {};
+            const dailyFieldAvailability = dailyData.dailyFieldAvailability || {};
+            const dailyOverrides = dailyData.overrides || {};
+            const disabledLeagues = dailyOverrides.leagues || [];
+            const disabledSpecialtyLeagues = dailyData.disabledSpecialtyLeagues || [];
+            const dailyDisabledSportsByField = dailyData.dailyDisabledSportsByField || {};
+            const disabledFields = dailyOverrides.disabledFields || [];
+            const disabledSpecials = dailyOverrides.disabledSpecials || [];
+
+            const rotationHistoryRaw = window.loadRotationHistory?.() || {};
+            const rotationHistory = {
+                bunks: rotationHistoryRaw.bunks || {},
+                leagues: rotationHistoryRaw.leagues || {},
+                leagueTeamSports: rotationHistoryRaw.leagueTeamSports || {},
+                leagueTeamLastSport: rotationHistoryRaw.leagueTeamLastSport || {}
+            };
+
+            const historicalCounts = {};
+            window.debugHistoricalCounts = historicalCounts;
+
+            const specialActivityNames = [];
+
+            try {
+                const allDaily = window.loadAllDailyData?.() || {};
+                const manualOffsets = globalSettings.manualUsageOffsets || {};
+
+                Object.values(allDaily).forEach(day => {
+                    const sched = day.scheduleAssignments || {};
+                    Object.keys(sched).forEach(b => {
+                        if (!historicalCounts[b]) historicalCounts[b] = {};
+                        (sched[b] || []).forEach(e => {
+                            if (e && e._activity && !e.continuation) {
+                                historicalCounts[b][e._activity] =
+                                    (historicalCounts[b][e._activity] || 0) + 1;
+                            }
+                        });
+                    });
+                });
+
+                Object.keys(manualOffsets).forEach(b => {
+                    if (!historicalCounts[b]) historicalCounts[b] = {};
+                    Object.keys(manualOffsets[b]).forEach(act => {
+                        const offset = manualOffsets[b][act] || 0;
+                        const current = historicalCounts[b][act] || 0;
+                        historicalCounts[b][act] = Math.max(0, current + offset);
+                    });
+                });
+
+                masterSpecials.forEach(s => specialActivityNames.push(s.name));
+
+            } catch (e) {
+                console.error("Error calculating historical counts:", e);
+            }
+
+            const overrides = {
+                bunks: dailyOverrides.bunks || [],
+                leagues: disabledLeagues
+            };
+
+            const availableDivisions = (app1Data.availableDivisions || []).filter(
+                divName => !overrides.bunks.includes(divName)
+            );
+
+            const divisions = {};
+            for (const divName of availableDivisions) {
+                if (!masterDivisions[divName]) continue;
+                divisions[divName] = JSON.parse(JSON.stringify(masterDivisions[divName]));
+                divisions[divName].bunks =
+                    (divisions[divName].bunks || [])
+                        .filter(bunkName => !overrides.bunks.includes(bunkName));
+            }
+
+            function parseTimeRule(rule) {
+                if (!rule || !rule.type) return null;
+                if (typeof rule.startMin === "number" &&
+                    typeof rule.endMin === "number") {
+                    return {
+                        type: rule.type,
+                        startMin: rule.startMin,
+                        endMin: rule.endMin
+                    };
+                }
+                const startMin = parseTimeToMinutes(rule.start);
+                const endMin = parseTimeToMinutes(rule.end);
+                if (startMin == null || endMin == null) return null;
+                return {
+                    type: rule.type,
+                    startMin,
+                    endMin,
+                    start: rule.start,
+                    end: rule.end
+                };
+            }
+
+            const activityProperties = {};
+            const allMasterActivities = [
+                ...masterFields.filter(f => !disabledFields.includes(f.name)),
+                ...masterSpecials.filter(s => !disabledSpecials.includes(s.name))
+            ];
+            const availableActivityNames = [];
+
+            allMasterActivities.forEach(f => {
+                let finalRules;
+                const dailyRules = dailyFieldAvailability[f.name];
+                if (dailyRules && dailyRules.length > 0) {
+                    finalRules = dailyRules.map(parseTimeRule).filter(Boolean);
+                } else {
+                    finalRules = (f.timeRules || []).map(parseTimeRule).filter(Boolean);
+                }
+
+                const isMasterAvailable = f.available !== false;
+
+                let allowedDivisions = null;
+                if (Array.isArray(f.allowedDivisions) && f.allowedDivisions.length > 0) {
+                    allowedDivisions = f.allowedDivisions.slice();
+                } else if (f.divisionAvailability &&
+                           f.divisionAvailability.mode === 'specific' &&
+                           Array.isArray(f.divisionAvailability.divisions) &&
+                           f.divisionAvailability.divisions.length > 0) {
+                    allowedDivisions = f.divisionAvailability.divisions.slice();
+                } else if (Array.isArray(f.sharableWith?.divisions) &&
+                           f.sharableWith.divisions.length > 0) {
+                    allowedDivisions = f.sharableWith.divisions.slice();
+                }
+
+                activityProperties[f.name] = {
+                    available: isMasterAvailable,
+                    sharable: f.sharableWith?.type === 'all' ||
+                              f.sharableWith?.type === 'custom',
+                    sharableWith: f.sharableWith,
+                    allowedDivisions,
+                    limitUsage: f.limitUsage || { enabled: false, divisions: {} },
+                    preferences: f.preferences ||
+                        { enabled: false, exclusive: false, list: [] },
+                    timeRules: finalRules
+                };
+
+                if (isMasterAvailable) {
+                    availableActivityNames.push(f.name);
+                }
+            });
+
+            window.allSchedulableNames = availableActivityNames;
+
+            const availFields = masterFields.filter(f =>
+                availableActivityNames.includes(f.name)
+            );
+            const availSpecials = masterSpecials.filter(s =>
+                availableActivityNames.includes(s.name)
+            );
+
+            const fieldsBySport = {};
+            availFields.forEach(f => {
+                if (Array.isArray(f.activities)) {
+                    f.activities.forEach(sport => {
+                        const isDisabledToday =
+                            dailyDisabledSportsByField[f.name]?.includes(sport);
+                        if (!isDisabledToday) {
+                            fieldsBySport[sport] = fieldsBySport[sport] || [];
+                            fieldsBySport[sport].push(f.name);
+                        }
+                    });
+                }
+            });
+
+            const allActivities = [
+                ...availFields
+                    .flatMap(f => (f.activities || [])
+                        .map(act => ({
+                            type: "field",
+                            field: f.name,
+                            sport: act
+                        })))
+                    .filter(a =>
+                        !a.field ||
+                        !a.sport ||
+                        !dailyDisabledSportsByField[a.field]?.includes(a.sport)
+                    ),
+                ...availSpecials.map(sa => ({
+                    type: "special",
+                    field: sa.name,
+                    sport: null
+                }))
+            ];
+
+            const h2hActivities = allActivities.filter(
+                a => a.type === "field" && a.sport
+            );
+
+            const yesterdayData = window.loadPreviousDailyData?.() || {};
+            const yesterdayHistory = {
+                schedule: yesterdayData.scheduleAssignments || {},
+                leagues: yesterdayData.leagueAssignments || {}
+            };
+
+            return {
+                divisions,
+                availableDivisions,
+                activityProperties,
+                allActivities,
+                h2hActivities,
+                fieldsBySport,
+                masterLeagues,
+                masterSpecialtyLeagues,
+                masterSpecials, // Added so adapter can access full special defs
+                yesterdayHistory,
+                rotationHistory,
+                disabledLeagues,
+                disabledSpecialtyLeagues,
+                historicalCounts,
+                specialActivityNames,
+                disabledFields,
+                disabledSpecials,
+                dailyFieldAvailability,
+                dailyDisabledSportsByField,
+                masterFields 
+            };
+        }
+    }; // <--- CLOSED MAIN FUNCTION HERE
 
     // END IIFE
 })();
