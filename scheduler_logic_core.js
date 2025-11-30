@@ -312,8 +312,9 @@
             }
         });
 
-        // =================================================================
-// PASS 2.5 — SMART TILES (FINAL FIXED VERSION)
+       // =================================================================
+// PASS 2.5 — SMART TILES AFTER LEAGUES (Direct Fill)
+// Scheduled IMMEDIATELY into scheduleAssignments
 // =================================================================
 
 let smartJobs = [];
@@ -330,6 +331,7 @@ smartJobs.forEach(job => {
     const bunks = divisions[job.division]?.bunks || [];
     if (!bunks.length) return;
 
+    // Get fairness-based activity assignments
     const adapterResult = SmartLogicAdapter.generateAssignments(
         bunks,
         job,
@@ -345,75 +347,61 @@ smartJobs.forEach(job => {
 
     const { block1Assignments, block2Assignments } = adapterResult;
 
-    // Helper that pushes the CORRECT generator event
-    function pushGenEvent(bunk, eventName, startMin, endMin) {
-        const slots = findSlotsForRange(startMin, endMin);
-        schedulableSlotBlocks.push({
-            divName: job.division,
-            bunk,
-            event: eventName,       // MUST MATCH PASS 4 EXACTLY
-            startTime: startMin,
-            endTime: endMin,
-            slots
-        });
-    }
-
-    // -----------------------------
-    // BLOCK A
-    // -----------------------------
-    Object.entries(block1Assignments).forEach(([bunk, act]) => {
+    // Map adapter assignments → generator-friendly event type
+    function mapEvent(act) {
         const low = act.toLowerCase();
 
-        if (low.includes("special")) {
-            pushGenEvent(bunk, "Special Activity", job.blockA.startMin, job.blockA.endMin);
-        }
-        else if (low.includes("sport")) {
-            pushGenEvent(bunk, "Sports Slot", job.blockA.startMin, job.blockA.endMin);
-        }
-        else if (low.includes("general")) {
-            pushGenEvent(bunk, "General Activity Slot", job.blockA.startMin, job.blockA.endMin);
-        }
-        else {
-            // Named activity (Swim, Lunch, Archery, etc.)
-            const slots = findSlotsForRange(job.blockA.startMin, job.blockA.endMin);
-            slots.forEach((slotIndex, idx) => {
-                window.scheduleAssignments[bunk][slotIndex] = {
-                    field: { name: act },
-                    continuation: idx > 0,
-                    _fixed: true,
-                    _activity: act
-                };
-            });
-        }
+        if (low.includes("special"))
+            return { event: "Special Activity Slot", activity: "Special Activity" };
+
+        if (low.includes("sport"))
+            return { event: "Sports Slot", activity: "Sports Slot" };
+
+        if (low.includes("general"))
+            return { event: "General Activity Slot", activity: "General Activity Slot" };
+
+        return { event: act, activity: act }; // named fixed activity
+    }
+
+    // ------------------------------
+    // BLOCK A — DIRECT FILL
+    // ------------------------------
+    const slotsA = findSlotsForRange(job.blockA.startMin, job.blockA.endMin);
+
+    Object.entries(block1Assignments).forEach(([bunk, act]) => {
+        const mapped = mapEvent(act);
+
+        slotsA.forEach((slotIndex, idx) => {
+            window.scheduleAssignments[bunk][slotIndex] = {
+                field: { name: mapped.event },
+                sport: null,
+                continuation: idx > 0,
+                _fixed: true,
+                _smart: true,
+                _activity: mapped.activity
+            };
+        });
     });
 
-    // -----------------------------
-    // BLOCK B
-    // -----------------------------
+    // ------------------------------
+    // BLOCK B — DIRECT FILL
+    // ------------------------------
     if (job.blockB) {
-        Object.entries(block2Assignments).forEach(([bunk, act]) => {
-            const low = act.toLowerCase();
+        const slotsB = findSlotsForRange(job.blockB.startMin, job.blockB.endMin);
 
-            if (low.includes("special")) {
-                pushGenEvent(bunk, "Special Activity", job.blockB.startMin, job.blockB.endMin);
-            }
-            else if (low.includes("sport")) {
-                pushGenEvent(bunk, "Sports Slot", job.blockB.startMin, job.blockB.endMin);
-            }
-            else if (low.includes("general")) {
-                pushGenEvent(bunk, "General Activity Slot", job.blockB.startMin, job.blockB.endMin);
-            }
-            else {
-                const slots = findSlotsForRange(job.blockB.startMin, job.blockB.endMin);
-                slots.forEach((slotIndex, idx) => {
-                    window.scheduleAssignments[bunk][slotIndex] = {
-                        field: { name: act },
-                        continuation: idx > 0,
-                        _fixed: true,
-                        _activity: act
-                    };
-                });
-            }
+        Object.entries(block2Assignments).forEach(([bunk, act]) => {
+            const mapped = mapEvent(act);
+
+            slotsB.forEach((slotIndex, idx) => {
+                window.scheduleAssignments[bunk][slotIndex] = {
+                    field: { name: mapped.event },
+                    sport: null,
+                    continuation: idx > 0,
+                    _fixed: true,
+                    _smart: true,
+                    _activity: mapped.activity
+                };
+            });
         });
     }
 });
