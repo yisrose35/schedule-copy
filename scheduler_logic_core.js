@@ -897,63 +897,74 @@ for (const job of generatorJobs) {
     //------------------------------------------------------------------
     // 1. SMART TILE PRIORITY LOGIC
     //------------------------------------------------------------------
-    if (isSmart) {
-        const hint = job.smartHint || {};
-        const forced = hint.forcedAct?.toLowerCase() || "";
+  if (isSmart) {
+    const hint = job.smartHint || {};
+    const forced = hint.forcedAct?.toLowerCase() || "";
 
-        // A) Force try SPECIAL if adapter says so
-        if (forced.includes("special")) {
-            pick = window.findBestSpecial?.(
-                job,
-                allActivities,
-                fieldUsageBySlot,
-                yesterdayHistory,
-                activityProperties,
-                rotationHistory,
-                divisions,
-                historicalCounts,
-                { smartMode: true } // NEW: tells the generator to not count fallback
-            );
-        }
-
-        // B) If special failed or wasn't forced — try SPORTS
-        if (!pick && forced.includes("sport")) {
-            pick = window.findBestSportActivity?.(
-                job,
-                allActivities,
-                fieldUsageBySlot,
-                yesterdayHistory,
-                activityProperties,
-                rotationHistory,
-                divisions,
-                historicalCounts
-            );
-        }
-
-        // C) Try General if needed
-        if (!pick && forced.includes("general")) {
-            pick = window.findBestGeneralActivity?.(
-                job,
-                allActivities,
-                h2hActivities,
-                fieldUsageBySlot,
-                yesterdayHistory,
-                activityProperties,
-                rotationHistory,
-                divisions,
-                historicalCounts
-            );
-        }
-
-        // D) Try fallback if needed
-        if (!pick && hint.fallback) {
-            pick = {
-                field: hint.fallback,
-                sport: null,
-                _activity: hint.fallback
-            };
-        }
+    // --- SWIM (fixed activity, MUST be chosen directly) ---
+    if (forced.includes("swim")) {
+        pick = {
+            field: "Swim",
+            sport: null,
+            _activity: "Swim",
+            _fixed: true
+        };
     }
+
+    // --- SPECIAL ---
+    if (!pick && forced.includes("special")) {
+        pick = window.findBestSpecial?.(
+            job,
+            allActivities,
+            fieldUsageBySlot,
+            yesterdayHistory,
+            activityProperties,
+            rotationHistory,
+            divisions,
+            historicalCounts,
+            { smartMode: true }
+        );
+    }
+
+    // --- SPORTS ---
+    if (!pick && forced.includes("sport")) {
+        pick = window.findBestSportActivity?.(
+            job,
+            allActivities,
+            fieldUsageBySlot,
+            yesterdayHistory,
+            activityProperties,
+            rotationHistory,
+            divisions,
+            historicalCounts
+        );
+    }
+
+    // --- GENERAL ACTIVITY ---
+    if (!pick && forced.includes("general")) {
+        pick = window.findBestGeneralActivity?.(
+            job,
+            allActivities,
+            h2hActivities,
+            fieldUsageBySlot,
+            yesterdayHistory,
+            activityProperties,
+            rotationHistory,
+            divisions,
+            historicalCounts
+        );
+    }
+
+    // --- FALLBACK ---
+    if (!pick && hint.fallback) {
+        pick = {
+            field: hint.fallback,
+            sport: null,
+            _activity: hint.fallback
+        };
+    }
+}
+
 
     //------------------------------------------------------------------
     // 2. NORMAL JOBS OR SMART FALLBACK
