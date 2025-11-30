@@ -959,75 +959,77 @@ smartJobs.forEach(job => {
         });
 
         // =================================================================
-        // PASS 4 — Remaining Schedulable Slots (The Core Generator)
-        // =================================================================
-        remainingBlocks.sort((a, b) => a.startTime - b.startTime);
+// PASS 4 — Remaining Schedulable Slots (Category-Enabled Version)
+// =================================================================
+remainingBlocks.sort((a, b) => a.startTime - b.startTime);
 
-        for (const block of remainingBlocks) {
-            if (!block.slots || block.slots.length === 0) continue;
-            if (!window.scheduleAssignments[block.bunk]) continue;
-            if (window.scheduleAssignments[block.bunk][block.slots[0]]) continue;
+for (const block of remainingBlocks) {
+    if (!block.slots || block.slots.length === 0) continue;
+    if (!window.scheduleAssignments[block.bunk]) continue;
+    if (window.scheduleAssignments[block.bunk][block.slots[0]]) continue;
 
-            let pick = null;
+    let pick = null;
 
-            // Smart tiles converted to 'Sports Slot' or 'Special Activity' land here.
-            if (block.event === 'League Game' || block.event === 'Specialty League') {
-                pick = { field: "Unassigned League", sport: null, _activity: "Free" };
-            } else if (block.event === 'Special Activity' || block.event === 'Special Activity Slot') {
-                pick = window.findBestSpecial?.(
-                    block,
-                    allActivities,
-                    fieldUsageBySlot,
-                    yesterdayHistory,
-                    activityProperties,
-                    rotationHistory,
-                    divisions,
-                    historicalCounts
-                );
-            } else if (block.event === 'Sports Slot' || block.event === 'Sports') {
-                pick = window.findBestSportActivity?.(
-                    block,
-                    allActivities,
-                    fieldUsageBySlot,
-                    yesterdayHistory,
-                    activityProperties,
-                    rotationHistory,
-                    divisions,
-                    historicalCounts
-                );
-            }
+    // SPECIAL GENERATION
+    if (block.event === 'Special Activity' || block.event === 'Special Activity Slot') {
+        pick = window.findBestSpecial?.(
+            block,
+            allActivities,
+            fieldUsageBySlot,
+            yesterdayHistory,
+            activityProperties,
+            rotationHistory,
+            divisions,
+            historicalCounts
+        );
+        if (pick) pick._category = "Special Activity";   // NEW
+    }
 
-            // Fallback to General Activity if no pick yet
-            if (!pick) {
-                pick = window.findBestGeneralActivity?.(
-                    block,
-                    allActivities,
-                    h2hActivities,
-                    fieldUsageBySlot,
-                    yesterdayHistory,
-                    activityProperties,
-                    rotationHistory,
-                    divisions,
-                    historicalCounts
-                );
-            }
+    // SPORTS GENERATION
+    else if (block.event === 'Sports Slot' || block.event === 'Sports') {
+        pick = window.findBestSportActivity?.(
+            block,
+            allActivities,
+            fieldUsageBySlot,
+            yesterdayHistory,
+            activityProperties,
+            rotationHistory,
+            divisions,
+            historicalCounts
+        );
+        if (pick) pick._category = "Sports Activity";    // NEW
+    }
 
-            if (pick && !isPickValidForBlock(block, pick, activityProperties, fieldUsageBySlot)) {
-                pick = null;
-            }
+    // GENERAL ACTIVITY
+    else {
+        pick = window.findBestGeneralActivity?.(
+            block,
+            allActivities,
+            h2hActivities,
+            fieldUsageBySlot,
+            yesterdayHistory,
+            activityProperties,
+            rotationHistory,
+            divisions,
+            historicalCounts
+        );
+        if (pick) pick._category = "General Activity";   // NEW
+    }
 
-            if (pick) {
-                fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, false);
-            } else {
-                fillBlock(
-                    block,
-                    { field: "Free", sport: null, _activity: "Free" },
-                    fieldUsageBySlot,
-                    yesterdayHistory,
-                    false
-                );
-            }
-        }
+    // Validate pick
+    if (pick && !isPickValidForBlock(block, pick, activityProperties, fieldUsageBySlot)) {
+        pick = null;
+    }
+
+    // Fallback fill
+    if (!pick) {
+        pick = { field: "Free", sport: null, _activity: "Free", _category: "General Activity" };
+    }
+
+    // APPLY THE PICK
+    fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, false);
+}
+
 // =================================================================
 // PASS 5 — Update Rotation History (Fallback-Safe)
 // =================================================================
