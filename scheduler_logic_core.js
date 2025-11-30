@@ -374,8 +374,16 @@ smartJobs.forEach(job => {
         // Schedule Block A
         const slotsA = findSlotsForRange(job.blockA.startMin, job.blockA.endMin);
         
-        // If the activity is "Sports" (fallback), we should push to schedulableSlotBlocks instead of pinning
-        if (act === "Special","Special Activity" || act === "Special Activity Slot"
+        // If the activity is "Sports" /"Special Activity"(fallback), we should push to schedulableSlotBlocks instead of pinning
+          if (act === "Special","Special Activity" || act === "Special Activity Slot" {
+              schedulableSlotBlocks.push({
+                divName: job.division,
+                bunk: bunk,
+                event: "Special Activity Slot",
+                startTime: job.blockA.startMin,
+                endTime: job.blockA.endMin,
+                slots: slotsA
+            });
         if (act === "Sports" || act === "Sports Slot") {
              schedulableSlotBlocks.push({
                 divName: job.division,
@@ -410,7 +418,7 @@ smartJobs.forEach(job => {
         // Schedule Block B
         const slotsB = findSlotsForRange(job.blockB.startMin, job.blockB.endMin);
         
-        // If the activity is "Sports" (fallback), push to schedulableSlotBlocks
+        // If the activity is "Sports" /"Special Activity"(fallback), push to schedulableSlotBlocks
          if (act === "Special","Special Activity" || act === "Special Activity Slot" {
               schedulableSlotBlocks.push({
                 divName: job.division,
