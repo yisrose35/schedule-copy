@@ -374,7 +374,7 @@ smartJobs.forEach(job => {
                 endTime: job.blockA.endMin,
                 slots: slotsA
             });
-        } else if (act === "Special Activity" || act === "Special Activity Slot") {
+        } else if (act === "Special Activity" || act === "General Activity Slot") {
              // Treat 'Special Activity' as a slot to be filled by the generator logic (Pass 4)
              schedulableSlotBlocks.push({
                 divName: job.division,
@@ -416,7 +416,7 @@ smartJobs.forEach(job => {
                 endTime: job.blockB.endMin,
                 slots: slotsB
             });
-        } else if (act === "Special Activity" || act === "Special Activity Slot") {
+        } else if (act === "Special Activity" || act === "General Activity Slot") {
              schedulableSlotBlocks.push({
                 divName: job.division,
                 bunk: bunk,
