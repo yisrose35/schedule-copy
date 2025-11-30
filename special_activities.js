@@ -13,37 +13,39 @@
 // - Matches Modern Pro Camp theme used in Fields:
 //   • setup-grid + setup-card shell
 //   • Emerald master-list + detail-pane styling
+//
+// UPDATED (NEW FEATURE):
+// - Added "Max Total Usage" (global limit per bunk)
+//   • item.maxUsage = null → Unlimited
+//   • item.maxUsage = number → Hard cap on total lifetime uses
+//   • UI is placed directly under Availability strip
 // =================================================================
 
 (function() {
 'use strict';
 
-let specialActivities = []; // This will be a *reference* to the global data
-let selectedItemId = null; // e.g., "special-Canteen"
+let specialActivities = []; 
+let selectedItemId = null;
 
 let specialsListEl = null;
 let detailPaneEl = null;
 let addSpecialInput = null;
 
-/**
- * Main entry point, called by index.html
- */
+/** INIT TAB **/
 function initSpecialActivitiesTab() {
     const container = document.getElementById("special_activities");
     if (!container) return;
     
-    // --- Load data from app1.js ---
     specialActivities = window.getGlobalSpecialActivities?.() || [];
     
-    // Ensure all fields have the new structure (still good to do)
     specialActivities.forEach(s => {
         s.available = s.available !== false;
         s.timeRules = s.timeRules || [];
         s.sharableWith = s.sharableWith || { type: 'not_sharable', divisions: [] };
         s.limitUsage = s.limitUsage || { enabled: false, divisions: {} };
+        s.maxUsage = (s.maxUsage === undefined) ? null : s.maxUsage; // NEW
     });
 
-    // --- UI shell matching Fields theme ---
     container.innerHTML = `
         <div class="setup-grid">
             <section class="setup-card setup-card-wide">
@@ -54,23 +56,21 @@ function initSpecialActivitiesTab() {
                         <p>
                             Add your <strong>canteen, trips, electives, lakes, buses</strong> and more.
                             Then control which <strong>divisions/bunks</strong> can use each special,
-                            whether it can be <strong>shared</strong>, and any <strong>time rules</strong>.
+                            whether it can be <strong>shared</strong>, and any <strong>rules</strong>.
                         </p>
                     </div>
                 </div>
 
                 <div style="display:flex; flex-wrap:wrap; gap:20px; margin-top:8px;">
-                    <!-- LEFT: Specials list + add -->
+                    
                     <div style="flex:1; min-width:260px;">
                         <div class="setup-subtitle">All Special Activities</div>
                         <p style="font-size:0.8rem; color:#6b7280; margin-top:4px;">
                             Add each special once. Click a special to open its rules.
-                            Toggle availability or rename directly from this list.
                         </p>
 
                         <div class="setup-field-row" style="margin-top:10px;">
-                            <input id="new-special-input"
-                                   placeholder="New Special (e.g., Canteen)">
+                            <input id="new-special-input" placeholder="New Special (e.g., Canteen)">
                             <button id="add-special-btn">Add Special</button>
                         </div>
 
@@ -78,26 +78,21 @@ function initSpecialActivitiesTab() {
                              style="margin-top:10px; max-height:440px; overflow:auto;"></div>
                     </div>
 
-                    <!-- RIGHT: Detail pane -->
                     <div style="flex:1.3; min-width:320px;">
                         <div class="setup-subtitle">Special Details</div>
                         <div id="specials-detail-pane" class="detail-pane"
                              style="margin-top:8px; min-height:360px;">
                             <p class="muted">
-                                Select a special from the left to edit its details:
-                                <br>• Toggle if it’s <strong>available</strong> to the scheduler
-                                <br>• Choose which <strong>divisions/bunks</strong> can use it
-                                <br>• Decide if it can be <strong>shared</strong> across divisions
-                                <br>• Add <strong>time rules</strong> (e.g. afternoons only)
+                                Select a special from the left to edit its details.
                             </p>
                         </div>
                     </div>
+
                 </div>
             </section>
         </div>
-        
+
         <style>
-            /* Master list container – Modern Pro Camp card shell (same as Fields) */
             .master-list {
                 border-radius: 18px;
                 border: 1px solid #E5E7EB;
@@ -105,7 +100,6 @@ function initSpecialActivitiesTab() {
                 padding: 8px 6px;
                 box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
             }
-
             .master-list .list-item {
                 padding: 10px 10px;
                 border-radius: 14px;
@@ -117,43 +111,25 @@ function initSpecialActivitiesTab() {
                 background: #FFFFFF;
                 border: 1px solid #E5E7EB;
                 box-shadow: 0 4px 10px rgba(15, 23, 42, 0.05);
-                transition:
-                    background 0.15s ease,
-                    box-shadow 0.15s ease,
-                    transform 0.08s ease,
-                    border-color 0.15s ease;
+                transition: background 0.15s, box-shadow 0.15s, transform 0.08s;
             }
             .master-list .list-item:hover {
                 background: #F3F4F6;
-                box-shadow: 0 8px 18px rgba(15, 23, 42, 0.10);
                 transform: translateY(-1px);
             }
             .master-list .list-item.selected {
                 background: radial-gradient(circle at top left, #ECFDF5 0, #FFFFFF 70%);
                 border-color: #00C896;
-                box-shadow: 0 0 0 1px rgba(0, 200, 150, 0.55);
+                box-shadow: 0 0 0 1px rgba(0,200,150,0.55);
                 font-weight: 600;
             }
-            .master-list .list-item-name {
-                flex-grow: 1;
-                font-size: 0.88rem;
-                font-weight: 500;
-                color: #111827;
-            }
-            .master-list .list-item-toggle {
-                margin-left: 10px;
-            }
-
-            /* Detail pane – aligned with Fields detail pane theme */
             .detail-pane {
                 border-radius: 18px;
                 border: 1px solid #E5E7EB;
                 padding: 18px 20px;
                 background: linear-gradient(135deg, #F7F9FA 0%, #FFFFFF 55%, #F7F9FA 100%);
-                min-height: 360px;
-                box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
+                box-shadow: 0 18px 40px rgba(15,23,42,0.06);
             }
-
             .muted {
                 color: #6B7280;
                 font-size: 0.86rem;
@@ -161,26 +137,20 @@ function initSpecialActivitiesTab() {
         </style>
     `;
 
-    // Get element references
     specialsListEl = document.getElementById("specials-master-list");
     detailPaneEl = document.getElementById("specials-detail-pane");
     addSpecialInput = document.getElementById("new-special-input");
 
-    // Hook up "Add" buttons
     document.getElementById("add-special-btn").onclick = addSpecial;
-    addSpecialInput.onkeyup = (e) => { if (e.key === "Enter") addSpecial(); };
+    addSpecialInput.onkeyup = e => { if (e.key === "Enter") addSpecial(); };
 
-    // Initial render
     renderMasterLists();
     renderDetailPane();
 }
 
-/**
- * Renders the left-hand list of specials
- */
+/** LIST RENDER **/
 function renderMasterLists() {
     specialsListEl.innerHTML = "";
-
     if (specialActivities.length === 0) {
         specialsListEl.innerHTML = `<p class="muted">No special activities created yet.</p>`;
     }
@@ -189,21 +159,16 @@ function renderMasterLists() {
     });
 }
 
-/**
- * Creates a single item for the left-hand list
- */
 function createMasterListItem(type, item) {
     const el = document.createElement('div');
     el.className = 'list-item';
     const id = `${type}-${item.name}`;
-    if (id === selectedItemId) {
-        el.classList.add('selected');
-    }
-    
+    if (id === selectedItemId) el.classList.add('selected');
+
     el.onclick = () => {
         selectedItemId = id;
-        renderMasterLists(); // Re-render lists to update selection
-        renderDetailPane();  // Re-render detail pane
+        renderMasterLists();
+        renderDetailPane();
     };
 
     const nameEl = document.createElement('span');
@@ -211,53 +176,45 @@ function createMasterListItem(type, item) {
     nameEl.textContent = item.name;
     el.appendChild(nameEl);
 
-    // Master available toggle
-    const tog = document.createElement("label"); 
+    const tog = document.createElement("label");
     tog.className = "switch list-item-toggle";
-    tog.title = "Available (Master)";
-    tog.onclick = (e) => e.stopPropagation(); // Prevent selection
-    
-    const cb = document.createElement("input"); 
-    cb.type = "checkbox"; 
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
     cb.checked = item.available;
-    cb.onchange = (e) => { 
+    cb.onchange = e => {
         e.stopPropagation();
-        item.available = cb.checked; 
+        item.available = cb.checked;
         window.saveGlobalSpecialActivities(specialActivities);
-        renderDetailPane(); 
+        renderDetailPane();
     };
-    
-    const sl = document.createElement("span"); 
-    sl.className = "slider";
-    
-    tog.appendChild(cb); 
-    tog.appendChild(sl);
+    tog.appendChild(cb);
+    tog.appendChild(document.createElement("span")).className = "slider";
+    tog.onclick = e => e.stopPropagation();
     el.appendChild(tog);
 
     return el;
 }
 
-/**
- * Renders the right-hand detail pane for the selected item
- */
+/** DETAIL PANE **/
 function renderDetailPane() {
     if (!selectedItemId) {
-        detailPaneEl.innerHTML = `<p class="muted">Select a special activity from the left to edit its details.</p>`;
+        detailPaneEl.innerHTML = `<p class="muted">Select a special activity from the left.</p>`;
         return;
     }
 
     const [type, name] = selectedItemId.split(/-(.+)/);
     const item = specialActivities.find(f => f.name === name);
-
     if (!item) {
         selectedItemId = null;
-        detailPaneEl.innerHTML = `<p style="color: red;">Error: Could not find item. Please select another.</p>`;
+        detailPaneEl.innerHTML = `<p style="color:red;">Error loading.</p>`;
         return;
     }
-    
-    detailPaneEl.innerHTML = ""; // Clear
-    
-    // --- 1. Name & Delete ---
+
+    detailPaneEl.innerHTML = "";
+    const onSave = () => window.saveGlobalSpecialActivities(specialActivities);
+    const onRerender = () => renderDetailPane();
+
+    // NAME + DELETE
     const header = document.createElement('div');
     header.style.display = 'flex';
     header.style.justifyContent = 'space-between';
@@ -265,54 +222,43 @@ function renderDetailPane() {
     header.style.borderBottom = '2px solid #E5E7EB';
     header.style.paddingBottom = '10px';
     header.style.marginBottom = '15px';
-    header.style.columnGap = '12px';
-    
+
     const title = document.createElement('h3');
     title.style.margin = '0';
     title.style.fontSize = '1rem';
     title.style.fontWeight = '600';
-    title.style.color = '#111827';
     title.textContent = item.name;
-    // Allow renaming
     makeEditable(title, newName => {
         if (!newName.trim()) return;
         item.name = newName;
-        selectedItemId = `${type}-${newName}`; // Update selected ID
-        window.saveGlobalSpecialActivities(specialActivities);
+        selectedItemId = `special-${newName}`;
+        onSave();
         renderMasterLists();
     });
-    
+
     const deleteBtn = document.createElement('button');
     deleteBtn.textContent = 'Delete';
-    deleteBtn.style.background = '#FFFFFF';
+    deleteBtn.style.background = '#fff';
     deleteBtn.style.color = '#DC2626';
     deleteBtn.style.border = '1px solid #FECACA';
     deleteBtn.style.padding = '6px 14px';
     deleteBtn.style.borderRadius = '999px';
     deleteBtn.style.cursor = 'pointer';
-    deleteBtn.style.fontWeight = '600';
-    deleteBtn.style.fontSize = '0.85rem';
-    deleteBtn.style.boxShadow = '0 4px 10px rgba(220,38,38,0.18)';
-    deleteBtn.onmouseenter = () => {
-        deleteBtn.style.background = '#FEE2E2';
-    };
-    deleteBtn.onmouseleave = () => {
-        deleteBtn.style.background = '#FFFFFF';
-    };
     deleteBtn.onclick = () => {
-        if (confirm(`Are you sure you want to delete "${item.name}"?`)) {
+        if (confirm(`Delete "${item.name}"?`)) {
             specialActivities = specialActivities.filter(s => s.name !== item.name);
             selectedItemId = null;
-            window.saveGlobalSpecialActivities(specialActivities);
+            onSave();
             renderMasterLists();
             renderDetailPane();
         }
     };
+
     header.appendChild(title);
     header.appendChild(deleteBtn);
     detailPaneEl.appendChild(header);
-    
-    // --- 2. Master Toggle (read-only, controlled from list) ---
+
+    // AVAILABILITY STRIP
     const masterToggle = document.createElement('div');
     masterToggle.style.background = item.available ? '#ECFDF5' : '#FEF2F2';
     masterToggle.style.padding = '8px 12px';
@@ -321,28 +267,66 @@ function renderDetailPane() {
     masterToggle.style.fontSize = '0.8rem';
     masterToggle.style.border = '1px solid ' + (item.available ? '#BBF7D0' : '#FECACA');
     masterToggle.innerHTML = `
-        <span>
-            This special is currently 
-            <strong>${item.available ? 'AVAILABLE' : 'UNAVAILABLE'}</strong>
-            to the scheduler.
-        </span>
-        <span style="opacity:0.75; margin-left:8px;">(Toggle in the list on the left)</span>
+        This special is currently 
+        <strong>${item.available ? 'AVAILABLE' : 'UNAVAILABLE'}</strong>.
+        <span style="opacity:0.75;">(Toggle in the list)</span>
     `;
     detailPaneEl.appendChild(masterToggle);
-    
-    // --- 3. Sharable, Limit, and Time Rules ---
-    const onSave = () => window.saveGlobalSpecialActivities(specialActivities);
-    const onRerender = renderDetailPane;
-    
+
+    // ======================================================================
+    // 🔥 NEW SECTION — MAX TOTAL USAGE
+    // ======================================================================
+    const maxUsageCard = document.createElement('div');
+    maxUsageCard.style.background = '#FFFFFF';
+    maxUsageCard.style.border = '1px solid #E5E7EB';
+    maxUsageCard.style.borderRadius = '14px';
+    maxUsageCard.style.padding = '14px 16px';
+    maxUsageCard.style.marginBottom = '18px';
+    maxUsageCard.style.boxShadow = '0 6px 12px rgba(0,0,0,0.04)';
+
+    const maxLabel = document.createElement('div');
+    maxLabel.style.fontWeight = '600';
+    maxLabel.style.marginBottom = '6px';
+    maxLabel.textContent = 'Max Usage Limit';
+    maxUsageCard.appendChild(maxLabel);
+
+    const maxDesc = document.createElement('div');
+    maxDesc.style.fontSize = '0.85rem';
+    maxDesc.style.color = '#6B7280';
+    maxDesc.style.marginBottom = '10px';
+    maxDesc.textContent = 'Each bunk may receive this special no more than:';
+    maxUsageCard.appendChild(maxDesc);
+
+    const maxInput = document.createElement('input');
+    maxInput.type = 'number';
+    maxInput.placeholder = "Leave empty for unlimited";
+    maxInput.style.width = '160px';
+    maxInput.style.padding = '6px 8px';
+    maxInput.style.border = '1px solid #D1D5DB';
+    maxInput.style.borderRadius = '8px';
+    maxInput.value = item.maxUsage ?? '';
+    maxInput.oninput = () => {
+        const val = maxInput.value.trim();
+        item.maxUsage = val === '' ? null : Math.max(0, parseInt(val,10) || 0);
+        onSave();
+    };
+    maxUsageCard.appendChild(maxInput);
+
+    detailPaneEl.appendChild(maxUsageCard);
+
+    // ======================================================================
+
+    // SHARABLE RULES
     const sharableControls = renderSharableControls(item, onSave, onRerender);
     sharableControls.style.borderTop = '1px solid #E5E7EB';
     sharableControls.style.paddingTop = '15px';
     sharableControls.style.marginTop = '15px';
     detailPaneEl.appendChild(sharableControls);
-    
-    const limitControls = renderAllowedBunksControls(item, onSave, onRerender);
-    detailPaneEl.appendChild(limitControls);
-    
+
+    // ALLOWED DIVISIONS + BUNKS
+    detailPaneEl.appendChild(renderAllowedBunksControls(item, onSave, onRerender));
+
+    // TIME RULES
     const timeRuleControls = renderTimeRulesUI(item, onSave, onRerender);
     timeRuleControls.style.marginTop = "10px";
     timeRuleControls.style.paddingTop = "10px";
@@ -350,30 +334,33 @@ function renderDetailPane() {
     detailPaneEl.appendChild(timeRuleControls);
 }
 
-// --- Add Special Function ---
+/** ADD SPECIAL **/
 function addSpecial() {
     const n = addSpecialInput.value.trim();
     if (!n) return;
     if (specialActivities.some(s => s.name.toLowerCase() === n.toLowerCase())) {
-        alert("A special activity with this name already exists.");
+        alert("Special already exists.");
         return;
     }
+
     specialActivities.push({
         name: n,
         available: true,
         sharableWith: { type: 'not_sharable', divisions: [] },
         limitUsage: { enabled: false, divisions: {} },
-        timeRules: []
+        timeRules: [],
+        maxUsage: null   // NEW FIELD
     });
+
     addSpecialInput.value = "";
     window.saveGlobalSpecialActivities(specialActivities);
-    selectedItemId = `special-${n}`; // Auto-select new item
+    selectedItemId = `special-${n}`;
     renderMasterLists();
     renderDetailPane();
 }
 
 // =================================================================
-// ===== HELPERS (Copied from app1.js) =====
+// HELPERS
 // =================================================================
 
 function parseTimeToMinutes(str) {
@@ -384,16 +371,16 @@ function parseTimeToMinutes(str) {
         mer = s.endsWith("am") ? "am" : "pm";
         s = s.replace(/am|pm/g, "").trim();
     }
-    const m = s.match(/^(\d{1,2})\s*:\s*(\d{2})$/);
+    const m = s.match(/^(\d{1,2})\\s*:\\s*(\\d{2})$/);
     if (!m) return null;
     let hh = parseInt(m[1], 10);
     const mm = parseInt(m[2], 10);
     if (Number.isNaN(hh) || Number.isNaN(mm) || mm < 0 || mm > 59) return null;
     if (mer) {
-        if (hh === 12) hh = mer === "am" ? 0 : 12; // 12am -> 0, 12pm -> 12
-        else if (mer === "pm") hh += 12; // 1pm -> 13
+        if (hh === 12) hh = (mer === "am" ? 0 : 12);
+        else if (mer === "pm") hh += 12;
     }
-    return hh * 60 + mm;
+    return hh*60 + mm;
 }
 
 function makeEditable(el, save) {
@@ -401,119 +388,110 @@ function makeEditable(el, save) {
         e.stopPropagation();
         const old = el.textContent;
         const input = document.createElement("input");
-        input.type = "text"; input.value = old;
-        el.replaceWith(input); input.focus();
+        input.type = "text"; 
+        input.value = old;
+        el.replaceWith(input);
+        input.focus();
+
         function done() {
             const val = input.value.trim();
             if (val && val !== old) save(val);
-            el.textContent = val || old; input.replaceWith(el);
+            el.textContent = val || old;
+            input.replaceWith(el);
         }
-        input.onblur = done; input.onkeyup = e => { if (e.key === "Enter") done(); };
+        input.onblur = done;
+        input.onkeyup = e => { if (e.key === "Enter") done(); };
     };
 }
 
 function renderTimeRulesUI(item, onSave, onRerender) {
     const container = document.createElement("div");
-    container.style.marginTop = "10px";
     container.style.paddingLeft = "15px";
     container.style.borderLeft = "3px solid #eee";
     container.innerHTML = `<strong>Global Time Rules:</strong>`;
 
-    if (!item.timeRules) {
-        item.timeRules = [];
-    }
+    if (!item.timeRules) item.timeRules = [];
 
-    const ruleList = document.createElement("div");
+    const list = document.createElement("div");
     if (item.timeRules.length === 0) {
-        ruleList.innerHTML = `<p class="muted" style="margin: 0;">No specific time rules. (Available all day)</p>`;
+        list.innerHTML = `<p class="muted" style="margin:0;">Available all day</p>`;
     }
 
     item.timeRules.forEach((rule, index) => {
-        const ruleEl = document.createElement("div");
-        ruleEl.style.margin = "2px 0";
-        ruleEl.style.padding = "4px";
-        ruleEl.style.background = "#f4f4f4";
-        ruleEl.style.borderRadius = "4px";
-        
-        const ruleType = document.createElement("strong");
-        ruleType.textContent = rule.type;
-        ruleType.style.color = rule.type === 'Available' ? 'green' : 'red';
-        ruleType.style.textTransform = "capitalize";
-        
-        const ruleText = document.createElement("span");
-        ruleText.textContent = ` from ${rule.start} to ${rule.end}`;
-        
-        const removeBtn = document.createElement("button");
-        removeBtn.textContent = "✖";
-        removeBtn.style.marginLeft = "8px";
-        removeBtn.style.border = "none";
-        removeBtn.style.background = "transparent";
-        removeBtn.style.cursor = "pointer";
-        removeBtn.onclick = () => {
+        const row = document.createElement("div");
+        row.style.padding = "4px";
+        row.style.margin = "2px 0";
+        row.style.background = "#f4f4f4";
+        row.style.borderRadius = "4px";
+
+        row.innerHTML = `
+            <strong style="color:${rule.type==='Available'?'green':'red'};">
+                ${rule.type}
+            </strong>
+            from ${rule.start} to ${rule.end}
+        `;
+
+        const del = document.createElement("button");
+        del.textContent = "✖";
+        del.style.marginLeft = "10px";
+        del.style.background = "transparent";
+        del.style.border = "none";
+        del.style.cursor = "pointer";
+        del.onclick = () => {
             item.timeRules.splice(index, 1);
             onSave();
             onRerender();
         };
-        
-        ruleEl.appendChild(ruleType);
-        ruleEl.appendChild(ruleText);
-        ruleEl.appendChild(removeBtn);
-        ruleList.appendChild(ruleEl);
-    });
-    container.appendChild(ruleList);
 
-    const addContainer = document.createElement("div");
-    addContainer.style.marginTop = "10px";
-    
-    const typeSelect = document.createElement("select");
-    typeSelect.innerHTML = `
+        row.appendChild(del);
+        list.appendChild(row);
+    });
+
+    container.appendChild(list);
+
+    const addWrap = document.createElement("div");
+    addWrap.style.marginTop = "8px";
+
+    const typeSel = document.createElement("select");
+    typeSel.innerHTML = `
         <option value="Available">Available</option>
         <option value="Unavailable">Unavailable</option>
     `;
-    
-    const startInput = document.createElement("input");
-    startInput.placeholder = "e.g., 9:00am";
-    startInput.style.width = "100px";
-    startInput.style.marginLeft = "5px";
 
-    const toLabel = document.createElement("span");
-    toLabel.textContent = " to ";
-    toLabel.style.margin = "0 5px";
+    const start = document.createElement("input");
+    start.placeholder = "9:00am";
+    start.style.width = "90px";
+    start.style.marginLeft = "5px";
 
-    const endInput = document.createElement("input");
-    endInput.placeholder = "e.g., 10:30am";
-    endInput.style.width = "100px";
+    const to = document.createElement("span");
+    to.textContent = " to ";
+    to.style.margin = "0 5px";
 
-    const addBtn = document.createElement("button");
-    addBtn.textContent = "Add Rule";
-    addBtn.style.marginLeft = "8px";
-    
-    addBtn.onclick = () => {
-        const type = typeSelect.value;
-        const start = startInput.value;
-        const end = endInput.value;
-        
-        if (!start || !end) {
-            alert("Please enter a start and end time."); return;
-        }
-        if (parseTimeToMinutes(start) == null || parseTimeToMinutes(end) == null) {
-            alert("Invalid time format. Use '9:00am' or '2:30pm'."); return;
-        }
-        if (parseTimeToMinutes(start) >= parseTimeToMinutes(end)) {
-            alert("End time must be after start time."); return;
-        }
+    const end = document.createElement("input");
+    end.placeholder = "10:00am";
+    end.style.width = "90px";
 
-        item.timeRules.push({ type, start, end });
+    const add = document.createElement("button");
+    add.textContent = "Add Rule";
+    add.style.marginLeft = "8px";
+    add.onclick = () => {
+        if (!start.value || !end.value) return alert("Enter start and end time.");
+        if (parseTimeToMinutes(start.value) == null || parseTimeToMinutes(end.value) == null)
+            return alert("Invalid time.");
+        if (parseTimeToMinutes(start.value) >= parseTimeToMinutes(end.value))
+            return alert("End must be after start.");
+
+        item.timeRules.push({ type: typeSel.value, start: start.value, end: end.value });
         onSave();
         onRerender();
     };
 
-    addContainer.appendChild(typeSelect);
-    addContainer.appendChild(startInput);
-    addContainer.appendChild(toLabel);
-    addContainer.appendChild(endInput);
-    addContainer.appendChild(addBtn);
-    container.appendChild(addContainer);
+    addWrap.appendChild(typeSel);
+    addWrap.appendChild(start);
+    addWrap.appendChild(to);
+    addWrap.appendChild(end);
+    addWrap.appendChild(add);
+    container.appendChild(addWrap);
 
     return container;
 }
@@ -521,87 +499,85 @@ function renderTimeRulesUI(item, onSave, onRerender) {
 function renderSharableControls(item, onSave, onRerender) {
     const container = document.createElement("div");
     container.innerHTML = `<strong>Sharing Rules:</strong>`;
-    const rules = item.sharableWith || { type: 'not_sharable' };
+    const rules = item.sharableWith || { type:'not_sharable', divisions:[] };
     const isSharable = rules.type !== 'not_sharable';
 
-    const tog = document.createElement("label");
-    tog.className = "switch";
-    tog.title = "Toggle Sharable";
+    const wrap = document.createElement("label");
+    wrap.style.display = "flex";
+    wrap.style.alignItems = "center";
+    wrap.style.gap = "8px";
+    wrap.style.marginTop = "8px";
+
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.checked = isSharable;
     cb.onchange = () => {
-        if (cb.checked) { rules.type = 'all'; } 
-        else { rules.type = 'not_sharable'; }
+        rules.type = cb.checked ? 'all' : 'not_sharable';
         rules.divisions = [];
         onSave();
         onRerender();
     };
-    const sl = document.createElement("span"); sl.className = "slider";
-    tog.appendChild(cb); tog.appendChild(sl);
-    const togLabel = document.createElement("span");
-    togLabel.textContent = "Sharable";
-    const shareWrap = document.createElement("label");
-    shareWrap.style.display="flex";
-    shareWrap.style.alignItems="center";
-    shareWrap.style.gap="5px";
-    shareWrap.style.cursor="pointer";
-    shareWrap.style.marginTop = '5px';
-    shareWrap.appendChild(tog);
-    shareWrap.appendChild(togLabel);
-    container.appendChild(shareWrap);
+
+    const txt = document.createElement("span");
+    txt.textContent = "Sharable";
+
+    wrap.appendChild(cb);
+    wrap.appendChild(txt);
+    container.appendChild(wrap);
 
     if (isSharable) {
-        const customPanel = document.createElement("div");
-        customPanel.style.paddingLeft = "20px";
-        customPanel.style.marginTop = "10px";
-        const divLabel = document.createElement("div");
-        divLabel.textContent = "Limit to Divisions (if none selected, sharable with all):";
-        customPanel.appendChild(divLabel);
-        const onDivToggle = () => {
-            rules.type = (rules.divisions.length > 0) ? 'custom' : 'all';
+        const custom = document.createElement("div");
+        custom.style.paddingLeft = "20px";
+        custom.style.marginTop = "8px";
+
+        custom.innerHTML = `Limit to divisions (optional):`;
+
+        const chips = createChipPicker(window.availableDivisions || [], rules.divisions, () => {
+            rules.type = rules.divisions.length ? 'custom' : 'all';
             onSave();
             onRerender();
-        };
-        const divChipBox = createChipPicker(window.availableDivisions || [], rules.divisions, onDivToggle);
-        customPanel.appendChild(divChipBox);
-        container.appendChild(customPanel);
+        });
+
+        custom.appendChild(chips);
+        container.appendChild(custom);
     }
+
     return container;
 }
 
-function createChipPicker(allItems, selectedItems, onToggle) {
-    const chipBox = document.createElement("div");
-    chipBox.style.display = "flex";
-    chipBox.style.flexWrap = "wrap";
-    chipBox.style.gap = "5px";
-    chipBox.style.marginTop = "5px";
+function createChipPicker(all, selected, onToggle) {
+    const box = document.createElement("div");
+    box.style.display = "flex";
+    box.style.flexWrap = "wrap";
+    box.style.gap = "5px";
+    box.style.marginTop = "6px";
 
-    allItems.forEach(name => {
+    all.forEach(name => {
         const chip = document.createElement("span");
         chip.textContent = name;
         chip.style.padding = "4px 8px";
         chip.style.borderRadius = "12px";
         chip.style.cursor = "pointer";
         chip.style.border = "1px solid #ccc";
-        const isActive = selectedItems.includes(name);
-        chip.style.backgroundColor = isActive ? "#007BFF" : "#f0f0f0";
-        chip.style.color = isActive ? "white" : "black";
+
+        const active = selected.includes(name);
+        chip.style.background = active ? "#00A67C" : "#f0f0f0";
+        chip.style.color = active ? "white" : "black";
+
         chip.onclick = () => {
-            const idx = selectedItems.indexOf(name);
-            if (idx > -1) { selectedItems.splice(idx, 1); } 
-            else { selectedItems.push(name); }
+            const idx = selected.indexOf(name);
+            if (idx > -1) selected.splice(idx, 1);
+            else selected.push(name);
             onToggle();
         };
-        chipBox.appendChild(chip);
+
+        box.appendChild(chip);
     });
-    return chipBox;
+
+    return box;
 }
 
-// =================================================================
-// ===== Allowed Bunks Controls (replaces LimitUsage) =====
-// =================================================================
-
+// ALLOWED DIVISION/BUNK CONTROLS
 function renderAllowedBunksControls(item, onSave, onRerender) {
     const container = document.createElement("div");
     container.style.marginTop = "10px";
@@ -609,159 +585,135 @@ function renderAllowedBunksControls(item, onSave, onRerender) {
     container.style.borderTop = "1px solid #eee";
     container.innerHTML = `<strong>Allowed Divisions & Bunks:</strong>`;
 
-    if (!item.limitUsage) {
-        item.limitUsage = { enabled: false, divisions: {} };
-    }
-    const rules = item.limitUsage;
+    const rules = item.limitUsage || { enabled:false, divisions:{} };
+    item.limitUsage = rules;
 
-    // --- 1. "All Divisions" vs "Specific" Toggle ---
-    const modeLabel = document.createElement("label");
-    modeLabel.style.display = "flex";
-    modeLabel.style.alignItems = "center";
-    modeLabel.style.gap = "10px";
-    modeLabel.style.cursor = "pointer";
-    modeLabel.style.marginTop = '5px';
+    const mode = document.createElement("label");
+    mode.style.display = "flex";
+    mode.style.alignItems = "center";
+    mode.style.gap = "12px";
+    mode.style.marginTop = "6px";
+    mode.style.cursor = "pointer";
 
-    const textAll = document.createElement("span");
-    textAll.textContent = "All Divisions";
-    const toggleTrack = document.createElement("span");
-    Object.assign(toggleTrack.style, {
-        "width": "44px", "height": "24px", "borderRadius": "99px", "position": "relative",
-        "display": "inline-block", "border": "1px solid #ccc",
-        "backgroundColor": rules.enabled ? '#d1d5db' : '#22c55e',
-        "transition": "background-color 0.2s"
+    const allTxt = document.createElement("span");
+    allTxt.textContent = "All Divisions";
+
+    const track = document.createElement("span");
+    Object.assign(track.style, {
+        width:"44px", height:"24px", borderRadius:"99px",
+        display:"inline-block", position:"relative",
+        border:"1px solid #ccc",
+        background:rules.enabled ? "#d1d5db" : "#22c55e",
+        transition:"0.2s"
     });
-    const toggleKnob = document.createElement("span");
-    Object.assign(toggleKnob.style, {
-        "width": "20px", "height": "20px", "borderRadius": "50%", "backgroundColor": "white",
-        "position": "absolute", "top": "1px", "left": rules.enabled ? '21px' : '1px',
-        "transition": "left 0.2s"
+
+    const knob = document.createElement("span");
+    Object.assign(knob.style, {
+        width:"20px", height:"20px", borderRadius:"50%",
+        background:"white", position:"absolute", top:"1px",
+        left: rules.enabled ? "21px" : "1px",
+        transition:"0.2s"
     });
-    toggleTrack.appendChild(toggleKnob);
-    const textLimit = document.createElement("span");
-    textLimit.textContent = "Specific Divisions/Bunks";
-    
-    textAll.style.fontWeight = rules.enabled ? 'normal' : 'bold';
-    textLimit.style.fontWeight = rules.enabled ? 'bold' : 'normal';
-    
-    modeLabel.onclick = () => {
+
+    track.appendChild(knob);
+
+    const spTxt = document.createElement("span");
+    spTxt.textContent = "Specific Divisions/Bunks";
+
+    mode.appendChild(allTxt);
+    mode.appendChild(track);
+    mode.appendChild(spTxt);
+
+    mode.onclick = () => {
         rules.enabled = !rules.enabled;
         onSave();
         onRerender();
     };
-    modeLabel.appendChild(textAll);
-    modeLabel.appendChild(toggleTrack);
-    modeLabel.appendChild(textLimit);
-    container.appendChild(modeLabel);
 
-    // --- 2. Panel for "Specific" rules ---
-    if (rules.enabled) {
-        const customPanel = document.createElement("div");
-        customPanel.style.paddingLeft = "20px";
-        customPanel.style.marginTop = "10px";
-        customPanel.style.borderLeft = "3px solid #eee";
-        
-        const allDivisions = window.availableDivisions || [];
-        if (allDivisions.length === 0) {
-            customPanel.innerHTML += `<p class="muted">No divisions found. Add divisions in Setup.</p>`;
+    container.appendChild(mode);
+
+    if (!rules.enabled) return container;
+
+    const panel = document.createElement("div");
+    panel.style.paddingLeft = "20px";
+    panel.style.marginTop = "10px";
+    panel.style.borderLeft = "3px solid #eee";
+
+    const allDivs = window.availableDivisions || [];
+    allDivs.forEach(div => {
+        const wrap = document.createElement("div");
+        wrap.style.marginTop = "6px";
+
+        const isAllowed = div in rules.divisions;
+        const allowedBunks = rules.divisions[div] || [];
+
+        const divChip = createLimitChip(div, isAllowed, true);
+        divChip.onclick = () => {
+            if (isAllowed) delete rules.divisions[div];
+            else rules.divisions[div] = [];
+            onSave();
+            onRerender();
+        };
+        wrap.appendChild(divChip);
+
+        if (isAllowed) {
+            const bunkBox = document.createElement("div");
+            bunkBox.style.display = "flex";
+            bunkBox.style.flexWrap = "wrap";
+            bunkBox.style.gap = "5px";
+            bunkBox.style.marginTop = "4px";
+            bunkBox.style.paddingLeft = "20px";
+
+            const bunks = window.divisions[div]?.bunks || [];
+
+            if (allowedBunks.length > 0) {
+                const allChip = createLimitChip("All " + div, false, false);
+                allChip.style.borderColor = "#00A67C";
+                allChip.style.color = "#00A67C";
+                allChip.onclick = () => {
+                    rules.divisions[div] = [];
+                    onSave();
+                    onRerender();
+                };
+                bunkBox.appendChild(allChip);
+            }
+
+            bunks.forEach(b => {
+                const bunkChip = createLimitChip(b, allowedBunks.includes(b), false);
+                bunkChip.onclick = () => {
+                    const idx = allowedBunks.indexOf(b);
+                    if (idx > -1) allowedBunks.splice(idx,1);
+                    else allowedBunks.push(b);
+                    onSave();
+                    onRerender();
+                };
+                bunkBox.appendChild(bunkChip);
+            });
+
+            wrap.appendChild(bunkBox);
         }
 
-        allDivisions.forEach(divName => {
-            const divWrapper = document.createElement("div");
-            divWrapper.style.marginTop = "8px";
-            
-            const isAllowed = divName in rules.divisions;
-            const allowedBunks = rules.divisions[divName] || [];
-            
-            // Division-level chip
-            const divChip = createLimitChip(divName, isAllowed, true);
-            
-            // Correct enable/disable behavior
-            divChip.onclick = () => {
-                if (isAllowed) {
-                    // If it IS allowed, clicking it again disables it
-                    delete rules.divisions[divName];
-                } else {
-                    // If it's NOT allowed, clicking enables it for ALL bunks in that division
-                    rules.divisions[divName] = []; // Empty array = all bunks
-                }
-                onSave();
-                onRerender();
-            };
-            
-            divWrapper.appendChild(divChip);
+        panel.appendChild(wrap);
+    });
 
-            // Bunk-level chips (if division is allowed)
-            if (isAllowed) {
-                const bunkList = document.createElement("div");
-                bunkList.style.display = "flex";
-                bunkList.style.flexWrap = "wrap";
-                bunkList.style.gap = "5px";
-                bunkList.style.marginTop = "5px";
-                bunkList.style.paddingLeft = "25px";
-                
-                const bunksInDiv = (window.divisions[divName]?.bunks || []);
-                if (bunksInDiv.length === 0) {
-                    bunkList.innerHTML = `<span class="muted" style="font-size: 0.9em;">No bunks in this division.</span>`;
-                }
-
-                // "All" button (only show if in bunk-specific mode)
-                if (allowedBunks.length > 0) {
-                    const allBunksChip = createLimitChip(`All ${divName}`, false, false);
-                    allBunksChip.style.backgroundColor = "#f0f0f0";
-                    allBunksChip.style.color = "#007BFF";
-                    allBunksChip.style.borderColor = "#007BFF";
-                    allBunksChip.onclick = () => {
-                        rules.divisions[divName] = []; // Set to empty array for "all"
-                        onSave();
-                        onRerender();
-                    };
-                    bunkList.appendChild(allBunksChip);
-                }
-
-                // Individual bunk chips
-                bunksInDiv.forEach(bunkName => {
-                    const bunkChip = createLimitChip(bunkName, allowedBunks.includes(bunkName), false);
-                    bunkChip.onclick = () => {
-                        const bunkIdx = allowedBunks.indexOf(bunkName);
-                        if (bunkIdx > -1) {
-                            allowedBunks.splice(bunkIdx, 1);
-                        } else {
-                            allowedBunks.push(bunkName);
-                        }
-                        onSave();
-                        onRerender();
-                    };
-                    bunkList.appendChild(bunkChip);
-                });
-                divWrapper.appendChild(bunkList);
-            }
-            customPanel.appendChild(divWrapper);
-        });
-        container.appendChild(customPanel);
-    }
+    container.appendChild(panel);
     return container;
 }
 
-function createLimitChip(name, isActive, isDivision = true) {
+function createLimitChip(name, active, isDiv=true) {
     const chip = document.createElement("span");
     chip.textContent = name;
     chip.style.padding = "4px 8px";
     chip.style.borderRadius = "12px";
     chip.style.cursor = "pointer";
     chip.style.border = "1px solid #ccc";
-    chip.style.fontSize = isDivision ? "0.95em" : "0.9em";
-    const activeBG = isDivision ? "#007BFF" : "#5bc0de"; // Blue for division, teal for bunk
-    const activeColor = "white";
-    const inactiveBG = isDivision ? "#f0f0f0" : "#f9f9f9";
-    const inactiveColor = "black";
-    chip.style.backgroundColor = isActive ? activeBG : inactiveBG;
-    chip.style.color = isActive ? activeColor : inactiveColor;
-    chip.style.borderColor = isActive ? activeBG : (isDivision ? "#ccc" : "#ddd");
+
+    chip.style.background = active ? "#00A67C" : "#f0f0f0";
+    chip.style.color = active ? "white" : "black";
+
     return chip;
 }
 
-// Expose the init function
 window.initSpecialActivitiesTab = initSpecialActivitiesTab;
 
 })();
