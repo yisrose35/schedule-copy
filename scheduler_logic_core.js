@@ -328,15 +328,19 @@
         });
 
 // =================================================================
-// PASS 2.5 — SMART TILES (Corrected for Special Generation)
+// PASS 2.5 — SMART TILES (Corrected for Generation + Fallback Flag)
 // =================================================================
 
 let smartJobs = [];
 if (window.SmartLogicAdapter && typeof window.SmartLogicAdapter.preprocessSmartTiles === 'function') {
-    smartJobs = window.SmartLogicAdapter.preprocessSmartTiles(manualSkeleton, externalOverrides, masterSpecials);
+    smartJobs = window.SmartLogicAdapter.preprocessSmartTiles(
+        manualSkeleton,
+        externalOverrides,
+        masterSpecials
+    );
 }
 
-// 3) Run Adapter for each Smart Tile job
+// Run each Smart Tile job
 smartJobs.forEach(job => {
 
     const bunks = window.divisions[job.division]?.bunks || [];
@@ -347,17 +351,15 @@ smartJobs.forEach(job => {
         job,
         historicalCounts,
         specialActivityNames,
-        activityProperties,   // static limits
-        masterFields,         // capacity from fields
+        activityProperties,
+        masterFields,
         dailyFieldAvailability
     );
 
     const { block1Assignments, block2Assignments } = adapterResult;
     if (!block1Assignments || !block2Assignments) return;
 
-    // -----------------------------
-    // Helper to push a generator slot
-    // -----------------------------
+    // Helper: push a generator slot
     function pushGenerated(bunk, event, startMin, endMin) {
         const slots = findSlotsForRange(startMin, endMin);
         schedulableSlotBlocks.push({
@@ -370,93 +372,104 @@ smartJobs.forEach(job => {
         });
     }
 
-    // -----------------------------
+    // ======================================================
     // BLOCK A
-    // -----------------------------
+    // ======================================================
     const slotsA = findSlotsForRange(job.blockA.startMin, job.blockA.endMin);
 
     Object.entries(block1Assignments).forEach(([bunk, act]) => {
+        const actLower = (typeof act === "string" ? act : act?.name || "").toLowerCase();
 
-        // SPORTS → generator
-        if (act.toLowerCase().includes("sport")) {
+        // --- SPORTS ---
+        if (actLower.includes("sport")) {
             pushGenerated(bunk, "Sports Slot", job.blockA.startMin, job.blockA.endMin);
             return;
         }
 
-        // SPECIAL → **MUST BE A GENERATOR**
-        if (act.toLowerCase().includes("special")) {
+        // --- SPECIAL ---
+        if (actLower.includes("special")) {
             pushGenerated(bunk, "Special Activity Slot", job.blockA.startMin, job.blockA.endMin);
             return;
         }
 
-        // GENERAL ACTIVITY → generator
-        if (act.toLowerCase().includes("general activity")) {
+        // --- GENERAL ACTIVITY ---
+        if (actLower.includes("general activity")) {
             pushGenerated(bunk, "General Activity Slot", job.blockA.startMin, job.blockA.endMin);
             return;
         }
 
-        // FIXED / NAMED (swim, lunch, archery, etc)
+        // --- FIXED / NAMED BLOCKS ---
         slotsA.forEach((slotIndex, idx) => {
             if (!window.scheduleAssignments[bunk]) window.scheduleAssignments[bunk] = [];
             if (!window.scheduleAssignments[bunk][slotIndex]) {
                 window.scheduleAssignments[bunk][slotIndex] = {
-                    field: { name: act },
+                    field: { name: typeof act === "string" ? act : act?.name },
                     sport: null,
                     continuation: (idx > 0),
                     _fixed: true,
+                    _fallback: act?._fallback || false,
                     _h2h: false,
                     vs: null,
-                    _activity: act,
+                    _activity: typeof act === "string" ? act : act?.name,
                     _endTime: job.blockA.endMin
                 };
             }
         });
     });
 
-    // -----------------------------
+    // ======================================================
     // BLOCK B
-    // -----------------------------
-    if (job.blockB) {
-        const slotsB = findSlotsForRange(job.blockB.startMin, job.blockB.endMin);
+    // ======================================================
+    if (!job.blockB) return;
 
-        Object.entries(block2Assignments).forEach(([bunk, act]) => {
+    const slotsB = findSlotsForRange(job.blockB.startMin, job.blockB.endMin);
 
-            // SPORTS → generator
-            if (act.toLowerCase().includes("sport")) {
-                pushGenerated(bunk, "Sports Slot", job.blockB.startMin, job.blockB.endMin);
-                return;
+    Object.entries(block2Assignments).forEach(([bunk, rawAct]) => {
+
+        // rawAct may be a string or { name, _fallback }
+        const actObj = (typeof rawAct === "string")
+            ? { name: rawAct, _fallback: false }
+            : rawAct;
+
+        const actName = actObj.name;
+        const actLower = actName.toLowerCase();
+
+        // --- SPORTS ---
+        if (actLower.includes("sport")) {
+            pushGenerated(bunk, "Sports Slot", job.blockB.startMin, job.blockB.endMin);
+            return;
+        }
+
+        // --- SPECIAL ---
+        if (actLower.includes("special")) {
+            pushGenerated(bunk, "Special Activity Slot", job.blockB.startMin, job.blockB.endMin);
+            return;
+        }
+
+        // --- GENERAL ACTIVITY ---
+        if (actLower.includes("general activity")) {
+            pushGenerated(bunk, "General Activity Slot", job.blockB.startMin, job.blockB.endMin);
+            return;
+        }
+
+        // --- FIXED / FALLBACK / NAMED ---
+        slotsB.forEach((slotIndex, idx) => {
+            if (!window.scheduleAssignments[bunk]) window.scheduleAssignments[bunk] = [];
+            if (!window.scheduleAssignments[bunk][slotIndex]) {
+                window.scheduleAssignments[bunk][slotIndex] = {
+                    field: { name: actName },
+                    sport: null,
+                    continuation: (idx > 0),
+                    _fixed: true,
+                    _fallback: !!actObj._fallback,
+                    _h2h: false,
+                    vs: null,
+                    _activity: actName,
+                    _endTime: job.blockB.endMin
+                };
             }
-
-            // SPECIAL → generator
-            if (act.toLowerCase().includes("special")) {
-                pushGenerated(bunk, "Special Activity Slot", job.blockB.startMin, job.blockB.endMin);
-                return;
-            }
-
-            // GENERAL ACTIVITY → generator
-            if (act.toLowerCase().includes("general activity")) {
-                pushGenerated(bunk, "General Activity Slot", job.blockB.startMin, job.blockB.endMin);
-                return;
-            }
-
-            // FIXED / NAMED
-            slotsB.forEach((slotIndex, idx) => {
-                if (!window.scheduleAssignments[bunk]) window.scheduleAssignments[bunk] = [];
-                if (!window.scheduleAssignments[bunk][slotIndex]) {
-                    window.scheduleAssignments[bunk][slotIndex] = {
-                        field: { name: act },
-                        sport: null,
-                        continuation: (idx > 0),
-                        _fixed: true,
-                        _h2h: false,
-                        vs: null,
-                        _activity: act,
-                        _endTime: job.blockB.endMin
-                    };
-                }
-            });
         });
-    }
+    });
 });
 
 
@@ -1015,53 +1028,66 @@ smartJobs.forEach(job => {
                 );
             }
         }
+// =================================================================
+// PASS 5 — Update Rotation History (Fallback-Safe)
+// =================================================================
+try {
+    const historyToSave = rotationHistory;
+    const timestamp = Date.now();
 
-        // =================================================================
-        // PASS 5 — Update Rotation History
-        // =================================================================
-        try {
-            const historyToSave = rotationHistory;
-            const timestamp = Date.now();
+    availableDivisions.forEach(divName => {
+        (divisions[divName]?.bunks || []).forEach(bunk => {
+            const schedule = window.scheduleAssignments[bunk] || [];
+            let lastActivity = null;
 
-            availableDivisions.forEach(divName => {
-                (divisions[divName]?.bunks || []).forEach(bunk => {
-                    const schedule = window.scheduleAssignments[bunk] || [];
-                    let lastActivity = null;
-                    for (const entry of schedule) {
-                        if (entry && entry._activity && entry._activity !== lastActivity) {
-                            const activityName = entry._activity;
-                            lastActivity = activityName;
-                            historyToSave.bunks[bunk] = historyToSave.bunks[bunk] || {};
-                            historyToSave.bunks[bunk][activityName] = timestamp;
+            for (const entry of schedule) {
+                if (!entry) continue;
 
-                            if (entry._h2h &&
-                                activityName !== "League" &&
-                                activityName !== "No Game") {
-                                const leagueEntry = Object.entries(masterLeagues).find(
-                                    ([name, l]) =>
-                                        l.enabled &&
-                                        l.divisions &&
-                                        l.divisions.includes(divName)
-                                );
-                                if (leagueEntry) {
-                                    const lgName = leagueEntry[0];
-                                    historyToSave.leagues[lgName] =
-                                        historyToSave.leagues[lgName] || {};
-                                    historyToSave.leagues[lgName][activityName] = timestamp;
-                                }
-                            }
-                        } else if (entry && !entry.continuation) {
-                            lastActivity = null;
-                        }
+                // Skip continuation slots
+                if (entry.continuation) continue;
+
+                // Skip fallback results (do NOT count them!)
+                if (entry._fallback) continue;
+
+                // Skip entries without valid activity
+                if (!entry._activity) continue;
+
+                const act = entry._activity;
+
+                // Prevent duplicate counting if repeated
+                if (act === lastActivity) continue;
+                lastActivity = act;
+
+                // Record into bunk history
+                historyToSave.bunks[bunk] = historyToSave.bunks[bunk] || {};
+                historyToSave.bunks[bunk][act] = timestamp;
+
+                // League logic remains unchanged
+                if (entry._h2h && act !== "League" && act !== "No Game") {
+                    const leagueEntry = Object.entries(masterLeagues).find(
+                        ([name, l]) =>
+                            l.enabled &&
+                            l.divisions &&
+                            l.divisions.includes(divName)
+                    );
+                    if (leagueEntry) {
+                        const lgName = leagueEntry[0];
+                        historyToSave.leagues[lgName] =
+                            historyToSave.leagues[lgName] || {};
+                        historyToSave.leagues[lgName][act] = timestamp;
                     }
-                });
-            });
+                }
+            }
+        });
+    });
 
-            window.saveRotationHistory?.(historyToSave);
-            console.log("Smart Scheduler: Rotation history updated.");
-        } catch (e) {
-            console.error("Smart Scheduler: Failed to update rotation history.", e);
-        }
+    window.saveRotationHistory?.(historyToSave);
+    console.log("Smart Scheduler: Rotation history updated (fallback-safe).");
+
+} catch (e) {
+    console.error("Smart Scheduler: Failed to update rotation history.", e);
+}
+
 
         window.saveCurrentDailyData?.("unifiedTimes", window.unifiedTimes);
         window.updateTable?.();
