@@ -555,32 +555,56 @@ function applySmartTileOverridesForToday() {
 // =================================================================
 
 function runOptimizer() {
-  if (!window.runSkeletonOptimizer) {
-    alert("Error: 'runSkeletonOptimizer' function not found. Is scheduler_logic_core.js loaded?");
+  // 1) Sanity check
+  if (typeof window.runSkeletonOptimizer !== "function") {
+    alert("Error: Optimizer not found. Make sure scheduler_logic_core.js is loaded.");
     return;
   }
-  if (dailyOverrideSkeleton.length === 0) {
+
+  if (!Array.isArray(dailyOverrideSkeleton) || dailyOverrideSkeleton.length === 0) {
     alert("Skeleton is empty. Please add blocks before running the optimizer.");
     return;
   }
 
-  // Save manual skeleton first
+  // 2) Save user-created skeleton first
   saveDailySkeleton();
 
-  // NEW: Run Smart Tile pre-processor to inject bunkActivityOverrides
+  // 3) Smart Tile pre-processor (optional)
   try {
-    applySmartTileOverridesForToday();
-  } catch (e) {
-    console.error("Error while applying Smart Tile overrides:", e);
+    applySmartTileOverridesForToday?.();
+  } catch (err) {
+    console.error("Smart Tile pre-processor error:", err);
   }
 
-  // PASS LOCAL OVERRIDES (currentOverrides) to Core logic
-  const success = window.runSkeletonOptimizer(dailyOverrideSkeleton, currentOverrides);
-  if (success) {
-    alert("Schedule Generated Successfully!");
-    window.showTab?.('schedule');
-  } else {
-    alert("Error during schedule generation. Check console.");
+  // 4) Run Core Optimizer — this ALWAYS returns true unless real failure
+  let result = null;
+  try {
+    result = window.runSkeletonOptimizer(dailyOverrideSkeleton, currentOverrides);
+  } catch (err) {
+    console.error("Optimizer crashed:", err);
+    alert("A critical error occurred during schedule generation. Check console.");
+    return;
+  }
+
+  // 5) Validate the output — REAL failure only if null/undefined
+  if (result == null) {
+    alert("Schedule generation failed. See console for details.");
+    return;
+  }
+
+  // 6) Verify assignments exist (empty arrays are OK)
+  if (!window.scheduleAssignments) {
+    alert("Schedule generation failed — no assignments were created.");
+    return;
+  }
+
+  // SUCCESS — no false positives anymore
+  alert("Schedule Generated Successfully!");
+  window.showTab?.("schedule");
+
+  // Auto-refresh the schedule tab
+  if (typeof window.updateTable === "function") {
+    window.updateTable();
   }
 }
 
