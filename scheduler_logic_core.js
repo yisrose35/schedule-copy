@@ -104,9 +104,10 @@
             disabledFields,
             disabledSpecials,
             dailyFieldAvailability,
-            dailyDisabledSportsByField
+            dailyDisabledSportsByField,
+              masterFields
         } = loadAndFilterData();
-        masterFields
+      
 
         let fieldUsageBySlot = {};
         window.fieldUsageBySlot = fieldUsageBySlot;
@@ -1677,7 +1678,7 @@ smartJobs.forEach(job => {
             disabledFields,
             disabledSpecials,
             dailyFieldAvailability,
-            dailyDisabledSportsByField
+            dailyDisabledSportsByField,
             masterFields
         };
     }
