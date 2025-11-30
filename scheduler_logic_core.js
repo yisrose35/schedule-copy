@@ -4,7 +4,10 @@
 // UPDATED (Smart Logic V30 Integration):
 // - Pass 2.5: Now passes 'yesterdayHistory' to SmartLogicAdapter.generateAssignments.
 //   This enables the "Anti-Streak" logic (Yesterday Penalty).
-// - Pass 4: Smart Tiles are prioritized in the generation queue.
+// - Usage Fix: Pinned/Split/Smart items registers usage to prevent double-booking.
+// - Rotation Fix: Real-time historical count updates during generation.
+// - FAIRNESS UPDATE: Pass 4 now sorts by 'Total Historical Specials' (Ascending) 
+//   to ensure bunks with fewer specials get priority pick.
 // ============================================================================
 
 (function() {
@@ -106,6 +109,27 @@
         window.fieldUsageBySlot = fieldUsageBySlot;
         window.activityProperties = activityProperties;
 
+        // Internal Helper to register usage immediately (Fix for Invisible Pinned Items)
+        function registerSingleSlotUsage(slotIndex, fieldName, divName, bunkName, activityName) {
+            if (!fieldName || !window.allSchedulableNames || !window.allSchedulableNames.includes(fieldName)) return;
+            
+            fieldUsageBySlot[slotIndex] = fieldUsageBySlot[slotIndex] || {};
+            const usage = fieldUsageBySlot[slotIndex][fieldName] || { count: 0, divisions: [], bunks: {} };
+            
+            // Check capacity (though for pinned items we usually force it)
+            const props = activityProperties[fieldName];
+            const sharableCap = props?.sharableWith?.capacity ?? (props?.sharableWith?.type === "all" ? 2 : props?.sharable ? 2 : 1);
+
+            if (usage.count < sharableCap) {
+                usage.count++;
+                if (bunkName) usage.bunks[bunkName] = activityName || fieldName;
+                if (divName && !usage.divisions.includes(divName)) {
+                    usage.divisions.push(divName);
+                }
+                fieldUsageBySlot[slotIndex][fieldName] = usage;
+            }
+        }
+
         // =================================================================
         // PASS 1: TIME GRID
         // =================================================================
@@ -154,6 +178,9 @@
                 const endMin = parseTimeToMinutes(override.endTime);
                 const slots = findSlotsForRange(startMin, endMin);
                 const bunk = override.bunk;
+                // Find division for this bunk for usage tracking
+                const divName = Object.keys(divisions).find(d => divisions[d].bunks.includes(bunk));
+
                 if (window.scheduleAssignments[bunk] && slots.length > 0) {
                     slots.forEach((slotIndex, idx) => {
                         if (!window.scheduleAssignments[bunk][slotIndex]) {
@@ -167,6 +194,8 @@
                                 _activity: override.activity,
                                 _endTime: endMin
                             };
+                            // Usage Fix
+                            registerSingleSlotUsage(slotIndex, override.activity, divName, bunk, override.activity);
                         }
                     });
                 }
@@ -242,6 +271,8 @@
                                 _activity: item.event,
                                 _endTime: endMin
                             };
+                            // Usage Fix
+                            registerSingleSlotUsage(slotIndex, item.event, item.division, bunk, item.event);
                         }
                     });
                 });
@@ -271,6 +302,8 @@
                                 vs: null,
                                 _activity: swimLabel
                             };
+                            // Usage Fix
+                            registerSingleSlotUsage(slotIndex, swimLabel, item.division, bunk, swimLabel);
                         });
                     });
                 }
@@ -397,6 +430,8 @@
                             _activity: act,
                             _endTime: job.blockA.endMin
                         };
+                        // Usage Fix
+                        registerSingleSlotUsage(slotIndex, act, job.division, bunk, act);
                     }
                 });
             });
@@ -441,6 +476,8 @@
                                 _activity: act,
                                 _endTime: job.blockB.endMin
                             };
+                            // Usage Fix
+                            registerSingleSlotUsage(slotIndex, act, job.division, bunk, act);
                         }
                     });
                 });
@@ -937,15 +974,23 @@
         // PASS 4 — Remaining Schedulable Slots (The Core Generator)
         // =================================================================
         
-        // SORT: 
-        // 1. Time (earliest first)
-        // 2. Smart Tiles (prioritize blocks from Smart Tiles so they get best picks)
+        // SORTING PRIORITY:
+        // 1. Time (Earlier first)
+        // 2. Smart Tile (Prioritize smart blocks)
+        // 3. FAIRNESS: Bunks with fewer 'Total Historical Specials' go first.
         remainingBlocks.sort((a, b) => {
+            // 1. Time
             if (a.startTime !== b.startTime) return a.startTime - b.startTime;
-            // If same time, prioritize Smart Tiles to maximize their success
+            
+            // 2. Smart Tile Priority
             if (a.fromSmartTile && !b.fromSmartTile) return -1;
             if (!a.fromSmartTile && b.fromSmartTile) return 1;
-            return 0;
+
+            // 3. Fairness Rotation (Specials) - Ascending order (lowest count first)
+            // We use the '_totalSpecials' count calculated in loadAndFilterData
+            const countA = historicalCounts[a.bunk]?.['_totalSpecials'] || 0;
+            const countB = historicalCounts[b.bunk]?.['_totalSpecials'] || 0;
+            return countA - countB; 
         });
 
         for (const block of remainingBlocks) {
@@ -1003,6 +1048,19 @@
 
             if (pick) {
                 fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, false);
+                
+                // --- TIGHTENING ROTATION: Update history REAL-TIME ---
+                // This ensures if a bunk gets "Archery" in Slot 1, it won't get "Archery" again in Slot 3.
+                if (pick._activity && block.bunk) {
+                    if (!historicalCounts[block.bunk]) historicalCounts[block.bunk] = {};
+                    historicalCounts[block.bunk][pick._activity] = (historicalCounts[block.bunk][pick._activity] || 0) + 1;
+                    
+                    // If they just got a special, increment their total special count too for fairness in next slots
+                    const isSpecial = masterSpecials.some(s => s.name === pick._activity);
+                    if (isSpecial) {
+                         historicalCounts[block.bunk]['_totalSpecials'] = (historicalCounts[block.bunk]['_totalSpecials'] || 0) + 1;
+                    }
+                }
             } else {
                 fillBlock(
                     block,
@@ -1336,87 +1394,6 @@
             return true;
         }
 
-        function canLeagueGameFit(block, fieldName, fieldUsageBySlot, activityProperties) {
-            if (!fieldName) return false;
-            const props = activityProperties[fieldName];
-            if (!props) return false;
-            const limit = 1;
-
-            if (props.preferences &&
-                props.preferences.enabled &&
-                props.preferences.exclusive &&
-                !props.preferences.list.includes(block.divName)) {
-                return false;
-            }
-            if (props &&
-                Array.isArray(props.allowedDivisions) &&
-                props.allowedDivisions.length > 0 &&
-                !props.allowedDivisions.includes(block.divName)) {
-                return false;
-            }
-
-            const limitRules = props.limitUsage;
-            if (limitRules && limitRules.enabled) {
-                if (!limitRules.divisions[block.divName]) return false;
-            }
-
-            const { blockStartMin, blockEndMin } = getBlockTimeRange(block);
-            const rules = (props.timeRules || []).map(r => {
-                if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
-                return {
-                    ...r,
-                    startMin: parseTimeToMinutes(r.start),
-                    endMin: parseTimeToMinutes(r.end)
-                };
-            });
-
-            if (rules.length > 0) {
-                if (!props.available) return false;
-                const hasAvailableRules = rules.some(r => r.type === 'Available');
-                if (blockStartMin != null && blockEndMin != null) {
-                    if (hasAvailableRules) {
-                        let insideAvailable = false;
-                        for (const rule of rules) {
-                            if (rule.type !== 'Available' ||
-                                rule.startMin == null ||
-                                rule.endMin == null) continue;
-                            if (blockStartMin >= rule.startMin &&
-                                blockEndMin <= rule.endMin) {
-                                insideAvailable = true;
-                                break;
-                            }
-                        }
-                        if (!insideAvailable) return false;
-                    }
-                    for (const rule of rules) {
-                        if (rule.type !== 'Unavailable' ||
-                            rule.startMin == null ||
-                            rule.endMin == null) continue;
-                        if (blockStartMin < rule.endMin &&
-                            blockEndMin > rule.startMin) {
-                            return false;
-                        }
-                    }
-                }
-                for (const slotIndex of block.slots || []) {
-                    if (slotIndex === undefined) return false;
-                    const usage = fieldUsageBySlot[slotIndex]?.[fieldName] ||
-                        { count: 0, divisions: [] };
-                    if (usage.count >= limit) return false;
-                    if (!isTimeAvailable(slotIndex, props)) return false;
-                }
-            } else {
-                if (!props.available) return false;
-                for (const slotIndex of block.slots || []) {
-                    if (slotIndex === undefined) return false;
-                    const usage = fieldUsageBySlot[slotIndex]?.[fieldName] ||
-                        { count: 0, divisions: [] };
-                    if (usage.count >= limit) return false;
-                }
-            }
-            return true;
-        }
-
         function isPickValidForBlock(block, pick, activityProperties, fieldUsageBySlot) {
             if (!pick) return false;
             const fname = fieldLabel(pick.field);
@@ -1494,34 +1471,54 @@
             window.debugHistoricalCounts = historicalCounts;
 
             const specialActivityNames = [];
+            const specialNamesSet = new Set(); // For faster lookup
 
             try {
+                // Populate Special Names
+                masterSpecials.forEach(s => {
+                     specialActivityNames.push(s.name);
+                     specialNamesSet.add(s.name);
+                });
+
                 const allDaily = window.loadAllDailyData?.() || {};
                 const manualOffsets = globalSettings.manualUsageOffsets || {};
 
+                // 1. Tally History from Previous Days
                 Object.values(allDaily).forEach(day => {
                     const sched = day.scheduleAssignments || {};
                     Object.keys(sched).forEach(b => {
                         if (!historicalCounts[b]) historicalCounts[b] = {};
                         (sched[b] || []).forEach(e => {
                             if (e && e._activity && !e.continuation) {
+                                // Standard Activity Count
                                 historicalCounts[b][e._activity] =
                                     (historicalCounts[b][e._activity] || 0) + 1;
+                                
+                                // SPECIAL ACTIVITY CATEGORY COUNT (For cross-day fairness)
+                                if (specialNamesSet.has(e._activity)) {
+                                    historicalCounts[b]['_totalSpecials'] = 
+                                        (historicalCounts[b]['_totalSpecials'] || 0) + 1;
+                                }
                             }
                         });
                     });
                 });
 
+                // 2. Add Manual Offsets
                 Object.keys(manualOffsets).forEach(b => {
                     if (!historicalCounts[b]) historicalCounts[b] = {};
                     Object.keys(manualOffsets[b]).forEach(act => {
                         const offset = manualOffsets[b][act] || 0;
                         const current = historicalCounts[b][act] || 0;
                         historicalCounts[b][act] = Math.max(0, current + offset);
+                        
+                        // If offsetting a special, offset the total too
+                        if (specialNamesSet.has(act)) {
+                             const curTotal = historicalCounts[b]['_totalSpecials'] || 0;
+                             historicalCounts[b]['_totalSpecials'] = Math.max(0, curTotal + offset);
+                        }
                     });
                 });
-
-                masterSpecials.forEach(s => specialActivityNames.push(s.name));
 
             } catch (e) {
                 console.error("Error calculating historical counts:", e);
