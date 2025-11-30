@@ -9,6 +9,7 @@
 // - FAIRNESS UPDATE: Pass 4 now sorts by 'Total Historical Specials' (Ascending) 
 //   to ensure bunks with fewer specials get priority pick.
 // - BUG FIX: Moved helper functions to top of scope to prevent ReferenceErrors.
+// - LEAGUE FIX: Randomizes matchups per slot to prevent same-team replays.
 // ============================================================================
 
 (function() {
@@ -108,7 +109,10 @@
         }
 
         function coreGetNextLeagueRound(leagueName, teams) {
-            return pairRoundRobin(teams);
+            // Shuffle teams to randomize matchups so different slots get different pairings
+            const shuffled = teams.slice();
+            shuffleArray(shuffled);
+            return pairRoundRobin(shuffled);
         }
 
         function assignSportsMultiRound(matchups, sports, teamCounts, history, lastSport) {
