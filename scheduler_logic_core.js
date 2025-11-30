@@ -1449,87 +1449,57 @@ for (const job of generatorJobs) {
  *  - Does NOT count fallback toward special-history
  *  - Works with “_smartTileLocked” flags from Adapter
  */
-function fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, isLeagueFill = false) {
-    const bunk = block.bunk;
-    if (!bunk) return;
+function fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory) {
+    const fname = pick.field;
+    const act = pick._activity;
 
-    const fieldName = (pick && pick.field)
-        ? (typeof pick.field === "string" ? pick.field : pick.field.name)
-        : null;
+    // Does this activity count as a REAL special?
+    const isRealSmartSpecial =
+        act &&
+        act.toLowerCase().includes("special") &&
+        act !== "Free"; // fallback should not count
 
-    const activity = pick?._activity || null;
-    const sport = pick?.sport || null;
-    const slots = block.slots || [];
+    (block.slots || []).forEach((slotIndex, idx) => {
+        if (!window.scheduleAssignments[block.bunk]) return;
 
-    slots.forEach((slotIndex, idx) => {
-
-        if (!window.scheduleAssignments[bunk]) return;
-        if (!window.unifiedTimes || !window.unifiedTimes[slotIndex]) return;
-
-        const existing = window.scheduleAssignments[bunk][slotIndex];
-
-        // 🔥 NEW — Only block overwrite if existing is a REAL placed block
-        const hasRealBlock =
-            existing &&
-            (existing._fixed ||
-             existing._locked ||
-             existing._smartTileLocked);
-
-        if (hasRealBlock) {
-            return; // respect fixed/locked entries
-        }
-
-        // ---------- WRITE THE BLOCK ----------
-        window.scheduleAssignments[bunk][slotIndex] = {
-            field: fieldName,
-            sport: sport,
+        window.scheduleAssignments[block.bunk][slotIndex] = {
+            field: fname,
+            sport: pick.sport,
             continuation: (idx > 0),
-            _fixed: !!pick._fixed,
-            _locked: !!pick._locked,
-            _smartTileLocked: !!pick._smartTileLocked,
-            _h2h: !!pick._h2h,
-            _activity: activity,
-            _allMatchups: pick._allMatchups || null
+            _fixed: false,
+            _h2h: pick._h2h || false,
+            _activity: act
         };
 
-        // ---------- LEAGUE DOES NOT UPDATE USAGE ----------
-        if (isLeagueFill) return;
+        //--------------------------------------------------------------
+        // CAPACITY & SHARABILITY TRACKING
+        //--------------------------------------------------------------
+        if (fname &&
+            window.allSchedulableNames.includes(fname)) {
 
-        // ---------- Fallback special does not count ----------
-        const isFallbackSpecial =
-            activity &&
-            window.specialActivityNames &&
-            window.specialActivityNames.includes(activity) &&
-            pick._isFallback === true;
+            fieldUsageBySlot[slotIndex] =
+                fieldUsageBySlot[slotIndex] || {};
 
-        if (isFallbackSpecial) return;
+            const usage = fieldUsageBySlot[slotIndex][fname] ||
+                { count: 0, divisions: [], bunks: {} };
 
-        // ---------- UPDATE FIELD USAGE ----------
-        if (!fieldName ||
-            !window.allSchedulableNames ||
-            !window.allSchedulableNames.includes(fieldName)) {
-            return;
+            usage.count++;
+            if (!usage.divisions.includes(block.divName))
+                usage.divisions.push(block.divName);
+
+            usage.bunks[block.bunk] = act;
+            fieldUsageBySlot[slotIndex][fname] = usage;
         }
 
-        fieldUsageBySlot[slotIndex] = fieldUsageBySlot[slotIndex] || {};
-
-        const usageObj = fieldUsageBySlot[slotIndex][fieldName] || {
-            count: 0,
-            divisions: [],
-            bunks: {}
-        };
-
-        usageObj.count++;
-
-        if (!usageObj.divisions.includes(block.divName)) {
-            usageObj.divisions.push(block.divName);
+        //--------------------------------------------------------------
+        // SPECIAL COUNT HISTORY ONLY FOR REAL SPECIAL (not fallback)
+        //--------------------------------------------------------------
+        if (isRealSmartSpecial && idx === 0) {
+            historicalCounts[block.bunk] =
+                historicalCounts[block.bunk] || {};
+            historicalCounts[block.bunk][act] =
+                (historicalCounts[block.bunk][act] || 0) + 1;
         }
-
-        if (bunk && activity) {
-            usageObj.bunks[bunk] = activity;
-        }
-
-        fieldUsageBySlot[slotIndex][fieldName] = usageObj;
     });
 }
 
