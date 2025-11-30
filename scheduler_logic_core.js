@@ -1474,100 +1474,93 @@ for (const block of generatorQueue) {
  *  - Does NOT count fallback toward special-history
  *  - Works with “_smartTileLocked” flags from Adapter
  */
-function fillBlock(
-    block,
-    pick,
-    fieldUsageBySlot,
-    yesterdayHistory,
-    isLeagueFill = false
-) {
-    if (!block || !pick || !Array.isArray(block.slots)) return;
+function fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, isLeagueFill = false) {
 
-    const fieldName = fieldLabel(pick.field);     // normalized field name
-    const activity = pick._activity || null;      // main activity name
-    const sport = pick.sport || null;
-    const isFixed = !!pick._fixed;
-    const isH2H = !!pick._h2h;
-    const allMatchups = pick._allMatchups || null;
-    const bunk = block.bunk;
+    if (!block || !pick) return;
 
-    // Every slot the block covers
-    block.slots.forEach((slotIndex, idx) => {
-        if (slotIndex == null ||
-            !window.unifiedTimes ||
-            slotIndex >= window.unifiedTimes.length)
-            return;
+    const fieldName = fieldLabel(pick.field);
+    const sport = pick.sport;
 
-        // If already filled, do nothing
-        if (!window.scheduleAssignments[bunk])
-            window.scheduleAssignments[bunk] = [];
+    // Write the assignment into scheduleAssignments
+    (block.slots || []).forEach((slotIndex, idx) => {
 
-        if (window.scheduleAssignments[bunk][slotIndex])
-            return; // Do NOT overwrite pinned/smart-created entries
+        if (slotIndex === undefined || !window.scheduleAssignments[block.bunk]) return;
 
-        // -----------------------------
-        // CREATE THE ASSIGNMENT ENTRY
-        
-        window.scheduleAssignments[bunk][slotIndex] = {
-            field: fieldName,
-            sport: sport,
-            continuation: idx > 0,
-            _fixed: isFixed,
-            _h2h: isH2H,
-            _activity: activity,
-            _allMatchups: allMatchups
-        };
+        // Only fill if empty
+        if (!window.scheduleAssignments[block.bunk][slotIndex]) {
 
-        // -----------------------------
-        // LEAGUES DO NOT COUNT TOWARD SHARABLE CAPACITY
-        ------------------------------
-        if (isLeagueFill) return;
-
-        // -----------------------------
-        // CAPACITY + SHARABILITY ACCOUNTING
-        // This is the HEART of preventing frees later
-        // ------------------------------
-
-        if (fieldName &&
-            window.allSchedulableNames &&
-            window.allSchedulableNames.includes(fieldName)) {
-
-            fieldUsageBySlot[slotIndex] =
-                fieldUsageBySlot[slotIndex] || {};
-
-            const usage = fieldUsageBySlot[slotIndex][fieldName] || {
-                count: 0,
-                divisions: [],
-                bunks: {}
+            window.scheduleAssignments[block.bunk][slotIndex] = {
+                field: fieldName,
+                sport,
+                continuation: (idx > 0),
+                _fixed: !!pick._fixed,
+                _h2h: !!pick._h2h,
+                _activity: pick._activity || null,
+                _allMatchups: pick._allMatchups || null
             };
-
-            // Count 1 more bunk using this field
-            usage.count++;
-
-            // Track division
-            if (!usage.divisions.includes(block.divName))
-                usage.divisions.push(block.divName);
-
-            // Track activity by bunk
-            if (bunk && activity)
-                usage.bunks[bunk] = activity;
-
-            fieldUsageBySlot[slotIndex][fieldName] = usage;
         }
     });
 
-    // ------------------------------------------------------
-    // HISTORY UPDATE: This is REQUIRED for fairness engine to work
-    // ------------------------------------------------------
-    try {
-        if (bunk && activity) {
-            const hist = window.rotationHistory;
-            hist.bunks[bunk] = hist.bunks[bunk] || {};
-            hist.bunks[bunk][activity] = Date.now();
-        }
-    } catch (e) {
-        console.warn("fillBlock: failed to store history:", e);
+    // If this is league fill → do not mark usage
+    if (isLeagueFill) return;
+
+    // We cannot mark usage for fake/non-field placeholders
+    if (!fieldName ||
+        !window.allSchedulableNames ||
+        !window.allSchedulableNames.includes(fieldName)) {
+        return;
     }
+
+    // ======================================================
+    // 🔥 DYNAMIC CAPACITY from sharableWith / sharable
+    // ======================================================
+    const props = window.activityProperties?.[fieldName];
+    let limit = 1;
+
+    if (props?.sharableWith) {
+        const cap = parseInt(props.sharableWith.capacity, 10);
+        if (!isNaN(cap) && cap > 0) {
+            limit = cap;               // explicit capacity
+        } else if (
+            props.sharableWith.type === "all" ||
+            props.sharableWith.type === "custom"
+        ) {
+            limit = 2;                 // default sharable
+        }
+    } else if (props?.sharable) {
+        limit = 2;                     // legacy sharable= true
+    }
+
+    // ======================================================
+    // 🔥 UPDATE FIELD USAGE respecting limit
+    // ======================================================
+    (block.slots || []).forEach(slotIndex => {
+
+        if (slotIndex === undefined) return;
+
+        fieldUsageBySlot[slotIndex] = fieldUsageBySlot[slotIndex] || {};
+
+        const usage = fieldUsageBySlot[slotIndex][fieldName] || {
+            count: 0,
+            divisions: [],
+            bunks: {}
+        };
+
+        // If capacity reached, do not increment — but also do not crash
+        if (usage.count < limit) {
+            usage.count++;
+
+            if (!usage.divisions.includes(block.divName)) {
+                usage.divisions.push(block.divName);
+            }
+
+            if (block.bunk && pick._activity) {
+                usage.bunks[block.bunk] = pick._activity;
+            }
+        }
+
+        fieldUsageBySlot[slotIndex][fieldName] = usage;
+    });
 }
 
     function loadAndFilterData() {
