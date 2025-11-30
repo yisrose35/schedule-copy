@@ -1,13 +1,11 @@
 // ============================================================================
-// SmartLogicAdapter V13
-// - Supports separate Smart Tile blocks (block A, block B)
+// SmartLogicAdapter V14
+// - PAIRING UPDATE: Treats distinct Smart Tiles as linked pairs (A & B)
+//   instead of splitting one tile. This respects gaps (lunch) and user layout.
 // - Full fairness + special capacity
-// - Updated for "Swap & Fallback" logic:
+// - Swap & Fallback logic:
 //   Block 1: Special fills to cap, rest get Open
-//   Block 2: 
-//      - Those who had Special in B1 -> MUST go to Open
-//      - Those who had Open in B1 -> Priority for Special (to cap), remainder to Fallback
-//      - NO ONE repeats Open (Swim) if they did it in B1.
+//   Block 2: Swap (Ex-Special -> Open), New Candidates -> Special/Fallback
 // ============================================================================
 
 (function () {
@@ -28,31 +26,58 @@
             );
         },
 
-        // NEW — detect Smart Tiles & compute half blocks
+        // UPDATED: Find pairs of Smart Tiles and link them
         preprocessSmartTiles(rawSkeleton, dailyAdj, specials) {
             const jobs = [];
 
-            rawSkeleton
-                .filter(x => x.type === "smart")
-                .forEach(item => {
-                    const sd = item.smartData;
-                    if (!sd) return;
+            // 1. Group by Division
+            const tilesByDiv = {};
+            rawSkeleton.forEach(t => {
+                if (t.type === 'smart') {
+                    if (!tilesByDiv[t.division]) tilesByDiv[t.division] = [];
+                    tilesByDiv[t.division].push(t);
+                }
+            });
 
-                    const start = parse(item.startTime);
-                    const end = parse(item.endTime);
+            // 2. Process Pairs
+            Object.keys(tilesByDiv).forEach(div => {
+                // Sort by start time to ensure Block A comes before Block B
+                const tiles = tilesByDiv[div].sort((a, b) => parse(a.startTime) - parse(b.startTime));
 
-                    const mid = Math.floor((start + end) / 2);
+                // Iterate in steps of 2
+                for (let i = 0; i < tiles.length; i += 2) {
+                    const tileA = tiles[i];
+                    const tileB = tiles[i + 1]; // This is the linked partner
 
-                    jobs.push({
-                        division: item.division,
-                        main1: sd.main1,
-                        main2: sd.main2,
-                        fallbackFor: sd.fallbackFor,
-                        fallbackActivity: sd.fallbackActivity,
-                        blockA: { startMin: start, endMin: mid, division: item.division },
-                        blockB: { startMin: mid, endMin: end, division: item.division }
-                    });
-                });
+                    const sd = tileA.smartData || {};
+
+                    if (!tileB) {
+                        // Orphan tile (no partner). Treat as standalone Block A logic.
+                        console.warn(`[SmartAdapter] Orphan Smart Tile found for ${div} at ${tileA.startTime}. No rotation partner.`);
+                        jobs.push({
+                            division: div,
+                            main1: sd.main1,
+                            main2: sd.main2,
+                            fallbackFor: sd.fallbackFor,
+                            fallbackActivity: sd.fallbackActivity,
+                            blockA: { startMin: parse(tileA.startTime), endMin: parse(tileA.endTime), division: div },
+                            blockB: null // No second block
+                        });
+                    } else {
+                        // We have a pair! Link them.
+                        // We use the config from Tile A for the pair.
+                        jobs.push({
+                            division: div,
+                            main1: sd.main1,
+                            main2: sd.main2,
+                            fallbackFor: sd.fallbackFor,
+                            fallbackActivity: sd.fallbackActivity,
+                            blockA: { startMin: parse(tileA.startTime), endMin: parse(tileA.endTime), division: div },
+                            blockB: { startMin: parse(tileB.startTime), endMin: parse(tileB.endTime), division: div }
+                        });
+                    }
+                }
+            });
 
             return jobs;
         },
@@ -128,30 +153,32 @@
                 }
             }
 
-            // 4. Block 2 Assignment
-            let countB2 = 0;
-            
-            // Group 1: People who had Special in B1 -> MUST go to Open (Swap)
-            // They just had Special, so they go to Open.
-            const groupFromSpecial = sortedBunks.filter(b => bunksWhoGotSpecialInB1.has(b));
-            
-            // Group 2: People who had Open in B1.
-            // They CANNOT go to Open again. They want Special.
-            const groupFromOpen = sortedBunks.filter(b => bunksWhoGotOpenInB1.has(b));
-            
-            // Assign Group 1 (Swap to Open)
-            for (const bunk of groupFromSpecial) {
-                block2[bunk] = openAct; 
-            }
+            // 4. Block 2 Assignment (Only if Block B exists)
+            if (job.blockB) {
+                let countB2 = 0;
+                
+                // Group 1: People who had Special in B1 -> MUST go to Open (Swap)
+                // They just had Special, so they go to Open.
+                const groupFromSpecial = sortedBunks.filter(b => bunksWhoGotSpecialInB1.has(b));
+                
+                // Group 2: People who had Open in B1.
+                // They CANNOT go to Open again. They want Special.
+                const groupFromOpen = sortedBunks.filter(b => bunksWhoGotOpenInB1.has(b));
+                
+                // Assign Group 1 (Swap to Open)
+                for (const bunk of groupFromSpecial) {
+                    block2[bunk] = openAct; 
+                }
 
-            // Assign Group 2 (Fill Special, then Fallback)
-            for (const bunk of groupFromOpen) {
-                if (countB2 < cap) {
-                    block2[bunk] = specialAct;
-                    countB2++;
-                } else {
-                    // Overflow -> Fallback
-                    block2[bunk] = fbAct;
+                // Assign Group 2 (Fill Special, then Fallback)
+                for (const bunk of groupFromOpen) {
+                    if (countB2 < cap) {
+                        block2[bunk] = specialAct;
+                        countB2++;
+                    } else {
+                        // Overflow -> Fallback
+                        block2[bunk] = fbAct;
+                    }
                 }
             }
 
