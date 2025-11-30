@@ -1507,7 +1507,7 @@ function fillBlock(
 
         // -----------------------------
         // CREATE THE ASSIGNMENT ENTRY
-        ------------------------------
+        
         window.scheduleAssignments[bunk][slotIndex] = {
             field: fieldName,
             sport: sport,
