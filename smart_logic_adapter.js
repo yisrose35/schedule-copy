@@ -1,15 +1,11 @@
 // ============================================================================
-// SmartLogicAdapter V27
-// - PAIRING UPDATE: Treats distinct Smart Tiles as linked pairs (A & B).
-// - SPECIAL DETECTION FIX: Purely based on 'fallbackFor'.
-// - DYNAMIC CAPACITY: Sums capacity of all resources matching the category.
-// - HISTORY FIX (ROBUST):
-//   * If special is "Special Activity", sums history of ALL specials + generic "Special Activity".
-//   * If special is "Sports", sums history of ALL fields + generic "Sports".
-// - RECALCULATION FIX: Calculates capacity independently for Block A and Block B.
-// - ROTATION FIX (STRICT): 
-//   Block 1: Special fills to cap A, rest get Open.
-//   Block 2: Strict Swap & Overflow logic.
+// SmartLogicAdapter V28
+// - EVEN SPREAD UPGRADE: Added a "Total History" tie-breaker.
+//   If two bunks are tied for the specific activity (e.g. both 0 Tennis),
+//   the one with LESS total history (across all sports/specials) wins.
+// - ROBUST BUCKETING: "Tennis" counts as "Sports". "Art" counts as "Special".
+//   Prevents kids from hopping between categories daily while others get nothing.
+// - PAIRING & CAPACITY: Retains V27 logic for A/B blocks and dynamic summing.
 // ============================================================================
 
 (function () {
@@ -151,7 +147,7 @@
                             totalCapacity = 0; 
                         }
                     } else {
-                        totalCapacity = 2; 
+                        totalCapacity = 2; // Default if unknown
                     }
                 }
                 
@@ -159,53 +155,104 @@
                 return totalCapacity;
             };
 
-            // 2. Sort bunks by fairness (Category-Aware History)
-            const getHistoryCount = (bunk, activityName) => {
+            // --------------------------------------------------------
+            // HISTORY & FAIRNESS LOGIC (UPGRADED)
+            // --------------------------------------------------------
+            
+            // Helper: Get counts for the SPECIFIC category (Sports vs Special)
+            const getCategoryHistory = (bunk, activityName) => {
                 if (!historical[bunk]) return 0;
                 
                 let sum = 0;
                 const lowerName = activityName.toLowerCase();
-
-                // If activity is "Special Activity" or a known special, sum ALL specials
                 const allSpecials = window.getGlobalSpecialActivities ? window.getGlobalSpecialActivities() : [];
-                const isSpecialType = specialNames.includes(activityName) || 
-                                      allSpecials.some(s => s.name === activityName) ||
-                                      lowerName.includes('special');
+
+                // Detect Type
+                const isSpecialType = 
+                    specialNames.includes(activityName) || 
+                    allSpecials.some(s => isSameActivity(s.name, activityName)) ||
+                    lowerName.includes('special');
+
+                // It is a sport if it matches masterFields OR has 'sport' in name
+                const isSportType = 
+                    !isSpecialType && (
+                        lowerName.includes('sport') ||
+                        masterFields.some(f => isSameActivity(f.name, activityName))
+                    );
 
                 if (isSpecialType) {
-                    // Sum counts for every known special activity
+                    // Sum ALL special activities
                     allSpecials.forEach(s => {
                         if (historical[bunk][s.name]) sum += historical[bunk][s.name];
                     });
-                    // Add generic counts
                     if (historical[bunk]["Special Activity"]) sum += historical[bunk]["Special Activity"];
                     if (historical[bunk]["Special Activity Slot"]) sum += historical[bunk]["Special Activity Slot"];
-                    
-                    // Also check if the specific activity name itself has a count (in case it wasn't in the list)
+                    // Catch-all for specific name
                     if (historical[bunk][activityName]) sum += historical[bunk][activityName];
                 } 
-                // If activity is "Sports", sum ALL fields
-                else if (lowerName.includes('sport')) {
+                else if (isSportType) {
+                    // Sum ALL sports
                     masterFields.forEach(f => {
                         if (historical[bunk][f.name]) sum += historical[bunk][f.name];
                     });
                     if (historical[bunk]["Sports"]) sum += historical[bunk]["Sports"];
                     if (historical[bunk]["Sports Slot"]) sum += historical[bunk]["Sports Slot"];
+                    // Catch-all
+                    if (historical[bunk][activityName] && !masterFields.some(f => isSameActivity(f.name, activityName))) {
+                         sum += historical[bunk][activityName];
+                    }
                 } 
-                // Exact Match Fallback
                 else {
+                    // Exact Match Only (Unknown category)
                     if (historical[bunk][activityName]) sum += historical[bunk][activityName];
                 }
 
                 return sum;
             };
 
+            // Helper: Get TOTAL history of "Good Stuff" (Tie-Breaker)
+            // This ensures if Bunk A got Tennis (Sport) and Bunk B got nothing, Bunk B wins the Art (Special) slot.
+            const getTotalHistory = (bunk) => {
+                if (!historical[bunk]) return 0;
+                let total = 0;
+                
+                // Sum generic buckets
+                if (historical[bunk]["Sports"]) total += historical[bunk]["Sports"];
+                if (historical[bunk]["Special Activity"]) total += historical[bunk]["Special Activity"];
+                
+                // Sum all known sports
+                masterFields.forEach(f => {
+                    if (historical[bunk][f.name]) total += historical[bunk][f.name];
+                });
+                
+                // Sum all known specials
+                const allSpecials = window.getGlobalSpecialActivities ? window.getGlobalSpecialActivities() : [];
+                allSpecials.forEach(s => {
+                    if (historical[bunk][s.name]) total += historical[bunk][s.name];
+                });
+
+                return total;
+            };
+
+            // SORT: 1. Category Count -> 2. Total Count -> 3. Random
             const sortedBunks = [...bunks].sort((a, b) => {
-                const countA = getHistoryCount(a, specialAct);
-                const countB = getHistoryCount(b, specialAct);
-                if (countA !== countB) return countA - countB;
+                // Priority 1: Have you done THIS specific type of thing?
+                const catA = getCategoryHistory(a, specialAct);
+                const catB = getCategoryHistory(b, specialAct);
+                if (catA !== catB) return catA - catB;
+                
+                // Priority 2: Have you done ANYTHING cool recently? (Spread the wealth)
+                const totA = getTotalHistory(a);
+                const totB = getTotalHistory(b);
+                if (totA !== totB) return totA - totB;
+
+                // Priority 3: Random Shuffle
                 return 0.5 - Math.random();
             });
+
+            // --------------------------------------------------------
+            // ASSIGNMENT LOGIC
+            // --------------------------------------------------------
 
             const block1 = {};
             const block2 = {};
@@ -238,12 +285,7 @@
                 const mustSwapToOpen = [];
                 const candidatesForSpecial = [];
 
-                // IMPORTANT: Re-sort candidates based on the *updated* fairness (simulated)
-                // Those who just got Special in B1 are now "high count" for this day, so they go to back of line anyway.
-                // But we force them out regardless.
-                
-                // For candidates (those who got Open in B1), we maintain their fairness sort order from step 2.
-                // This ensures if Bunk 3 and Bunk 4 both need it, the one with lower GLOBAL history gets it first.
+                // Sort candidates by the SAME fairness logic
                 sortedBunks.forEach(bunk => {
                     if (bunksWhoGotSpecialInB1.has(bunk)) {
                         mustSwapToOpen.push(bunk);
