@@ -1,16 +1,9 @@
 // ============================================================================
 // scheduler_logic_core.js
 //
-// UPDATED (Smart Logic Step 3 Integration):
-// - Pass 2: Skips 'smart' tiles (delegates to Pass 2.5).
-// - Pass 2.5:
-//     1. Calls SmartLogicAdapter.preprocessSmartTiles to build Jobs from manualSkeleton.
-//     2. Iterates Jobs and calls SmartLogicAdapter.generateAssignments.
-//     3. Splits the time slot into Block 1 and Block 2.
-//     4. Applies assignments:
-//        - If Generated (Sports/Special): Pushes to 'schedulableSlotBlocks' for Pass 4.
-//        - If Fixed (Swim/Lunch): Calls fillBlock immediately.
-// - Pass 4: Standard generator picks up the converted blocks.
+// UPDATED (Smart Logic V30 Integration):
+// - Pass 2.5: Now passes 'yesterdayHistory' to SmartLogicAdapter.generateAssignments.
+//   This enables the "Anti-Streak" logic (Yesterday Penalty).
 // ============================================================================
 
 (function() {
@@ -152,15 +145,8 @@
         // PASS 1.5 — Bunk-Specific Pinned Overrides
         // =================================================================
         try {
-            // Note: externalOverrides might contain new overrides from Smart Tiles later, 
-            // but for Pinned ones, we look at the daily data usually.
-            // If externalOverrides has specific pins passed in, we should use them too.
-            // However, Smart Tile overrides are generated in Pass 2.5 and injected then.
             const dailyData = window.loadCurrentDailyData?.() || {};
             const bunkOverrides = dailyData.bunkActivityOverrides || [];
-            
-            // Merge with any pre-existing external overrides if they are Pinned types
-            // (Usually externalOverrides is empty at start, filled in 2.5)
             
             bunkOverrides.forEach(override => {
                 const startMin = parseTimeToMinutes(override.startTime);
@@ -327,138 +313,137 @@
         });
 
         // =================================================================
-// PASS 2.5 — SMART TILES (Corrected for Special Generation)
-// =================================================================
+        // PASS 2.5 — SMART TILES (Corrected for Special Generation)
+        // =================================================================
 
-let smartJobs = [];
-if (window.SmartLogicAdapter && typeof window.SmartLogicAdapter.preprocessSmartTiles === 'function') {
-    smartJobs = window.SmartLogicAdapter.preprocessSmartTiles(manualSkeleton, externalOverrides, masterSpecials);
-}
-
-// 3) Run Adapter for each Smart Tile job
-smartJobs.forEach(job => {
-
-    const bunks = window.divisions[job.division]?.bunks || [];
-    if (!bunks.length) return;
-
-    const adapterResult = SmartLogicAdapter.generateAssignments(
-        bunks,
-        job,
-        historicalCounts,
-        specialActivityNames,
-        activityProperties,   // static limits
-        masterFields,         // capacity from fields
-        dailyFieldAvailability
-    );
-
-    const { block1Assignments, block2Assignments } = adapterResult;
-    if (!block1Assignments || !block2Assignments) return;
-
-    // -----------------------------
-    // Helper to push a generator slot
-    // -----------------------------
-    function pushGenerated(bunk, event, startMin, endMin) {
-        const slots = findSlotsForRange(startMin, endMin);
-        schedulableSlotBlocks.push({
-            divName: job.division,
-            bunk,
-            event,
-            startTime: startMin,
-            endTime: endMin,
-            slots
-        });
-    }
-
-    // -----------------------------
-    // BLOCK A
-    // -----------------------------
-    const slotsA = findSlotsForRange(job.blockA.startMin, job.blockA.endMin);
-
-    Object.entries(block1Assignments).forEach(([bunk, act]) => {
-
-        // SPORTS → generator
-        if (act.toLowerCase().includes("sport")) {
-            pushGenerated(bunk, "Sports Slot", job.blockA.startMin, job.blockA.endMin);
-            return;
+        let smartJobs = [];
+        if (window.SmartLogicAdapter && typeof window.SmartLogicAdapter.preprocessSmartTiles === 'function') {
+            smartJobs = window.SmartLogicAdapter.preprocessSmartTiles(manualSkeleton, externalOverrides, masterSpecials);
         }
 
-        // SPECIAL → **MUST BE A GENERATOR**
-        if (act.toLowerCase().includes("special")) {
-            pushGenerated(bunk, "Special Activity Slot", job.blockA.startMin, job.blockA.endMin);
-            return;
-        }
+        // 3) Run Adapter for each Smart Tile job
+        smartJobs.forEach(job => {
 
-        // GENERAL ACTIVITY → generator
-        if (act.toLowerCase().includes("general activity")) {
-            pushGenerated(bunk, "General Activity Slot", job.blockA.startMin, job.blockA.endMin);
-            return;
-        }
+            const bunks = window.divisions[job.division]?.bunks || [];
+            if (!bunks.length) return;
 
-        // FIXED / NAMED (swim, lunch, archery, etc)
-        slotsA.forEach((slotIndex, idx) => {
-            if (!window.scheduleAssignments[bunk]) window.scheduleAssignments[bunk] = [];
-            if (!window.scheduleAssignments[bunk][slotIndex]) {
-                window.scheduleAssignments[bunk][slotIndex] = {
-                    field: { name: act },
-                    sport: null,
-                    continuation: (idx > 0),
-                    _fixed: true,
-                    _h2h: false,
-                    vs: null,
-                    _activity: act,
-                    _endTime: job.blockA.endMin
-                };
-            }
-        });
-    });
+            const adapterResult = SmartLogicAdapter.generateAssignments(
+                bunks,
+                job,
+                historicalCounts,
+                specialActivityNames,
+                activityProperties,   // static limits
+                masterFields,         // capacity from fields
+                dailyFieldAvailability,
+                yesterdayHistory      // <--- NEW: Passed to adapter for Yesterday Penalty
+            );
 
-    // -----------------------------
-    // BLOCK B
-    // -----------------------------
-    if (job.blockB) {
-        const slotsB = findSlotsForRange(job.blockB.startMin, job.blockB.endMin);
+            const { block1Assignments, block2Assignments } = adapterResult;
+            if (!block1Assignments || !block2Assignments) return;
 
-        Object.entries(block2Assignments).forEach(([bunk, act]) => {
-
-            // SPORTS → generator
-            if (act.toLowerCase().includes("sport")) {
-                pushGenerated(bunk, "Sports Slot", job.blockB.startMin, job.blockB.endMin);
-                return;
+            // -----------------------------
+            // Helper to push a generator slot
+            // -----------------------------
+            function pushGenerated(bunk, event, startMin, endMin) {
+                const slots = findSlotsForRange(startMin, endMin);
+                schedulableSlotBlocks.push({
+                    divName: job.division,
+                    bunk,
+                    event,
+                    startTime: startMin,
+                    endTime: endMin,
+                    slots
+                });
             }
 
-            // SPECIAL → generator
-            if (act.toLowerCase().includes("special")) {
-                pushGenerated(bunk, "Special Activity Slot", job.blockB.startMin, job.blockB.endMin);
-                return;
-            }
+            // -----------------------------
+            // BLOCK A
+            // -----------------------------
+            const slotsA = findSlotsForRange(job.blockA.startMin, job.blockA.endMin);
 
-            // GENERAL ACTIVITY → generator
-            if (act.toLowerCase().includes("general activity")) {
-                pushGenerated(bunk, "General Activity Slot", job.blockB.startMin, job.blockB.endMin);
-                return;
-            }
+            Object.entries(block1Assignments).forEach(([bunk, act]) => {
 
-            // FIXED / NAMED
-            slotsB.forEach((slotIndex, idx) => {
-                if (!window.scheduleAssignments[bunk]) window.scheduleAssignments[bunk] = [];
-                if (!window.scheduleAssignments[bunk][slotIndex]) {
-                    window.scheduleAssignments[bunk][slotIndex] = {
-                        field: { name: act },
-                        sport: null,
-                        continuation: (idx > 0),
-                        _fixed: true,
-                        _h2h: false,
-                        vs: null,
-                        _activity: act,
-                        _endTime: job.blockB.endMin
-                    };
+                // SPORTS → generator
+                if (act.toLowerCase().includes("sport")) {
+                    pushGenerated(bunk, "Sports Slot", job.blockA.startMin, job.blockA.endMin);
+                    return;
                 }
+
+                // SPECIAL → **MUST BE A GENERATOR**
+                if (act.toLowerCase().includes("special")) {
+                    pushGenerated(bunk, "Special Activity Slot", job.blockA.startMin, job.blockA.endMin);
+                    return;
+                }
+
+                // GENERAL ACTIVITY → generator
+                if (act.toLowerCase().includes("general activity")) {
+                    pushGenerated(bunk, "General Activity Slot", job.blockA.startMin, job.blockA.endMin);
+                    return;
+                }
+
+                // FIXED / NAMED (swim, lunch, archery, etc)
+                slotsA.forEach((slotIndex, idx) => {
+                    if (!window.scheduleAssignments[bunk]) window.scheduleAssignments[bunk] = [];
+                    if (!window.scheduleAssignments[bunk][slotIndex]) {
+                        window.scheduleAssignments[bunk][slotIndex] = {
+                            field: { name: act },
+                            sport: null,
+                            continuation: (idx > 0),
+                            _fixed: true,
+                            _h2h: false,
+                            vs: null,
+                            _activity: act,
+                            _endTime: job.blockA.endMin
+                        };
+                    }
+                });
             });
+
+            // -----------------------------
+            // BLOCK B
+            // -----------------------------
+            if (job.blockB) {
+                const slotsB = findSlotsForRange(job.blockB.startMin, job.blockB.endMin);
+
+                Object.entries(block2Assignments).forEach(([bunk, act]) => {
+
+                    // SPORTS → generator
+                    if (act.toLowerCase().includes("sport")) {
+                        pushGenerated(bunk, "Sports Slot", job.blockB.startMin, job.blockB.endMin);
+                        return;
+                    }
+
+                    // SPECIAL → generator
+                    if (act.toLowerCase().includes("special")) {
+                        pushGenerated(bunk, "Special Activity Slot", job.blockB.startMin, job.blockB.endMin);
+                        return;
+                    }
+
+                    // GENERAL ACTIVITY → generator
+                    if (act.toLowerCase().includes("general activity")) {
+                        pushGenerated(bunk, "General Activity Slot", job.blockB.startMin, job.blockB.endMin);
+                        return;
+                    }
+
+                    // FIXED / NAMED
+                    slotsB.forEach((slotIndex, idx) => {
+                        if (!window.scheduleAssignments[bunk]) window.scheduleAssignments[bunk] = [];
+                        if (!window.scheduleAssignments[bunk][slotIndex]) {
+                            window.scheduleAssignments[bunk][slotIndex] = {
+                                field: { name: act },
+                                sport: null,
+                                continuation: (idx > 0),
+                                _fixed: true,
+                                _h2h: false,
+                                vs: null,
+                                _activity: act,
+                                _endTime: job.blockB.endMin
+                            };
+                        }
+                    });
+                });
+            }
         });
-    }
-});
-
-
 
         // =================================================================
         // PASS 3 — SPECIALTY LEAGUES
