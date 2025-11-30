@@ -375,7 +375,7 @@ smartJobs.forEach(job => {
         const slotsA = findSlotsForRange(job.blockA.startMin, job.blockA.endMin);
         
         // If the activity is "Sports" /"Special Activity"(fallback), we should push to schedulableSlotBlocks instead of pinning
-          if (act === "Special","Special Activity" || act === "Special Activity Slot" {
+          if (act === "Special","Special Activity" || act === "Special Activity Slot" 
               schedulableSlotBlocks.push({
                 divName: job.division,
                 bunk: bunk,
