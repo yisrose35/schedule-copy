@@ -1474,58 +1474,100 @@ for (const block of generatorQueue) {
  *  - Does NOT count fallback toward special-history
  *  - Works with “_smartTileLocked” flags from Adapter
  */
-function fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory) {
-    const fname = pick.field;
-    const act = pick._activity;
+function fillBlock(
+    block,
+    pick,
+    fieldUsageBySlot,
+    yesterdayHistory,
+    isLeagueFill = false
+) {
+    if (!block || !pick || !Array.isArray(block.slots)) return;
 
-    // Does this activity count as a REAL special?
-    const isRealSmartSpecial =
-        act &&
-        act.toLowerCase().includes("special") &&
-        act !== "Free"; // fallback should not count
+    const fieldName = fieldLabel(pick.field);     // normalized field name
+    const activity = pick._activity || null;      // main activity name
+    const sport = pick.sport || null;
+    const isFixed = !!pick._fixed;
+    const isH2H = !!pick._h2h;
+    const allMatchups = pick._allMatchups || null;
+    const bunk = block.bunk;
 
-    (block.slots || []).forEach((slotIndex, idx) => {
-        if (!window.scheduleAssignments[block.bunk]) return;
+    // Every slot the block covers
+    block.slots.forEach((slotIndex, idx) => {
+        if (slotIndex == null ||
+            !window.unifiedTimes ||
+            slotIndex >= window.unifiedTimes.length)
+            return;
 
-        window.scheduleAssignments[block.bunk][slotIndex] = {
-            field: fname,
-            sport: pick.sport,
-            continuation: (idx > 0),
-            _fixed: false,
-            _h2h: pick._h2h || false,
-            _activity: act
+        // If already filled, do nothing
+        if (!window.scheduleAssignments[bunk])
+            window.scheduleAssignments[bunk] = [];
+
+        if (window.scheduleAssignments[bunk][slotIndex])
+            return; // Do NOT overwrite pinned/smart-created entries
+
+        // -----------------------------
+        // CREATE THE ASSIGNMENT ENTRY
+        ------------------------------
+        window.scheduleAssignments[bunk][slotIndex] = {
+            field: fieldName,
+            sport: sport,
+            continuation: idx > 0,
+            _fixed: isFixed,
+            _h2h: isH2H,
+            _activity: activity,
+            _allMatchups: allMatchups
         };
 
-        //--------------------------------------------------------------
-        // CAPACITY & SHARABILITY TRACKING
-        //--------------------------------------------------------------
-        if (fname &&
-            window.allSchedulableNames.includes(fname)) {
+        // -----------------------------
+        // LEAGUES DO NOT COUNT TOWARD SHARABLE CAPACITY
+        ------------------------------
+        if (isLeagueFill) return;
+
+        // -----------------------------
+        // CAPACITY + SHARABILITY ACCOUNTING
+        // This is the HEART of preventing frees later
+        // ------------------------------
+
+        if (fieldName &&
+            window.allSchedulableNames &&
+            window.allSchedulableNames.includes(fieldName)) {
 
             fieldUsageBySlot[slotIndex] =
                 fieldUsageBySlot[slotIndex] || {};
 
-            const usage = fieldUsageBySlot[slotIndex][fname] ||
-                { count: 0, divisions: [], bunks: {} };
+            const usage = fieldUsageBySlot[slotIndex][fieldName] || {
+                count: 0,
+                divisions: [],
+                bunks: {}
+            };
 
+            // Count 1 more bunk using this field
             usage.count++;
+
+            // Track division
             if (!usage.divisions.includes(block.divName))
                 usage.divisions.push(block.divName);
 
-            usage.bunks[block.bunk] = act;
-            fieldUsageBySlot[slotIndex][fname] = usage;
-        }
+            // Track activity by bunk
+            if (bunk && activity)
+                usage.bunks[bunk] = activity;
 
-        //--------------------------------------------------------------
-        // SPECIAL COUNT HISTORY ONLY FOR REAL SPECIAL (not fallback)
-        //--------------------------------------------------------------
-        if (isRealSmartSpecial && idx === 0) {
-            historicalCounts[block.bunk] =
-                historicalCounts[block.bunk] || {};
-            historicalCounts[block.bunk][act] =
-                (historicalCounts[block.bunk][act] || 0) + 1;
+            fieldUsageBySlot[slotIndex][fieldName] = usage;
         }
     });
+
+    // ------------------------------------------------------
+    // HISTORY UPDATE: This is REQUIRED for fairness engine to work
+    // ------------------------------------------------------
+    try {
+        if (bunk && activity) {
+            const hist = window.rotationHistory;
+            hist.bunks[bunk] = hist.bunks[bunk] || {};
+            hist.bunks[bunk][activity] = Date.now();
+        }
+    } catch (e) {
+        console.warn("fillBlock: failed to store history:", e);
+    }
 }
 
     function loadAndFilterData() {
