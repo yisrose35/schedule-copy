@@ -381,7 +381,7 @@ smartJobs.forEach(job => {
              schedulableSlotBlocks.push({
                 divName: job.division,
                 bunk: bunk,
-                event: "Special Activity",
+                event: "Special Activity Slot",
                 startTime: job.blockA.startMin,
                 endTime: job.blockA.endMin,
                 slots: slotsA
@@ -422,7 +422,7 @@ smartJobs.forEach(job => {
              schedulableSlotBlocks.push({
                 divName: job.division,
                 bunk: bunk,
-                event: "Special Activity",
+                event: "Special Activity Slot",
                 startTime: job.blockB.startMin,
                 endTime: job.blockB.endMin,
                 slots: slotsB
