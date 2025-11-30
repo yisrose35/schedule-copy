@@ -1031,7 +1031,7 @@ for (const block of remainingBlocks) {
 }
 
 // =================================================================
-// PASS 5 — Update Rotation History (Fallback-Safe)
+// PASS 5 — Update Rotation History (Category-Aware + Fallback Safe)
 // =================================================================
 try {
     const historyToSave = rotationHistory;
@@ -1039,32 +1039,38 @@ try {
 
     availableDivisions.forEach(divName => {
         (divisions[divName]?.bunks || []).forEach(bunk => {
+
             const schedule = window.scheduleAssignments[bunk] || [];
             let lastActivity = null;
 
             for (const entry of schedule) {
                 if (!entry) continue;
 
-                // Skip continuation slots
+                // Skip continuation pieces
                 if (entry.continuation) continue;
 
-                // Skip fallback results (do NOT count them!)
+                // Skip fallback entries (do not count for fairness)
                 if (entry._fallback) continue;
 
-                // Skip entries without valid activity
-                if (!entry._activity) continue;
-
                 const act = entry._activity;
+                const cat = entry._category;
 
-                // Prevent duplicate counting if repeated
+                if (!act) continue;
+
+                // Prevent duplicates within same block
                 if (act === lastActivity) continue;
                 lastActivity = act;
 
-                // Record into bunk history
+                // --- TRACK ACTUAL ACTIVITY HISTORY ---
                 historyToSave.bunks[bunk] = historyToSave.bunks[bunk] || {};
                 historyToSave.bunks[bunk][act] = timestamp;
 
-                // League logic remains unchanged
+                // --- TRACK CATEGORY-LEVEL HISTORY (FAIRNESS DRIVER) ---
+                if (cat) {
+                    historyToSave.bunks[bunk][cat] = timestamp;
+                }
+
+                // --- LEAGUE HISTORY (unchanged) ---
                 if (entry._h2h && act !== "League" && act !== "No Game") {
                     const leagueEntry = Object.entries(masterLeagues).find(
                         ([name, l]) =>
@@ -1084,18 +1090,11 @@ try {
     });
 
     window.saveRotationHistory?.(historyToSave);
-    console.log("Smart Scheduler: Rotation history updated (fallback-safe).");
+    console.log("Smart Scheduler: Rotation history updated (category-enabled).");
 
 } catch (e) {
     console.error("Smart Scheduler: Failed to update rotation history.", e);
 }
-
-
-        window.saveCurrentDailyData?.("unifiedTimes", window.unifiedTimes);
-        window.updateTable?.();
-        window.saveSchedule?.();
-        return true;
-    };
 
     // =====================================================================
     // HELPER FUNCTIONS
