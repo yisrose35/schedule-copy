@@ -328,7 +328,7 @@
 // =================================================================
 // PASS 2.5 — SMART TILES (Corrected)
 // =================================================================
-console.log("SMART-DEBUG: Entering Pass 2.5");
+
 
 // Use external overrides if provided, else fallback locally
 const currentOverrides = externalOverrides || { bunkActivityOverrides: [] };
@@ -343,14 +343,14 @@ let smartJobs = [];
 if (window.SmartLogicAdapter && typeof window.SmartLogicAdapter.preprocessSmartTiles === 'function') {
     smartJobs = window.SmartLogicAdapter.preprocessSmartTiles(manualSkeleton, currentOverrides, masterSpecials);
 } else {
-    console.error("SmartLogicAdapter.preprocessSmartTiles not found!");
+    
 }
 
-console.log("SMART-DEBUG: Jobs to process =", smartJobs);
+
 
 // 3) Run Adapter for each job
 smartJobs.forEach(job => {
-    console.log("SMART-DEBUG: Processing job =", job);
+    
 
     const bunks = window.divisions[job.division]?.bunks || [];
     if (bunks.length === 0) return;
@@ -363,7 +363,7 @@ smartJobs.forEach(job => {
         specialActivityNames // Passing the list of known special activities
     );
 
-    console.log("SMART-DEBUG: Adapter assignments =", adapterResult);
+    
 
     const { block1Assignments, block2Assignments } = adapterResult;
     if (!block1Assignments || !block2Assignments) return;
@@ -375,6 +375,7 @@ smartJobs.forEach(job => {
         const slotsA = findSlotsForRange(job.blockA.startMin, job.blockA.endMin);
         
         // If the activity is "Sports" (fallback), we should push to schedulableSlotBlocks instead of pinning
+        if (act === "Special","Special Activity" || act === "Special Activity Slot"
         if (act === "Sports" || act === "Sports Slot") {
              schedulableSlotBlocks.push({
                 divName: job.division,
@@ -410,6 +411,15 @@ smartJobs.forEach(job => {
         const slotsB = findSlotsForRange(job.blockB.startMin, job.blockB.endMin);
         
         // If the activity is "Sports" (fallback), push to schedulableSlotBlocks
+         if (act === "Special","Special Activity" || act === "Special Activity Slot" {
+              schedulableSlotBlocks.push({
+                divName: job.division,
+                bunk: bunk,
+                event: "Special Activity Slot",
+                startTime: job.blockB.startMin,
+                endTime: job.blockB.endMin,
+                slots: slotsB
+            });
         if (act === "Sports" || act === "Sports Slot") {
              schedulableSlotBlocks.push({
                 divName: job.division,
