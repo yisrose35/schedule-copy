@@ -991,57 +991,72 @@ for (const block of allGeneratorBlocks) {
 }
 
         // =================================================================
-        // PASS 5 — Update Rotation History
-        // =================================================================
-        try {
-            const historyToSave = rotationHistory;
-            const timestamp = Date.now();
+// PASS 5 — Update Rotation History
+// =================================================================
+try {
+    const historyToSave = rotationHistory;
+    const timestamp = Date.now();
 
-            availableDivisions.forEach(divName => {
-                (divisions[divName]?.bunks || []).forEach(bunk => {
-                    const schedule = window.scheduleAssignments[bunk] || [];
-                    let lastActivity = null;
-                    for (const entry of schedule) {
-                        if (entry && entry._activity && entry._activity !== lastActivity) {
-                            const activityName = entry._activity;
-                            lastActivity = activityName;
-                            historyToSave.bunks[bunk] = historyToSave.bunks[bunk] || {};
-                            historyToSave.bunks[bunk][activityName] = timestamp;
+    availableDivisions.forEach(divName => {
+        (divisions[divName]?.bunks || []).forEach(bunk => {
+            const schedule = window.scheduleAssignments[bunk] || [];
+            let lastActivity = null;
 
-                            if (entry._h2h &&
-                                activityName !== "League" &&
-                                activityName !== "No Game") {
-                                const leagueEntry = Object.entries(masterLeagues).find(
-                                    ([name, l]) =>
-                                        l.enabled &&
-                                        l.divisions &&
-                                        l.divisions.includes(divName)
-                                );
-                                if (leagueEntry) {
-                                    const lgName = leagueEntry[0];
-                                    historyToSave.leagues[lgName] =
-                                        historyToSave.leagues[lgName] || {};
-                                    historyToSave.leagues[lgName][activityName] = timestamp;
-                                }
-                            }
-                        } else if (entry && !entry.continuation) {
-                            lastActivity = null;
+            for (const entry of schedule) {
+
+                if (entry && entry._activity && entry._activity !== lastActivity) {
+
+                    const activityName = entry._activity;
+                    lastActivity = activityName;
+
+                    // ensure bucket exists
+                    historyToSave.bunks[bunk] =
+                        historyToSave.bunks[bunk] || {};
+
+                    historyToSave.bunks[bunk][activityName] = timestamp;
+
+                    // League H2H tracking
+                    if (entry._h2h &&
+                        activityName !== "League" &&
+                        activityName !== "No Game") {
+                        
+                        const leagueEntry = Object.entries(masterLeagues).find(
+                            ([name, l]) =>
+                                l.enabled &&
+                                l.divisions &&
+                                l.divisions.includes(divName)
+                        );
+
+                        if (leagueEntry) {
+                            const lgName = leagueEntry[0];
+                            historyToSave.leagues[lgName] =
+                                historyToSave.leagues[lgName] || {};
+                            historyToSave.leagues[lgName][activityName] = timestamp;
                         }
                     }
-                });
-            });
+                }
 
-            window.saveRotationHistory?.(historyToSave);
-            console.log("Smart Scheduler: Rotation history updated.");
-        } catch (e) {
-            console.error("Smart Scheduler: Failed to update rotation history.", e);
-        }
+                // Reset activity sequence on boundaries
+                else if (entry && !entry.continuation) {
+                    lastActivity = null;
+                }
+            }
+        });
+    });
 
-        window.saveCurrentDailyData?.("unifiedTimes", window.unifiedTimes);
-        window.updateTable?.();
-        window.saveSchedule?.();
-        return true;
-    };
+    window.saveRotationHistory?.(historyToSave);
+    console.log("Smart Scheduler: Rotation history updated.");
+
+} catch (e) {
+    console.error("Smart Scheduler: Failed to update rotation history.", e);
+}
+
+// FINAL SAVE + RETURN
+window.saveCurrentDailyData?.("unifiedTimes", window.unifiedTimes);
+window.updateTable?.();
+window.saveSchedule?.();
+return true;
+
 
     // =====================================================================
     // HELPER FUNCTIONS
