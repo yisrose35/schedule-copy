@@ -329,61 +329,42 @@
 // PASS 2.5 — SMART TILES (Corrected)
 // =================================================================
 
-
-// Use external overrides if provided, else fallback locally
-const currentOverrides = externalOverrides || { bunkActivityOverrides: [] };
-if (!currentOverrides.bunkActivityOverrides) {
-    currentOverrides.bunkActivityOverrides = [];
-}
-
 // 1) & 2) Process Smart Tiles via Adapter
-// Note: Adapter expects (rawSkeleton, dailyAdj, specials)
-// It handles finding 'smart' tiles and creating job objects (with split times)
 let smartJobs = [];
 if (window.SmartLogicAdapter && typeof window.SmartLogicAdapter.preprocessSmartTiles === 'function') {
-    smartJobs = window.SmartLogicAdapter.preprocessSmartTiles(manualSkeleton, currentOverrides, masterSpecials);
+    smartJobs = window.SmartLogicAdapter.preprocessSmartTiles(manualSkeleton, externalOverrides, masterSpecials);
 } else {
-    
+    // error
 }
-
 
 
 // 3) Run Adapter for each job
 smartJobs.forEach(job => {
-    
 
     const bunks = window.divisions[job.division]?.bunks || [];
     if (bunks.length === 0) return;
 
-    // --- CRITICAL FIX: Pass specialActivityNames to adapter ---
+    // --- CRITICAL UPDATE: Pass ALL context needed for dynamic capacity ---
     const adapterResult = SmartLogicAdapter.generateAssignments(
         bunks,
         job,
         historicalCounts,
-        specialActivityNames // Passing the list of known special activities
+        specialActivityNames,
+        activityProperties, // For static capacity
+        masterFields,       // For Sports field lookup
+        dailyFieldAvailability // For real-time checking
     );
 
-    
 
     const { block1Assignments, block2Assignments } = adapterResult;
     if (!block1Assignments || !block2Assignments) return;
 
-    // 4) Inject back into overrides
+    // 4) Apply Directly to Schedule
+    
     // Block A Assignments
     Object.entries(block1Assignments).forEach(([bunk, act]) => {
-        // Schedule Block A
         const slotsA = findSlotsForRange(job.blockA.startMin, job.blockA.endMin);
         
-        // If the activity is "Sports" /"Special Activity"(fallback), we should push to schedulableSlotBlocks instead of pinning
-          if (act === "Special","Special Activity" || act === "Special Activity Slot" 
-              schedulableSlotBlocks.push({
-                divName: job.division,
-                bunk: bunk,
-                event: "Special Activity Slot",
-                startTime: job.blockA.startMin,
-                endTime: job.blockA.endMin,
-                slots: slotsA
-            });
         if (act === "Sports" || act === "Sports Slot") {
              schedulableSlotBlocks.push({
                 divName: job.division,
@@ -393,8 +374,17 @@ smartJobs.forEach(job => {
                 endTime: job.blockA.endMin,
                 slots: slotsA
             });
+        } else if (act === "Special Activity" || act === "Special Activity Slot") {
+             // Treat 'Special Activity' as a slot to be filled by the generator logic (Pass 4)
+             schedulableSlotBlocks.push({
+                divName: job.division,
+                bunk: bunk,
+                event: "Special Activity",
+                startTime: job.blockA.startMin,
+                endTime: job.blockA.endMin,
+                slots: slotsA
+            });
         } else {
-            // Otherwise Pin it (Special or Swim)
             slotsA.forEach((slotIndex, idx) => {
                 if (!window.scheduleAssignments[bunk]) window.scheduleAssignments[bunk] = [];
                 if (!window.scheduleAssignments[bunk][slotIndex]) {
@@ -415,19 +405,8 @@ smartJobs.forEach(job => {
 
     // Block B Assignments
     Object.entries(block2Assignments).forEach(([bunk, act]) => {
-        // Schedule Block B
         const slotsB = findSlotsForRange(job.blockB.startMin, job.blockB.endMin);
         
-        // If the activity is "Sports" /"Special Activity"(fallback), push to schedulableSlotBlocks
-         if (act === "Special","Special Activity" || act === "Special Activity Slot" {
-              schedulableSlotBlocks.push({
-                divName: job.division,
-                bunk: bunk,
-                event: "Special Activity Slot",
-                startTime: job.blockB.startMin,
-                endTime: job.blockB.endMin,
-                slots: slotsB
-            });
         if (act === "Sports" || act === "Sports Slot") {
              schedulableSlotBlocks.push({
                 divName: job.division,
@@ -437,8 +416,16 @@ smartJobs.forEach(job => {
                 endTime: job.blockB.endMin,
                 slots: slotsB
             });
+        } else if (act === "Special Activity" || act === "Special Activity Slot") {
+             schedulableSlotBlocks.push({
+                divName: job.division,
+                bunk: bunk,
+                event: "Special Activity",
+                startTime: job.blockB.startMin,
+                endTime: job.blockB.endMin,
+                slots: slotsB
+            });
         } else {
-            // Otherwise Pin it
             slotsB.forEach((slotIndex, idx) => {
                 if (!window.scheduleAssignments[bunk]) window.scheduleAssignments[bunk] = [];
                 if (!window.scheduleAssignments[bunk][slotIndex]) {
@@ -457,18 +444,6 @@ smartJobs.forEach(job => {
         }
     });
 });
-
-console.log("SMART-DEBUG: PASS 2.5 COMPLETE");
-
-// Helper for internal time conversion just for this block
-function minutesToTime(min) {
-  const hh = Math.floor(min / 60);
-  const mm = min % 60;
-  const h = hh % 12 === 0 ? 12 : hh % 12;
-  const m = String(mm).padStart(2, '0');
-  const ampm = hh < 12 ? 'am' : 'pm';
-  return `${h}:${m}${ampm}`;
-}
 
 
         // =================================================================
