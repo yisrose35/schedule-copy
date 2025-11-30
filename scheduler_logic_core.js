@@ -1698,7 +1698,7 @@ try {
             leagues: yesterdayData.leagueAssignments || {}
         };
 
-        return {
+               return {
             divisions,
             availableDivisions,
             activityProperties,
@@ -1707,7 +1707,7 @@ try {
             fieldsBySport,
             masterLeagues,
             masterSpecialtyLeagues,
-            masterSpecials, // Added so adapter can access full special defs
+            masterSpecials,
             yesterdayHistory,
             rotationHistory,
             disabledLeagues,
@@ -1720,7 +1720,9 @@ try {
             dailyDisabledSportsByField,
             masterFields
         };
-    }
+    }   // <--- CLOSES loadAndFilterData()
 
-    // END IIFE
+}   // <--- YOU WERE MISSING THIS (closes IIFE block)
+
+// END IIFE
 })();
