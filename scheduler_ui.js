@@ -1,16 +1,13 @@
 // ============================================================================
-// scheduler_ui.js  —  MODERN UI (ENGINE-ALIGNED VERSION)
-// ============================================================================
+// scheduler_ui.js (FULLY UPDATED)
 //
-// 100% aligned with the NEW Logic Core:
-// - No usage of manualSkeleton.event for generated blocks
-// - Reads ONLY scheduleAssignments for activity labels
-// - Smart Tile support (block A, block B, fallback, categories)
-// - League rows (_h2h + _allMatchups)
-// - Staggered multi-division schedule layout
-// - Editable UI cells
-// - Fully robust: no undefined .event errors ever again
-//
+// Supports:
+// - Staggered schedule view (one table per division)
+// - Reading from saved data (NOT from old globals)
+// - Pinned vs generated events
+// - League & Specialty League merged rows
+// - Split blocks (UI only — engine already picks activities)
+// - Post-generation manual editing
 // ============================================================================
 
 (function () {
@@ -18,9 +15,9 @@
 
   const INCREMENT_MINS = 30;
 
-  // ========================================================================
+  // ==========================================================================
   // TIME HELPERS
-  // ========================================================================
+  // ==========================================================================
   function parseTimeToMinutes(str) {
     if (!str || typeof str !== "string") return null;
     let s = str.trim().toLowerCase();
@@ -29,16 +26,16 @@
     if (s.endsWith("am") || s.endsWith("pm")) {
       mer = s.endsWith("am") ? "am" : "pm";
       s = s.replace(/am|pm/g, "").trim();
-    } else return null;
+    } else return null; // AM/PM required
 
-    const m = s.match(/^(\d{1,2})\s*:\s*(\d{2})$/);
+    const m = s.match(/^(\d{1,2})\s*[:]\s*(\d{2})$/);
     if (!m) return null;
 
     let h = parseInt(m[1], 10);
     const mm = parseInt(m[2], 10);
-    if (mm < 0 || mm > 59) return null;
 
-    if (h === 12) h = (mer === "am") ? 0 : 12;
+    if (mm < 0 || mm > 59) return null;
+    if (h === 12) h = (mer === "am" ? 0 : 12);
     else if (mer === "pm") h += 12;
 
     return h * 60 + mm;
@@ -52,41 +49,31 @@
     return `${h12}:${m} ${ap}`;
   }
 
-  // ========================================================================
-  // SCHEDULE ENTRY ACCESS
-  // ========================================================================
-  function getEntry(bunk, slotIndex) {
-    const a = window.scheduleAssignments || {};
-    return (a[bunk] && a[bunk][slotIndex]) || null;
+  // ==========================================================================
+  // DETECT GENERATED EVENT TYPES
+  // ==========================================================================
+  const UI_GENERATED_EVENTS = new Set([
+    "general activity",
+    "general activity slot",
+    "activity",
+    "activities",
+    "sports",
+    "sport",
+    "sports slot",
+    "special activity",
+    "swim",
+    "league game",
+    "specialty league"
+  ]);
+
+  function uiIsGeneratedEventName(name) {
+    if (!name) return false;
+    return UI_GENERATED_EVENTS.has(String(name).trim().toLowerCase());
   }
 
-  // Modern activity formatting
-  function formatEntry(entry) {
-    if (!entry) return "";
-
-    // Dismissal / Snacks (rare, but supported)
-    if (entry._isDismissal) return "Dismissal";
-    if (entry._isSnack) return "Snacks";
-
-    // League row (head-to-head)
-    if (entry._h2h) return entry.sport || "League Game";
-
-    // Category-aware display
-    if (entry._category && entry._activity) return entry._activity;
-
-    // Fallback fixed block
-    if (entry._fixed) return entry.field || entry._activity || "";
-
-    // Standard sports activity
-    if (entry.sport) return `${entry.field} – ${entry.sport}`;
-
-    // Default
-    return entry._activity || entry.field || "";
-  }
-
-  // ========================================================================
-  // UI EDIT — Manually override a cell
-  // ========================================================================
+  // ==========================================================================
+  // SCHEDULE EDITOR (manual override)
+  // ==========================================================================
   function findSlotsForRange(startMin, endMin) {
     const slots = [];
     const times = window.unifiedTimes;
@@ -96,7 +83,6 @@
       const slotStart =
         new Date(times[i].start).getHours() * 60 +
         new Date(times[i].start).getMinutes();
-
       if (slotStart >= startMin && slotStart < endMin) {
         slots.push(i);
       }
@@ -120,15 +106,14 @@
     if (!window.scheduleAssignments[bunk])
       window.scheduleAssignments[bunk] = new Array(window.unifiedTimes.length);
 
-    if (!value || value.toUpperCase() === "CLEAR" || value.toUpperCase() === "FREE") {
+    if (value === "" || value.toUpperCase() === "CLEAR" || value.toUpperCase() === "FREE") {
       slots.forEach((idx, i) => {
         window.scheduleAssignments[bunk][idx] = {
           field: "Free",
           sport: null,
           continuation: i > 0,
           _fixed: true,
-          _activity: "Free",
-          _category: "General Activity"
+          _activity: "Free"
         };
       });
     } else {
@@ -138,8 +123,7 @@
           sport: null,
           continuation: i > 0,
           _fixed: true,
-          _activity: value,
-          _category: "General Activity"
+          _activity: value
         };
       });
     }
@@ -148,9 +132,33 @@
     updateTable();
   }
 
-  // ========================================================================
-  // SLOT HELPERS
-  // ========================================================================
+  // ==========================================================================
+  // GET ENTRY (for one bunk, one slot)
+  // ==========================================================================
+  function getEntry(bunk, slotIndex) {
+    const a = window.scheduleAssignments || {};
+    if (!a[bunk]) return null;
+    return a[bunk][slotIndex] || null;
+  }
+
+  function formatEntry(entry) {
+    if (!entry) return "";
+
+    if (entry._isDismissal) return "Dismissal";
+    if (entry._isSnack) return "Snacks";
+
+    const label = entry._activity || entry.field || "";
+
+    if (entry._h2h) return entry.sport || "League Game";
+    if (entry._fixed) return label;
+
+    if (entry.sport) return `${entry.field} – ${entry.sport}`;
+    return label;
+  }
+
+  // ==========================================================================
+  // FIND FIRST SLOT FOR TIME
+  // ==========================================================================
   function findFirstSlotForTime(startMin) {
     if (!window.unifiedTimes) return -1;
 
@@ -165,18 +173,18 @@
     return -1;
   }
 
-  // ========================================================================
-  // MAIN TABLE RENDERER
-  // ========================================================================
+  // ==========================================================================
+  // MAIN RENDER FUNCTION
+  // ==========================================================================
   function updateTable() {
     const container = document.getElementById("scheduleTable");
     if (!container) return;
     renderStaggeredView(container);
   }
 
-  // ========================================================================
-  // STAGGERED VIEW RENDERING
-  // ========================================================================
+  // ==========================================================================
+  // RENDER STAGGERED DAILY SCHEDULE
+  // ==========================================================================
   function renderStaggeredView(container) {
     container.innerHTML = "";
 
@@ -199,23 +207,19 @@
       const bunks = (divisions[div]?.bunks || []).slice().sort();
       if (bunks.length === 0) return;
 
-      // Create table for this division
       const table = document.createElement("table");
       table.className = "schedule-division-table";
 
-      // Header
       const thead = document.createElement("thead");
       const tr1 = document.createElement("tr");
-
-      const head = document.createElement("th");
-      head.colSpan = 1 + bunks.length;
-      head.textContent = div;
-      head.style.background = divisions[div]?.color || "#444";
-      head.style.color = "#fff";
-      tr1.appendChild(head);
+      const th = document.createElement("th");
+      th.colSpan = 1 + bunks.length;
+      th.textContent = div;
+      th.style.background = divisions[div]?.color || "#444";
+      th.style.color = "#fff";
+      tr1.appendChild(th);
       thead.appendChild(tr1);
 
-      // Bunk header row
       const tr2 = document.createElement("tr");
       const thTime = document.createElement("th");
       thTime.textContent = "Time";
@@ -230,10 +234,9 @@
       thead.appendChild(tr2);
       table.appendChild(thead);
 
-      // Body
       const tbody = document.createElement("tbody");
 
-      // Flatten skeleton blocks
+      // Filter blocks for this division
       const blocks = manualSkeleton
         .filter((b) => b.division === div)
         .map((b) => ({
@@ -244,7 +247,7 @@
         .filter((b) => b.startMin !== null && b.endMin !== null)
         .sort((a, b) => a.startMin - b.startMin);
 
-      // Flatten split blocks
+      // Flatten split blocks at UI level
       const expanded = [];
       blocks.forEach((b) => {
         if (b.type === "split") {
@@ -268,7 +271,7 @@
         }
       });
 
-      // Render each row
+      // Render each block
       expanded.forEach((block) => {
         const tr = document.createElement("tr");
 
@@ -276,26 +279,29 @@
         tdTime.textContent = block.label;
         tr.appendChild(tdTime);
 
-        const slotIdx = findFirstSlotForTime(block.startMin);
-        const firstEntry = slotIdx >= 0 ? getEntry(bunks[0], slotIdx) : null;
-
-        // Detect league row
-        const isLeague = firstEntry && firstEntry._h2h;
-
-        if (isLeague) {
+        // League rows (merged)
+        if (block.event.startsWith("League Game") || block.event.startsWith("Specialty League")) {
           const td = document.createElement("td");
           td.colSpan = bunks.length;
           td.style.background = "#eef7f8";
           td.style.fontWeight = "bold";
 
-          const allMatchups = firstEntry._allMatchups || [];
+          const slotIdx = findFirstSlotForTime(block.startMin);
+          let allMatchups = [];
+
+          if (slotIdx >= 0) {
+            const first = getEntry(bunks[0], slotIdx);
+            if (first && first._allMatchups) {
+              allMatchups = first._allMatchups;
+            }
+          }
+
           if (allMatchups.length === 0) {
-            td.textContent = "League Game";
+            td.textContent = block.event;
           } else {
-            td.innerHTML = `
-              <div>League Matchups</div>
-              <ul>${allMatchups.map(m => `<li>${m}</li>`).join("")}</ul>
-            `;
+            td.innerHTML = `<div>${block.event}</div><ul>${allMatchups
+              .map((m) => `<li>${m}</li>`)
+              .join("")}</ul>`;
           }
 
           tr.appendChild(td);
@@ -303,17 +309,34 @@
           return;
         }
 
-        // NORMAL BLOCK ROW
+        // Regular blocks
+        const isDismissal = block.event.toLowerCase().includes("dismiss");
+        const isSnack = block.event.toLowerCase().includes("snack");
+        const isGeneratedSlot =
+          uiIsGeneratedEventName(block.event) || block.event.includes("/");
+
         bunks.forEach((bunk) => {
           const td = document.createElement("td");
-          const entry = getEntry(bunk, slotIdx);
 
-          const label = formatEntry(entry);
+          let label = block.event;
+          const slotIdx = findFirstSlotForTime(block.startMin);
+
+          if (isDismissal) {
+            label = "Dismissal";
+            td.style.background = "#ffdddd";
+          } else if (isSnack) {
+            label = "Snacks";
+            td.style.background = "#e7ffe7";
+          } else if (!isGeneratedSlot) {
+            td.style.background = "#fff7cc";
+            label = block.event;
+          } else {
+            const entry = getEntry(bunk, slotIdx);
+            label = formatEntry(entry);
+          }
 
           td.textContent = label;
           td.style.cursor = "pointer";
-
-          // Allow manual editing
           td.onclick = () =>
             editCell(bunk, block.startMin, block.endMin, label);
 
@@ -328,20 +351,23 @@
     });
   }
 
-  // ========================================================================
+  // ==========================================================================
   // SAVE / LOAD
-  // ========================================================================
+  // ==========================================================================
   function saveSchedule() {
     window.saveCurrentDailyData?.("scheduleAssignments", window.scheduleAssignments);
     window.saveCurrentDailyData?.("leagueAssignments", window.leagueAssignments);
     window.saveCurrentDailyData?.("unifiedTimes", window.unifiedTimes);
   }
 
-  // Load saved engine output
+  // ==========================================================================
+  // CRITICAL: LOAD SAVED ENGINE OUTPUT INTO GLOBALS
+  // ==========================================================================
   function reconcileOrRenderSaved() {
     try {
       const data = window.loadCurrentDailyData?.() || {};
 
+      // ALWAYS load from saved data (fixes blank UI issue)
       window.scheduleAssignments = data.scheduleAssignments || {};
       window.leagueAssignments = data.leagueAssignments || {};
 
@@ -361,18 +387,14 @@
     updateTable();
   }
 
-  // ========================================================================
-  // INIT
-  // ========================================================================
   function initScheduleSystem() {
     reconcileOrRenderSaved();
   }
 
-  // ========================================================================
+  // ==========================================================================
   // EXPORTS
-  // ========================================================================
+  // ==========================================================================
   window.updateTable = updateTable;
   window.initScheduleSystem = initScheduleSystem;
   window.saveSchedule = saveSchedule;
-
 })();
