@@ -312,76 +312,82 @@
             }
         });
 
-      // =================================================================
-// PASS 2.5 — SMART TILES (SmartTile → Generator jobs FIRST)
-// =================================================================
+     // ======================================================================
+// PASS 2.5 — SMART TILES (NEW: ONLY GENERATOR JOBS, NO FIXED ASSIGNMENT)
+// ======================================================================
 
-let smartJobs = [];
-if (window.SmartLogicAdapter &&
-    typeof window.SmartLogicAdapter.preprocessSmartTiles === "function") {
-    smartJobs = window.SmartLogicAdapter.preprocessSmartTiles(
+let smartGenerationJobs = [];
+
+if (window.SmartLogicAdapter && typeof window.SmartLogicAdapter.preprocessSmartTiles === 'function') {
+    const rawJobs = window.SmartLogicAdapter.preprocessSmartTiles(
         manualSkeleton,
         externalOverrides,
         masterSpecials
     );
-}
 
-// Convert all Smart Tile results into generator blocks.
-// These MUST execute BEFORE leagues and before standard generators.
-// Smart Tile blocks become "forced generator" blocks.
-smartJobs.forEach(job => {
+    rawJobs.forEach(job => {
+        const bunks = divisions[job.division]?.bunks || [];
+        if (!bunks.length) return;
 
-    const bunks = divisions[job.division]?.bunks || [];
-    if (!bunks.length) return;
+        // Adapter decides which bunks get which ACT (special/open)
+        const adapterResult = SmartLogicAdapter.generateAssignments(
+            bunks,
+            job,
+            historicalCounts,
+            specialActivityNames,
+            activityProperties,
+            masterFields,
+            dailyFieldAvailability,
+            yesterdayHistory
+        );
 
-    const adapterResult = SmartLogicAdapter.generateAssignments(
-        bunks,
-        job,
-        historicalCounts,
-        specialActivityNames,
-        activityProperties,
-        masterFields,
-        dailyFieldAvailability,
-        yesterdayHistory
-    );
+        const { block1Assignments, block2Assignments } = adapterResult;
 
-    const { block1Assignments, block2Assignments } = adapterResult;
-    if (!block1Assignments || !block2Assignments) return;
+        //------------------------------------------------------------------
+        // Convert Smart Tile pair into **GENERATOR HINT JOBS**
+        //------------------------------------------------------------------
 
-    // Helper: converts to generator block
-    function pushForcedGenerator(bunk, act, startMin, endMin) {
-        const slots = findSlotsForRange(startMin, endMin);
-        schedulableSlotBlocks.push({
-            divName: job.division,
-            bunk,
-            event: "SMART_GENERATOR",  // unified event type
-            startTime: startMin,
-            endTime: endMin,
-            slots,
-            smart: true,
-            smartType: act.includes("special")
-                ? "special"
-                : (act.includes("sport") ? "sport" : "general"),
-            forceGenerator: true
+        bunks.forEach(bunk => {
+            // BLOCK A JOB
+            smartGenerationJobs.push({
+                type: "smart",
+                division: job.division,
+                bunk,
+                event: "SMART_GENERATION",
+                startTime: job.blockA.startMin,
+                endTime: job.blockA.endMin,
+                slots: findSlotsForRange(job.blockA.startMin, job.blockA.endMin),
+
+                smartHint: {
+                    forcedAct: block1Assignments[bunk], // e.g. "Special", "Sport", "General", or fallback
+                    fallback: job.fallbackActivity,
+                    main1: job.main1,
+                    main2: job.main2
+                }
+            });
+
+            // BLOCK B job (if there is a second tile)
+            if (job.blockB) {
+                smartGenerationJobs.push({
+                    type: "smart",
+                    division: job.division,
+                    bunk,
+                    event: "SMART_GENERATION",
+                    startTime: job.blockB.startMin,
+                    endTime: job.blockB.endMin,
+                    slots: findSlotsForRange(job.blockB.startMin, job.blockB.endMin),
+
+                    smartHint: {
+                        forcedAct: block2Assignments[bunk],
+                        fallback: job.fallbackActivity,
+                        main1: job.main1,
+                        main2: job.main2
+                    }
+                });
+            }
         });
-    }
-
-    // -----------------------------
-    // BLOCK A (first half)
-    // -----------------------------
-    Object.entries(block1Assignments).forEach(([bunk, act]) => {
-        pushForcedGenerator(bunk, act.toLowerCase(), job.blockA.startMin, job.blockA.endMin);
     });
-
-    // -----------------------------
-    // BLOCK B (second half)
-    // -----------------------------
-    if (job.blockB) {
-        Object.entries(block2Assignments).forEach(([bunk, act]) => {
-            pushForcedGenerator(bunk, act.toLowerCase(), job.blockB.startMin, job.blockB.endMin);
-        });
-    }
-});
+}
 
 
         // =================================================================
@@ -870,48 +876,50 @@ smartJobs.forEach(job => {
             }
         });
 
-    // =================================================================
-// PASS 4 — Remaining Schedulable Slots (Smart Tiles FIRST)
-// =================================================================
+    // ======================================================================
+// PASS 4 — UNIFIED GENERATOR (Smart First + Doubling + No Frees)
+// ======================================================================
 
-// SORT: Smart tiles → everything else
-remainingBlocks.sort((a, b) => {
-    const aSmart = a.smart === true ? -1 : 0;
-    const bSmart = b.smart === true ? -1 : 0;
-    if (aSmart !== bSmart) return aSmart - bSmart;
-    return a.startTime - b.startTime;
-});
+const generatorJobs = [
+    ...smartGenerationJobs,     // SMART TILE JOBS FIRST
+    ...remainingBlocks          // OTHER GENERATOR JOBS
+];
 
-for (const block of remainingBlocks) {
-    if (!block.slots || block.slots.length === 0) continue;
-    if (!window.scheduleAssignments[block.bunk]) continue;
+for (const job of generatorJobs) {
 
-    // Skip filled
-    if (window.scheduleAssignments[block.bunk][block.slots[0]]) continue;
+    const bunk = job.bunk;
+    if (!window.scheduleAssignments[bunk]) continue;
+    if (window.scheduleAssignments[bunk][job.slots[0]]) continue;
 
+    const isSmart = (job.event === "SMART_GENERATION");
     let pick = null;
 
-    // ==============================================================
-    // SMART TILE GENERATION (Before everything else)
-    // ==============================================================
-    if (block.smart === true || block.forceGenerator === true) {
+    //------------------------------------------------------------------
+    // 1. SMART TILE PRIORITY LOGIC
+    //------------------------------------------------------------------
+    if (isSmart) {
+        const hint = job.smartHint || {};
+        const forced = hint.forcedAct?.toLowerCase() || "";
 
-        if (block.smartType === "special") {
+        // A) Force try SPECIAL if adapter says so
+        if (forced.includes("special")) {
             pick = window.findBestSpecial?.(
-                block,
+                job,
                 allActivities,
                 fieldUsageBySlot,
                 yesterdayHistory,
                 activityProperties,
                 rotationHistory,
                 divisions,
-                historicalCounts
+                historicalCounts,
+                { smartMode: true } // NEW: tells the generator to not count fallback
             );
         }
 
-        else if (block.smartType === "sport") {
+        // B) If special failed or wasn't forced — try SPORTS
+        if (!pick && forced.includes("sport")) {
             pick = window.findBestSportActivity?.(
-                block,
+                job,
                 allActivities,
                 fieldUsageBySlot,
                 yesterdayHistory,
@@ -922,9 +930,62 @@ for (const block of remainingBlocks) {
             );
         }
 
+        // C) Try General if needed
+        if (!pick && forced.includes("general")) {
+            pick = window.findBestGeneralActivity?.(
+                job,
+                allActivities,
+                h2hActivities,
+                fieldUsageBySlot,
+                yesterdayHistory,
+                activityProperties,
+                rotationHistory,
+                divisions,
+                historicalCounts
+            );
+        }
+
+        // D) Try fallback if needed
+        if (!pick && hint.fallback) {
+            pick = {
+                field: hint.fallback,
+                sport: null,
+                _activity: hint.fallback
+            };
+        }
+    }
+
+    //------------------------------------------------------------------
+    // 2. NORMAL JOBS OR SMART FALLBACK
+    //------------------------------------------------------------------
+    if (!pick) {
+        if (job.event === 'Special Activity Slot') {
+            pick = window.findBestSpecial?.(
+                job,
+                allActivities,
+                fieldUsageBySlot,
+                yesterdayHistory,
+                activityProperties,
+                rotationHistory,
+                divisions,
+                historicalCounts
+            );
+        }
+        else if (job.event === 'Sports Slot' || job.event === 'Sports') {
+            pick = window.findBestSportActivity?.(
+                job,
+                allActivities,
+                fieldUsageBySlot,
+                yesterdayHistory,
+                activityProperties,
+                rotationHistory,
+                divisions,
+                historicalCounts
+            );
+        }
         else {
             pick = window.findBestGeneralActivity?.(
-                block,
+                job,
                 allActivities,
                 h2hActivities,
                 fieldUsageBySlot,
@@ -935,77 +996,30 @@ for (const block of remainingBlocks) {
                 historicalCounts
             );
         }
-
-        // If no pick found → fallback to GA
-        if (!pick) {
-            pick = window.findBestGeneralActivity?.(
-                block,
-                allActivities,
-                h2hActivities,
-                fieldUsageBySlot,
-                yesterdayHistory,
-                activityProperties,
-                rotationHistory,
-                divisions,
-                historicalCounts
-            );
-        }
-
-        // If still no pick → literal Free
-        if (!pick) pick = { field: "Free", sport: null, _activity: "Free" };
-
-        fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, false);
-        continue;
     }
 
-    // ==============================================================
-    // NORMAL GENERATION (Non-smart)
-    // ==============================================================
+    //------------------------------------------------------------------
+    // 3. DOUBLING-UP PRIORITY
+    //------------------------------------------------------------------
+    pick = window.tryDoubleUp?.(
+        job,
+        pick,
+        allActivities,
+        fieldUsageBySlot,
+        activityProperties
+    ) || pick;
 
-    if (block.event === 'Special Activity' || block.event === 'Special Activity Slot') {
-        pick = window.findBestSpecial?.(
-            block,
-            allActivities,
-            fieldUsageBySlot,
-            yesterdayHistory,
-            activityProperties,
-            rotationHistory,
-            divisions,
-            historicalCounts
-        );
-    }
-
-    else if (block.event === 'Sports Slot' || block.event === 'Sports') {
-        pick = window.findBestSportActivity?.(
-            block,
-            allActivities,
-            fieldUsageBySlot,
-            yesterdayHistory,
-            activityProperties,
-            rotationHistory,
-            divisions,
-            historicalCounts
-        );
-    }
-
-    // fallback → GA
+    //------------------------------------------------------------------
+    // 4. LAST RESORT FREE
+    //------------------------------------------------------------------
     if (!pick) {
-        pick = window.findBestGeneralActivity?.(
-            block,
-            allActivities,
-            h2hActivities,
-            fieldUsageBySlot,
-            yesterdayHistory,
-            activityProperties,
-            rotationHistory,
-            divisions,
-            historicalCounts
-        );
+        pick = { field: "Free", sport: null, _activity: "Free" };
     }
 
-    if (!pick) pick = { field: "Free", sport: null, _activity: "Free" };
-
-    fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, false);
+    //------------------------------------------------------------------
+    // 5. FILL BLOCK (tracks special ONLY when real special was assigned)
+    //------------------------------------------------------------------
+    fillBlock(job, pick, fieldUsageBySlot, yesterdayHistory);
 }
 
         // =================================================================
