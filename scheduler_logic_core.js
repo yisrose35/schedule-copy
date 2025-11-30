@@ -990,7 +990,7 @@ for (const block of allGeneratorBlocks) {
     fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, false);
 }
 
-        // =================================================================
+       // =================================================================
 // PASS 5 — Update Rotation History
 // =================================================================
 try {
@@ -999,6 +999,7 @@ try {
 
     availableDivisions.forEach(divName => {
         (divisions[divName]?.bunks || []).forEach(bunk => {
+
             const schedule = window.scheduleAssignments[bunk] || [];
             let lastActivity = null;
 
@@ -1009,17 +1010,16 @@ try {
                     const activityName = entry._activity;
                     lastActivity = activityName;
 
-                    // ensure bucket exists
                     historyToSave.bunks[bunk] =
                         historyToSave.bunks[bunk] || {};
 
                     historyToSave.bunks[bunk][activityName] = timestamp;
 
-                    // League H2H tracking
+                    // League tracking
                     if (entry._h2h &&
                         activityName !== "League" &&
                         activityName !== "No Game") {
-                        
+
                         const leagueEntry = Object.entries(masterLeagues).find(
                             ([name, l]) =>
                                 l.enabled &&
@@ -1036,7 +1036,6 @@ try {
                     }
                 }
 
-                // Reset activity sequence on boundaries
                 else if (entry && !entry.continuation) {
                     lastActivity = null;
                 }
@@ -1051,7 +1050,7 @@ try {
     console.error("Smart Scheduler: Failed to update rotation history.", e);
 }
 
-// FINAL SAVE + RETURN
+// FINAL SAVE
 window.saveCurrentDailyData?.("unifiedTimes", window.unifiedTimes);
 window.updateTable?.();
 window.saveSchedule?.();
