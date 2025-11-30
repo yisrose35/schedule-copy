@@ -1,11 +1,14 @@
 // ============================================================================
-// SmartLogicAdapter V28
-// - EVEN SPREAD UPGRADE: Added a "Total History" tie-breaker.
-//   If two bunks are tied for the specific activity (e.g. both 0 Tennis),
-//   the one with LESS total history (across all sports/specials) wins.
-// - ROBUST BUCKETING: "Tennis" counts as "Sports". "Art" counts as "Special".
-//   Prevents kids from hopping between categories daily while others get nothing.
-// - PAIRING & CAPACITY: Retains V27 logic for A/B blocks and dynamic summing.
+// SmartLogicAdapter V29
+// - TIERED FAIRNESS (STREAK BREAKER): 
+//   Introduced "Banded" sorting. Instead of strict A < B, we treat counts
+//   within a small range (e.g., 0 vs 1) as EQUAL and use a random tie-breaker.
+//   This prevents the same bunk from winning Block 1 four days in a row just
+//   to "catch up" by 1 point.
+// - BAND WIDTHS:
+//   * Activity History: Bands of 2 (0-1, 2-3, etc. are ties).
+//   * Total History: Bands of 4 (Breaks ties based on general fairness).
+// - ROBUST CATEGORIES: Retains V28's "Sports" vs "Special" grouping.
 // ============================================================================
 
 (function () {
@@ -159,7 +162,6 @@
             // HISTORY & FAIRNESS LOGIC (UPGRADED)
             // --------------------------------------------------------
             
-            // Helper: Get counts for the SPECIFIC category (Sports vs Special)
             const getCategoryHistory = (bunk, activityName) => {
                 if (!historical[bunk]) return 0;
                 
@@ -167,13 +169,11 @@
                 const lowerName = activityName.toLowerCase();
                 const allSpecials = window.getGlobalSpecialActivities ? window.getGlobalSpecialActivities() : [];
 
-                // Detect Type
                 const isSpecialType = 
                     specialNames.includes(activityName) || 
                     allSpecials.some(s => isSameActivity(s.name, activityName)) ||
                     lowerName.includes('special');
 
-                // It is a sport if it matches masterFields OR has 'sport' in name
                 const isSportType = 
                     !isSpecialType && (
                         lowerName.includes('sport') ||
@@ -181,72 +181,68 @@
                     );
 
                 if (isSpecialType) {
-                    // Sum ALL special activities
                     allSpecials.forEach(s => {
                         if (historical[bunk][s.name]) sum += historical[bunk][s.name];
                     });
                     if (historical[bunk]["Special Activity"]) sum += historical[bunk]["Special Activity"];
                     if (historical[bunk]["Special Activity Slot"]) sum += historical[bunk]["Special Activity Slot"];
-                    // Catch-all for specific name
                     if (historical[bunk][activityName]) sum += historical[bunk][activityName];
                 } 
                 else if (isSportType) {
-                    // Sum ALL sports
                     masterFields.forEach(f => {
                         if (historical[bunk][f.name]) sum += historical[bunk][f.name];
                     });
                     if (historical[bunk]["Sports"]) sum += historical[bunk]["Sports"];
                     if (historical[bunk]["Sports Slot"]) sum += historical[bunk]["Sports Slot"];
-                    // Catch-all
                     if (historical[bunk][activityName] && !masterFields.some(f => isSameActivity(f.name, activityName))) {
                          sum += historical[bunk][activityName];
                     }
                 } 
                 else {
-                    // Exact Match Only (Unknown category)
                     if (historical[bunk][activityName]) sum += historical[bunk][activityName];
                 }
-
                 return sum;
             };
 
-            // Helper: Get TOTAL history of "Good Stuff" (Tie-Breaker)
-            // This ensures if Bunk A got Tennis (Sport) and Bunk B got nothing, Bunk B wins the Art (Special) slot.
             const getTotalHistory = (bunk) => {
                 if (!historical[bunk]) return 0;
                 let total = 0;
-                
-                // Sum generic buckets
                 if (historical[bunk]["Sports"]) total += historical[bunk]["Sports"];
                 if (historical[bunk]["Special Activity"]) total += historical[bunk]["Special Activity"];
-                
-                // Sum all known sports
                 masterFields.forEach(f => {
                     if (historical[bunk][f.name]) total += historical[bunk][f.name];
                 });
-                
-                // Sum all known specials
                 const allSpecials = window.getGlobalSpecialActivities ? window.getGlobalSpecialActivities() : [];
                 allSpecials.forEach(s => {
                     if (historical[bunk][s.name]) total += historical[bunk][s.name];
                 });
-
                 return total;
             };
 
-            // SORT: 1. Category Count -> 2. Total Count -> 3. Random
+            // SORT: 1. Category Count (TIERED) -> 2. Total Count (TIERED) -> 3. Random
+            // This prevents the "Sticky Winner" problem.
             const sortedBunks = [...bunks].sort((a, b) => {
-                // Priority 1: Have you done THIS specific type of thing?
                 const catA = getCategoryHistory(a, specialAct);
                 const catB = getCategoryHistory(b, specialAct);
-                if (catA !== catB) return catA - catB;
                 
-                // Priority 2: Have you done ANYTHING cool recently? (Spread the wealth)
+                // TIER 1: Activity Fairness (Band size: 2)
+                // Treat 0 and 1 as equal. Treat 2 and 3 as equal.
+                // This stops 0 from beating 1 100% of the time, allowing for rotation.
+                const bandCat = 2;
+                const diffCat = Math.floor(catA / bandCat) - Math.floor(catB / bandCat);
+                if (diffCat !== 0) return diffCat;
+                
+                // TIER 2: Global Fairness (Band size: 4)
+                // If activity history is "tied" (fuzzy), look at total history.
+                // Treat 20, 21, 22, 23 as equal.
                 const totA = getTotalHistory(a);
                 const totB = getTotalHistory(b);
-                if (totA !== totB) return totA - totB;
+                const bandTot = 4;
+                const diffTot = Math.floor(totA / bandTot) - Math.floor(totB / bandTot);
+                if (diffTot !== 0) return diffTot;
 
-                // Priority 3: Random Shuffle
+                // TIER 3: Coin Flip
+                // If both are in the same fairness bands, randomize it.
                 return 0.5 - Math.random();
             });
 
@@ -257,7 +253,6 @@
             const block1 = {};
             const block2 = {};
             const bunksWhoGotSpecialInB1 = new Set();
-            const bunksWhoGotOpenInB1 = new Set();
             
             // 3. Block 1 Assignment
             const capA = calculateCapacityForBlock(job.blockA.startMin, job.blockA.endMin);
@@ -271,7 +266,6 @@
                     countB1++;
                 } else {
                     block1[bunk] = openAct;
-                    bunksWhoGotOpenInB1.add(bunk);
                 }
             }
 
@@ -285,7 +279,8 @@
                 const mustSwapToOpen = [];
                 const candidatesForSpecial = [];
 
-                // Sort candidates by the SAME fairness logic
+                // Strict Rotation for Block 2: 
+                // B1 winners go to back of line. Everyone else fights for B2 spots.
                 sortedBunks.forEach(bunk => {
                     if (bunksWhoGotSpecialInB1.has(bunk)) {
                         mustSwapToOpen.push(bunk);
