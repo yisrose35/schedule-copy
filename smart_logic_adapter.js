@@ -1,129 +1,14 @@
 // ============================================================================
-// SmartLogicAdapter V33
-// (PERFECT ROTATION + CORRECT SPECIAL COUNTING + BULLET-PROOF LOGIC)
-// ----------------------------------------------------------------------------
-// NEW IN V33:
-//   • Only increment history for TRUE specialAct assignments.
-//   • Never increment history for fallback or openAct.
-//   • Per-division rotation (does not mix grades).
-//   • Safe yesterday-activity check (never crashes).
-//   • Deterministic + fair sorting.
-//   • Fully compatible with V30–V32 scheduler logic.
+// SmartLogicAdapter V35
+// - SPECIAL COUNTS IGNORE FALLBACKS
+// - USES SPECIFIC SPECIAL NAME (Gameroom, Canteen, etc)
+// - LOCKED EVENTS so Core CANNOT overwrite Smart Tile results
+// - STRICT ROTATION: Perfect fairness, yesterday penalty, true history awareness
+// - Writes pre-history into __smartTileToday for scheduler core
 // ============================================================================
 
-(function () {
+(function() {
     "use strict";
-
-    // ==============================================================
-    // ROTATION STORAGE
-    // ==============================================================
-
-    const ROTATION_KEY = "smartTileSpecialHistory_v1";
-
-    function loadRotation() {
-        try {
-            const raw = localStorage.getItem(ROTATION_KEY);
-            return raw ? JSON.parse(raw) : {};
-        } catch {
-            return {};
-        }
-    }
-
-    function saveRotation(hist) {
-        try {
-            localStorage.setItem(ROTATION_KEY, JSON.stringify(hist));
-        } catch {}
-    }
-
-    function addSpecialPoint(hist, division, bunk, act) {
-        if (!hist[division]) hist[division] = {};
-        if (!hist[division][bunk]) hist[division][bunk] = {};
-        if (!hist[division][bunk][act]) hist[division][bunk][act] = 0;
-
-        hist[division][bunk][act] += 1;
-    }
-
-    function getSpecialPoints(hist, division, bunk, act) {
-        if (!hist[division]) return 0;
-        if (!hist[division][bunk]) return 0;
-        return hist[division][bunk][act] || 0;
-    }
-
-    // ==============================================================
-    // HELPERS
-    // ==============================================================
-
-    function parse(str) {
-        if (!str) return 0;
-        let s = str.trim().toLowerCase();
-        let am = s.endsWith("am");
-        let pm = s.endsWith("pm");
-        s = s.replace(/am|pm/g, "").trim();
-        const [h, m] = s.split(":").map(Number);
-        let hh = h;
-        if (pm && h !== 12) hh += 12;
-        if (am && h === 12) hh = 0;
-        return hh * 60 + (m || 0);
-    }
-
-    function isSameActivity(a, b) {
-        return (
-            a &&
-            b &&
-            a.trim().toLowerCase() === b.trim().toLowerCase()
-        );
-    }
-
-    function isTimeAvailable(startMin, endMin, baseAvail, rules = []) {
-        if (!rules || rules.length === 0) return baseAvail !== false;
-
-        const parsed = rules.map(r => ({
-            type: r.type,
-            s: parse(r.start),
-            e: parse(r.end)
-        }));
-
-        let available = !parsed.some(r => r.type === "Available");
-
-        for (const r of parsed) {
-            if (r.type === "Available") {
-                if (startMin >= r.s && endMin <= r.e) available = true;
-            }
-        }
-
-        for (const r of parsed) {
-            if (r.type === "Unavailable") {
-                if (startMin < r.e && endMin > r.s) available = false;
-            }
-        }
-
-        return available;
-    }
-
-    // BULLET-PROOF YESTERDAY CHECK
-    function safeDidPlayYesterday(bunk, yesterdayHistory, specialNames) {
-        const sched = yesterdayHistory?.schedule?.[bunk];
-        if (!Array.isArray(sched)) return 0;
-
-        return sched.some(entry => {
-            if (!entry || typeof entry !== "object") return false;
-            const raw = entry._activity;
-            if (!raw || typeof raw !== "string") return false;
-
-            const act = raw.toLowerCase();
-
-            return (
-                act.includes("special") ||
-                act.includes("sport") ||
-                act.includes("general activity") ||
-                specialNames.includes(raw)
-            );
-        }) ? 1 : 0;
-    }
-
-    // ==============================================================
-    // PUBLIC EXPORT
-    // ==============================================================
 
     window.SmartLogicAdapter = {
 
@@ -137,191 +22,250 @@
             );
         },
 
-        preprocessSmartTiles(rawSkeleton) {
-            const jobs = {};
+        // Groups smart tiles into pairs
+        preprocessSmartTiles(rawSkeleton, dailyAdj, specials) {
+            const jobs = [];
             const byDiv = {};
 
             rawSkeleton.forEach(t => {
-                if (t.type === "smart") {
+                if (t.type === 'smart') {
                     if (!byDiv[t.division]) byDiv[t.division] = [];
                     byDiv[t.division].push(t);
                 }
             });
 
             Object.keys(byDiv).forEach(div => {
-                jobs[div] = [];
                 const tiles = byDiv[div].sort((a, b) => parse(a.startTime) - parse(b.startTime));
+                for (let i=0; i<tiles.length; i+=2) {
+                    const A = tiles[i];
+                    const B = tiles[i+1];
+                    const sd = A.smartData || {};
 
-                for (let i = 0; i < tiles.length; i += 2) {
-                    const tA = tiles[i];
-                    const tB = tiles[i + 1];
-                    const sd = tA.smartData || {};
-
-                    jobs[div].push({
-                        division: div,
-                        main1: sd.main1,
-                        main2: sd.main2,
-                        fallbackFor: sd.fallbackFor,
-                        fallbackActivity: sd.fallbackActivity,
-                        blockA: { startMin: parse(tA.startTime), endMin: parse(tA.endTime) },
-                        blockB: tB ? { startMin: parse(tB.startTime), endMin: parse(tB.endTime) } : null
-                    });
+                    if (!B) {
+                        jobs.push({
+                            division: div,
+                            main1: sd.main1,
+                            main2: sd.main2,
+                            fallbackFor: sd.fallbackFor,
+                            fallbackActivity: sd.fallbackActivity,
+                            blockA: { startMin: parse(A.startTime), endMin: parse(A.endTime), division: div },
+                            blockB: null
+                        });
+                    } else {
+                        jobs.push({
+                            division: div,
+                            main1: sd.main1,
+                            main2: sd.main2,
+                            fallbackFor: sd.fallbackFor,
+                            fallbackActivity: sd.fallbackActivity,
+                            blockA: { startMin: parse(A.startTime), endMin: parse(A.endTime), division: div },
+                            blockB: { startMin: parse(B.startTime), endMin: parse(B.endTime), division: div }
+                        });
+                    }
                 }
             });
 
-            return Object.values(jobs).flat();
+            return jobs;
         },
 
-        // ==============================================================
-        // MAIN ROTATION + ASSIGNMENT LOGIC (V33)
-        // ==============================================================
+        // ---------------------------------------------------------
+        // GENERATE PERFECTLY FAIR ASSIGNMENTS (V35)
+        // ---------------------------------------------------------
+        generateAssignments(bunks, job, historical={}, specialNames=[], activityProps={}, masterFields=[], dailyFieldAvailability={}, yesterdayHistory={}) {
 
-        generateAssignments(bunks, job, historical = {}, specialNames = [], activityProperties = {}, masterFields = [], dailyFieldAvailability = {}, yesterdayHistory = {}) {
-
-            const division = job.division;
-
-            let specialAct = job.main1.trim();
-            let openAct = job.main2.trim();
-            const fallbackFor = job.fallbackFor?.trim();
+            const main1 = job.main1.trim();
+            const main2 = job.main2.trim();
             const fbAct = job.fallbackActivity || "Sports";
 
-            // Pick which main becomes the SPECIAL
-            if (isSameActivity(fallbackFor, job.main2)) {
-                specialAct = job.main2;
-                openAct = job.main1;
+            // Identify the Special Act (LIMITED capacity)
+            const fbFor = job.fallbackFor || "";
+            let specialAct, openAct;
+
+            if (isSame(main1, fbFor)) {
+                specialAct = main1; openAct = main2;
+            } else if (isSame(main2, fbFor)) {
+                specialAct = main2; openAct = main1;
+            } else {
+                // Default
+                specialAct = main1;
+                openAct = main2;
             }
 
-            // LOAD rotation per division
-            const rotHist = loadRotation();
+            // ---------------------------------------------------------
+            // Yesterday Check (V35: specific special)
+            // ---------------------------------------------------------
+            const allSpecials = window.getGlobalSpecialActivities ? window.getGlobalSpecialActivities() : [];
 
-            // ----------------------------------------------------------
-            // CAPACITY LOGIC
-            // ----------------------------------------------------------
-            function calcCapacity(startMin, endMin) {
-                let total = 0;
-                const lower = specialAct.toLowerCase();
+            function playedYesterday(bunk) {
+                const sched = yesterdayHistory.schedule?.[bunk] || [];
+                return sched.some(e => {
+                    const act = (e?._activity || "").toLowerCase();
+                    return allSpecials.some(s => s.name.toLowerCase() === act);
+                }) ? 1 : 0;
+            }
 
-                const getCap = r => {
-                    if (r.sharableWith?.capacity) return parseInt(r.sharableWith.capacity) || 1;
-                    if (r.sharableWith?.type === "not_sharable") return 1;
-                    if (r.sharableWith?.type === "all") return 2;
-                    if (r.sharable) return 2;
-                    return 1;
-                };
+            // ---------------------------------------------------------
+            // Category History — fallback DOES NOT count
+            // ---------------------------------------------------------
+            function getCategoryHistory(bunk, actName) {
+                if (!historical[bunk]) return 0;
+                let sum = 0;
 
-                if (lower.includes("sport")) {
-                    masterFields.forEach(f => {
-                        const rules = dailyFieldAvailability[f.name] || f.timeRules;
-                        if (isTimeAvailable(startMin, endMin, f.available, rules)) {
-                            total += getCap(f);
-                        }
-                    });
-                } else {
-                    const allSpecials = window.getGlobalSpecialActivities?.() || [];
+                const lower = actName.toLowerCase();
+
+                // Count ONLY true special names
+                const spec = allSpecials.some(s => s.name.toLowerCase() === lower);
+
+                if (spec) {
                     allSpecials.forEach(s => {
-                        const rules = dailyFieldAvailability[s.name] || s.timeRules;
-                        if (isTimeAvailable(startMin, endMin, s.available, rules)) {
-                            total += getCap(s);
+                        if (historical[bunk][s.name]) {
+                            sum += historical[bunk][s.name];
                         }
                     });
                 }
 
-                return total;
+                return sum;
             }
 
-            // ----------------------------------------------------------
-            // SORTING PRIORITY (V33)
-            // ----------------------------------------------------------
-            const sorted = [...bunks].sort((a, b) => {
+            // ---------------------------------------------------------
+            // Total History (fairness)
+            // ---------------------------------------------------------
+            function getTotalHistory(bunk) {
+                if (!historical[bunk]) return 0;
+                return Object.values(historical[bunk]).reduce((a,b)=>a+b,0);
+            }
 
-                // (1) Rotation FIRST
-                const rA = getSpecialPoints(rotHist, division, a, specialAct);
-                const rB = getSpecialPoints(rotHist, division, b, specialAct);
-                if (rA !== rB) return rA - rB;
+            // ---------------------------------------------------------
+            // Sort bunks by strict fairness
+            // ---------------------------------------------------------
+            const sorted = [...bunks].sort((a,b) => {
+                const A = getCategoryHistory(a, specialAct);
+                const B = getCategoryHistory(b, specialAct);
+                if (A !== B) return A-B;
 
-                // (2) Yesterday penalty
-                const yA = safeDidPlayYesterday(a, yesterdayHistory, specialNames);
-                const yB = safeDidPlayYesterday(b, yesterdayHistory, specialNames);
-                if (yA !== yB) return yA - yB;
+                const YA = playedYesterday(a);
+                const YB = playedYesterday(b);
+                if (YA !== YB) return YA - YB;
 
-                // (3) Total fairness fallback
-                const tA = historical[a]?.total || 0;
-                const tB = historical[b]?.total || 0;
-                if (tA !== tB) return tA - tB;
+                const TA = getTotalHistory(a);
+                const TB = getTotalHistory(b);
+                if (TA !== TB) return TA-TB;
 
-                // (4) Random tie-breaker
-                return 0.5 - Math.random();
+                return Math.random() - 0.5;
             });
 
-            // ----------------------------------------------------------
-            // BLOCK ASSIGNMENTS (V33 counting rules)
-            // ----------------------------------------------------------
+            // ---------------------------------------------------------
+            // Determine Capacity of Special for the block
+            // ---------------------------------------------------------
+            function calcCap(startMin, endMin) {
+                // Specific special
+                const sp = allSpecials.find(s => isSame(s.name, specialAct));
+                if (!sp) return 2; // default
 
-            const block1 = {};
-            const block2 = {};
-            const specialA = new Set();
-
-            // ----- BLOCK A
-            const capA = calcCapacity(job.blockA.startMin, job.blockA.endMin);
-            let usedA = 0;
-
-            for (const bunk of sorted) {
-                if (usedA < capA) {
-                    block1[bunk] = specialAct;
-
-                    // ⭐ V33: only increment when exactly specialAct
-                    if (isSameActivity(block1[bunk], specialAct)) {
-                        addSpecialPoint(rotHist, division, bunk, specialAct);
-                    }
-
-                    specialA.add(bunk);
-                    usedA++;
-                } else {
-                    block1[bunk] = openAct;  // openAct NEVER counts
-                }
+                // sharable capacity logic
+                if (sp.sharableWith?.capacity) return parseInt(sp.sharableWith.capacity);
+                if (sp.sharableWith?.type === 'not_sharable') return 1;
+                if (sp.sharableWith?.type === 'all') return 2;
+                if (sp.sharable) return 2;
+                return 1;
             }
 
-            // ----- BLOCK B
+            // ---------------------------------------------------------
+            // Block A assignment
+            // ---------------------------------------------------------
+            const capA = calcCap(job.blockA.startMin, job.blockA.endMin);
+            let countA = 0;
+            const block1 = {};
+            const winnersA = new Set();
+
+            sorted.forEach(bunk => {
+                if (countA < capA) {
+                    block1[bunk] = specialAct;
+                    winnersA.add(bunk);
+                    countA++;
+                } else {
+                    block1[bunk] = openAct;
+                }
+            });
+
+            // ---------------------------------------------------------
+            // Block B assignment
+            // ---------------------------------------------------------
+            const block2 = {};
             if (job.blockB) {
-                const capB = calcCapacity(job.blockB.startMin, job.blockB.endMin);
-                let usedB = 0;
+                const capB = calcCap(job.blockB.startMin, job.blockB.endMin);
+                let countB = 0;
 
-                const mustOpen = [];
-                const candidates = [];
+                const candidates = sorted.filter(b => !winnersA.has(b));
+                const forcedOpen = [...winnersA];
 
-                sorted.forEach(b => {
-                    if (specialA.has(b)) mustOpen.push(b);
-                    else candidates.push(b);
-                });
-
-                mustOpen.forEach(b => block2[b] = openAct);
+                forcedOpen.forEach(b => block2[b] = openAct);
 
                 candidates.forEach(b => {
-                    if (usedB < capB) {
+                    if (countB < capB) {
                         block2[b] = specialAct;
-
-                        // ⭐ V33: only increment when exactly specialAct
-                        if (isSameActivity(block2[b], specialAct)) {
-                            addSpecialPoint(rotHist, division, b, specialAct);
-                        }
-
-                        usedB++;
+                        countB++;
                     } else {
-                        block2[b] = fbAct; // fallback NEVER counts
+                        block2[b] = fbAct; // fallback does NOT count in fairness
                     }
                 });
             }
 
-            // ----------------------------------------------------------
-            // SAVE rotation
-            // ----------------------------------------------------------
-            saveRotation(rotHist);
+            // ---------------------------------------------------------
+            // Create Locked Events
+            // ---------------------------------------------------------
+            const locked = [];
 
+            function lockBlock(assignments, blockInfo) {
+                Object.entries(assignments).forEach(([bunk, act]) => {
+                    locked.push({
+                        bunk,
+                        division: blockInfo.division,
+                        start: blockInfo.startMin,
+                        end: blockInfo.endMin,
+                        activityLabel: act
+                    });
+                });
+            }
+
+            lockBlock(block1, job.blockA);
+            if (job.blockB) lockBlock(block2, job.blockB);
+
+            // ---------------------------------------------------------
+            // Pre-save history for today so Core Pass 5 can use it
+            // ---------------------------------------------------------
+            window.__smartTileToday = window.__smartTileToday || {};
+            window.__smartTileToday[job.division] = {
+                specialAct,
+                block1,
+                block2
+            };
+
+            // Final return
             return {
                 block1Assignments: block1,
-                block2Assignments: block2
+                block2Assignments: block2,
+                lockedEvents: locked
             };
         }
     };
+
+    // Helpers
+    function parse(str) {
+        if (!str) return 0;
+        let s = str.trim().toLowerCase();
+        let am = s.endsWith("am");
+        let pm = s.endsWith("pm");
+        s = s.replace(/am|pm/g,"").trim();
+        const [h,m] = s.split(":").map(Number);
+        let hh=h;
+        if (pm && h!==12) hh+=12;
+        if (am && h===12) hh=0;
+        return hh*60 + (m||0);
+    }
+    function isSame(a,b){
+        if(!a||!b) return false;
+        return a.trim().toLowerCase()===b.trim().toLowerCase();
+    }
 
 })();
