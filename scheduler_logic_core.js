@@ -892,24 +892,41 @@ smartJobs.forEach(job => {
             }
         });
 
-      // =================================================================
-// PASS 4 — GENERATOR FOR REMAINING BLOCKS (FINAL FIXED VERSION)
+     // =================================================================
+// PASS 4 — GENERATOR FOR REMAINING BLOCKS
 // =================================================================
 
+// Sort blocks by start time to keep order stable
 remainingBlocks.sort((a, b) => a.startTime - b.startTime);
 
 for (const block of remainingBlocks) {
 
-    if (!block.slots || block.slots.length === 0) continue;
-    if (!window.scheduleAssignments[block.bunk]) continue;
+    const bunk = block.bunk;
+    const slots = block.slots;
+    if (!slots || slots.length === 0) continue;
 
-    // If already filled by pinned/adapter/fixed → skip
-    if (window.scheduleAssignments[block.bunk][block.slots[0]]) continue;
+    const firstSlot = slots[0];
 
+    // ----------------------------------------------------------------
+    // SKIP if something already filled this (Pinned, League, Smart Tile)
+    // ----------------------------------------------------------------
+    if (
+        window.scheduleAssignments[bunk] &&
+        window.scheduleAssignments[bunk][firstSlot]
+    ) {
+        // Already filled by Smart Tiles, pinned, or leagues
+        continue;
+    }
+
+    // ----------------------------------------------------------------
+    // PICK ACTIVITY BASED ON EVENT TYPE
+    // ----------------------------------------------------------------
     let pick = null;
 
-    // ---- SPECIAL ACTIVITY ----
-    if (block.event === "Special Activity") {
+    // Special Activity generator
+    if (block.event === "Special Activity" ||
+        block.event === "Special Activity Slot") 
+    {
         pick = window.findBestSpecial?.(
             block,
             allActivities,
@@ -922,8 +939,8 @@ for (const block of remainingBlocks) {
         );
     }
 
-    // ---- SPORTS ----
-    if (!pick && block.event === "Sports Slot") {
+    // Sports generator
+    else if (block.event === "Sports Slot" || block.event === "Sports") {
         pick = window.findBestSportActivity?.(
             block,
             allActivities,
@@ -936,8 +953,8 @@ for (const block of remainingBlocks) {
         );
     }
 
-    // ---- GENERAL ACTIVITY ----
-    if (!pick && block.event === "General Activity Slot") {
+    // General Activity generator
+    else if (block.event === "General Activity Slot") {
         pick = window.findBestGeneralActivity?.(
             block,
             allActivities,
@@ -951,11 +968,27 @@ for (const block of remainingBlocks) {
         );
     }
 
-    // ---- FALLBACK: ALWAYS DO SOMETHING ----
-    if (!pick) {
-        pick = { field: "Free", sport: null, _activity: "Free" };
+    // ----------------------------------------------------------------
+    // VALIDATION — make sure pick can be placed
+    // ----------------------------------------------------------------
+    if (pick && !isPickValidForBlock(block, pick, activityProperties, fieldUsageBySlot)) {
+        pick = null;
     }
 
+    // ----------------------------------------------------------------
+    // FINAL FALLBACK
+    // ----------------------------------------------------------------
+    if (!pick) {
+        pick = {
+            field: "Free",
+            sport: null,
+            _activity: "Free"
+        };
+    }
+
+    // ----------------------------------------------------------------
+    // PLACE THE PICK — fillBlock handles continuation + field usage
+    // ----------------------------------------------------------------
     fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, false);
 }
 
