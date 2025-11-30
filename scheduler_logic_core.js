@@ -313,8 +313,7 @@
         });
 
        // =================================================================
-// PASS 2.5 — SMART TILES AFTER LEAGUES (Direct Fill)
-// Scheduled IMMEDIATELY into scheduleAssignments
+// PASS 2.5 — SMART TILES (Direct Fill but NO field assignment)
 // =================================================================
 
 let smartJobs = [];
@@ -331,7 +330,6 @@ smartJobs.forEach(job => {
     const bunks = divisions[job.division]?.bunks || [];
     if (!bunks.length) return;
 
-    // Get fairness-based activity assignments
     const adapterResult = SmartLogicAdapter.generateAssignments(
         bunks,
         job,
@@ -347,64 +345,64 @@ smartJobs.forEach(job => {
 
     const { block1Assignments, block2Assignments } = adapterResult;
 
-    // Map adapter assignments → generator-friendly event type
-    function mapEvent(act) {
+    function mapActivity(act) {
         const low = act.toLowerCase();
 
         if (low.includes("special"))
-            return { event: "Special Activity Slot", activity: "Special Activity" };
+            return "Special Activity Slot";
 
         if (low.includes("sport"))
-            return { event: "Sports Slot", activity: "Sports Slot" };
+            return "Sports Slot";
 
         if (low.includes("general"))
-            return { event: "General Activity Slot", activity: "General Activity Slot" };
+            return "General Activity Slot";
 
-        return { event: act, activity: act }; // named fixed activity
+        return act; // named fixed activity (does NOT need generator)
     }
 
-    // ------------------------------
-    // BLOCK A — DIRECT FILL
-    // ------------------------------
+    // ===========================
+    // BLOCK A — direct fill (activity only)
+    // ===========================
     const slotsA = findSlotsForRange(job.blockA.startMin, job.blockA.endMin);
 
     Object.entries(block1Assignments).forEach(([bunk, act]) => {
-        const mapped = mapEvent(act);
+        const actName = mapActivity(act);
 
         slotsA.forEach((slotIndex, idx) => {
             window.scheduleAssignments[bunk][slotIndex] = {
-                field: { name: mapped.event },
+                field: null,               // <-- IMPORTANT: NO FIELD YET
                 sport: null,
                 continuation: idx > 0,
                 _fixed: true,
                 _smart: true,
-                _activity: mapped.activity
+                _activity: actName         // <-- ONLY THIS tells generator what to do
             };
         });
     });
 
-    // ------------------------------
-    // BLOCK B — DIRECT FILL
-    // ------------------------------
+    // ===========================
+    // BLOCK B — direct fill (activity only)
+    // ===========================
     if (job.blockB) {
         const slotsB = findSlotsForRange(job.blockB.startMin, job.blockB.endMin);
 
         Object.entries(block2Assignments).forEach(([bunk, act]) => {
-            const mapped = mapEvent(act);
+            const actName = mapActivity(act);
 
             slotsB.forEach((slotIndex, idx) => {
                 window.scheduleAssignments[bunk][slotIndex] = {
-                    field: { name: mapped.event },
+                    field: null,
                     sport: null,
                     continuation: idx > 0,
                     _fixed: true,
                     _smart: true,
-                    _activity: mapped.activity
+                    _activity: actName
                 };
             });
         });
     }
 });
+
 
         // =================================================================
         // PASS 3 — SPECIALTY LEAGUES
