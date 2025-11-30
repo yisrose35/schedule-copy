@@ -1,12 +1,15 @@
 // ============================================================================
-// SmartLogicAdapter V21
+// SmartLogicAdapter V22
 // - PAIRING UPDATE: Treats distinct Smart Tiles as linked pairs (A & B).
 // - SPECIAL DETECTION FIX: Purely based on 'fallbackFor'.
 // - DYNAMIC CAPACITY: Sums capacity of all resources matching the category.
 // - RECALCULATION FIX: Calculates capacity independently for Block A and Block B.
-// - Swap & Fallback logic:
+// - ROTATION FIX: Explicitly prevents repeat assignments of Special/Open.
 //   Block 1: Special fills to cap A, rest get Open.
-//   Block 2: Swap (Ex-Special -> Open), New Candidates -> Special (cap B)/Fallback.
+//   Block 2: 
+//      - Priority 1: Those who had Open in Block 1 get Special (up to cap B).
+//      - Priority 2: Those who had Special in Block 1 get Open.
+//      - Fallback: If Special is full, overflow from Open group gets Fallback.
 // ============================================================================
 
 (function () {
@@ -30,6 +33,8 @@
         preprocessSmartTiles(rawSkeleton, dailyAdj, specials) {
             const jobs = [];
             const tilesByDiv = {};
+            
+            // 1. Group by Division
             rawSkeleton.forEach(t => {
                 if (t.type === 'smart') {
                     if (!tilesByDiv[t.division]) tilesByDiv[t.division] = [];
@@ -37,8 +42,10 @@
                 }
             });
 
+            // 2. Process Pairs
             Object.keys(tilesByDiv).forEach(div => {
                 const tiles = tilesByDiv[div].sort((a, b) => parse(a.startTime) - parse(b.startTime));
+                
                 for (let i = 0; i < tiles.length; i += 2) {
                     const tileA = tiles[i];
                     const tileB = tiles[i + 1]; 
@@ -156,11 +163,14 @@
             const capA = calculateCapacityForBlock(job.blockA.startMin, job.blockA.endMin);
             console.log(`[SmartAdapter] Div: ${job.division} | Block A Cap: ${capA} for ${specialAct}`);
 
-            // 3. Sort bunks by fairness
+            // 3. Sort bunks by fairness (Lowest historical count of SPECIAL goes first)
             const sortedBunks = [...bunks].sort((a, b) => {
                 const countA = historical[a]?.[specialAct] || 0;
                 const countB = historical[b]?.[specialAct] || 0;
                 if (countA !== countB) return countA - countB;
+                // Use a deterministic secondary sort (e.g., bunk name) to ensure stability within a run,
+                // but maybe random is better for true fairness over time? 
+                // Let's stick to random for now to break ties.
                 return 0.5 - Math.random();
             });
 
@@ -172,6 +182,7 @@
             // 4. Block 1 Assignment
             let countB1 = 0;
             for (const bunk of sortedBunks) {
+                // Try to give Special to those who need it most (top of list)
                 if (countB1 < capA) {
                     block1[bunk] = specialAct;
                     bunksWhoGotSpecialInB1.add(bunk);
@@ -184,32 +195,33 @@
 
             // 5. Block 2 Assignment (Only if Block B exists)
             if (job.blockB) {
-                // RECALCULATE CAPACITY FOR BLOCK B
                 const capB = calculateCapacityForBlock(job.blockB.startMin, job.blockB.endMin);
                 console.log(`[SmartAdapter] Div: ${job.division} | Block B Cap: ${capB} for ${specialAct}`);
 
                 let countB2 = 0;
                 
-                // Group 1: People who had Special in B1 -> MUST go to Open (Swap)
-                const groupFromSpecial = sortedBunks.filter(b => bunksWhoGotSpecialInB1.has(b));
-                
-                // Group 2: People who had Open in B1 -> Candidates for Special
+                // Priority Group: Those who DID NOT get Special in Block 1 (i.e., got Open)
+                // They are prioritized for Special in Block 2.
                 const groupFromOpen = sortedBunks.filter(b => bunksWhoGotOpenInB1.has(b));
                 
-                // Assign Group 1 (Swap to Open)
-                for (const bunk of groupFromSpecial) {
-                    block2[bunk] = openAct; 
-                }
-
-                // Assign Group 2 (Fill Special to NEW Capacity, then Fallback)
+                // Secondary Group: Those who DID get Special in Block 1
+                // They must swap to Open.
+                const groupFromSpecial = sortedBunks.filter(b => bunksWhoGotSpecialInB1.has(b));
+                
+                // Assign Group 2 (From Open -> Special / Fallback)
                 for (const bunk of groupFromOpen) {
                     if (countB2 < capB) {
                         block2[bunk] = specialAct;
                         countB2++;
                     } else {
-                        // Overflow -> Fallback
+                        // Overflow -> Fallback (Cannot repeat Open)
                         block2[bunk] = fbAct;
                     }
+                }
+
+                // Assign Group 1 (From Special -> Open)
+                for (const bunk of groupFromSpecial) {
+                    block2[bunk] = openAct; 
                 }
             }
 
@@ -240,7 +252,7 @@
     }
 
     function isTimeAvailable(startMin, endMin, baseAvail, rules = []) {
-        if (!rules.length) return baseAvail !== false;
+        if (!rules || !rules.length) return baseAvail !== false;
         
         const parsedRules = rules.map(r => ({
             type: r.type,
