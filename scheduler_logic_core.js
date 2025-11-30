@@ -1205,7 +1205,8 @@
 
             const limitRules = props.limitUsage;
             if (limitRules && limitRules.enabled) {
-                if (!limitRules.divisions[block.divName]) return false;
+                // Safety check: ensure divisions object exists before accessing
+                if (!limitRules.divisions || !limitRules.divisions[block.divName]) return false;
                 const allowedBunks = limitRules.divisions[block.divName];
                 if (allowedBunks.length > 0 &&
                     block.bunk &&
@@ -1321,7 +1322,8 @@
 
             const limitRules = props.limitUsage;
             if (limitRules && limitRules.enabled) {
-                if (!limitRules.divisions[block.divName]) return false;
+                // Safety check for divisions existence
+                if (!limitRules.divisions || !limitRules.divisions[block.divName]) return false;
             }
 
             const { blockStartMin, blockEndMin } = getBlockTimeRange(block);
@@ -1575,13 +1577,18 @@
                     allowedDivisions = f.sharableWith.divisions.slice();
                 }
 
+                // sanitize limitUsage to always have a divisions object
+                const safeLimitUsage = (f.limitUsage && f.limitUsage.enabled) 
+                    ? { enabled: true, divisions: f.limitUsage.divisions || {} }
+                    : { enabled: false, divisions: {} };
+
                 activityProperties[f.name] = {
                     available: isMasterAvailable,
                     sharable: f.sharableWith?.type === 'all' ||
                               f.sharableWith?.type === 'custom',
                     sharableWith: f.sharableWith,
                     allowedDivisions,
-                    limitUsage: f.limitUsage || { enabled: false, divisions: {} },
+                    limitUsage: safeLimitUsage,
                     preferences: f.preferences ||
                         { enabled: false, exclusive: false, list: [] },
                     timeRules: finalRules
