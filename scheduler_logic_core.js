@@ -312,138 +312,73 @@
             }
         });
 
-        // =================================================================
-        // PASS 2.5 — SMART TILES (Corrected for Special Generation)
-        // =================================================================
+        // ============================================================================
+// PASS 2.5 — SMART TILE ASSIGNMENTS (V35)
+// - Calls SmartLogicAdapter V35
+// - Registers LOCKED events so nothing overwrites Smart Tiles later
+// - Writes exact special names (Gameroom, Archery, etc.)
+// - Updates fieldUsageBySlot AND resource usage
+// ============================================================================
 
-        let smartJobs = [];
-        if (window.SmartLogicAdapter && typeof window.SmartLogicAdapter.preprocessSmartTiles === 'function') {
-            smartJobs = window.SmartLogicAdapter.preprocessSmartTiles(manualSkeleton, externalOverrides, masterSpecials);
+(function() {
+    'use strict';
+
+    window.applySmartTilesV35 = function(skeletonJobs, rotationHistory, yesterdayData) {
+
+        if (!window.SmartLogicAdapter) {
+            console.error("SmartLogicAdapter missing.");
+            return [];
         }
 
-        // 3) Run Adapter for each Smart Tile job
-        smartJobs.forEach(job => {
+        const lockedEvents = [];  // return this to Pass 4
+        const divisions = Object.keys(skeletonJobs);
 
-            const bunks = window.divisions[job.division]?.bunks || [];
-            if (!bunks.length) return;
+        divisions.forEach(div => {
+            const jobs = skeletonJobs[div];
 
-            const adapterResult = SmartLogicAdapter.generateAssignments(
-                bunks,
-                job,
-                historicalCounts,
-                specialActivityNames,
-                activityProperties,   // static limits
-                masterFields,         // capacity from fields
-                dailyFieldAvailability,
-                yesterdayHistory      // <--- NEW: Passed to adapter for Yesterday Penalty
-            );
+            jobs.forEach(job => {
+                const bunksInDiv = window.getBunksOfDivision(job.division);
+                if (!bunksInDiv || bunksInDiv.length === 0) return;
 
-            const { block1Assignments, block2Assignments } = adapterResult;
-            if (!block1Assignments || !block2Assignments) return;
+                // ---- Run FAIRNESS assignment (V35)
+                const { block1Assignments, block2Assignments, lockedEvents: events } =
+                    window.SmartLogicAdapter.generateAssignments(
+                        bunksInDiv,
+                        job,
+                        rotationHistory?.bunks || {},
+                        window.getSpecialNames ? window.getSpecialNames() : [],
+                        window.activityProperties || {},
+                        window.masterFields || [],
+                        window.currentOverrides?.dailyFieldAvailability || {},
+                        yesterdayData || {}
+                    );
 
-            // -----------------------------
-            // Helper to push a generator slot
-            // -----------------------------
-            function pushGenerated(bunk, event, startMin, endMin) {
-                const slots = findSlotsForRange(startMin, endMin);
-                schedulableSlotBlocks.push({
-                    divName: job.division,
-                    bunk,
-                    event,
-                    startTime: startMin,
-                    endTime: endMin,
-                    slots
-                });
-            }
-
-            // -----------------------------
-            // BLOCK A
-            // -----------------------------
-            const slotsA = findSlotsForRange(job.blockA.startMin, job.blockA.endMin);
-
-            Object.entries(block1Assignments).forEach(([bunk, act]) => {
-
-                // SPORTS → generator
-                if (act.toLowerCase().includes("sport")) {
-                    pushGenerated(bunk, "Sports Slot", job.blockA.startMin, job.blockA.endMin);
-                    return;
-                }
-
-                // SPECIAL → **MUST BE A GENERATOR**
-                if (act.toLowerCase().includes("special")) {
-                    pushGenerated(bunk, "Special Activity Slot", job.blockA.startMin, job.blockA.endMin);
-                    return;
-                }
-
-                // GENERAL ACTIVITY → generator
-                if (act.toLowerCase().includes("general activity")) {
-                    pushGenerated(bunk, "General Activity Slot", job.blockA.startMin, job.blockA.endMin);
-                    return;
-                }
-
-                // FIXED / NAMED (swim, lunch, archery, etc)
-                slotsA.forEach((slotIndex, idx) => {
-                    if (!window.scheduleAssignments[bunk]) window.scheduleAssignments[bunk] = [];
-                    if (!window.scheduleAssignments[bunk][slotIndex]) {
-                        window.scheduleAssignments[bunk][slotIndex] = {
-                            field: { name: act },
-                            sport: null,
-                            continuation: (idx > 0),
-                            _fixed: true,
-                            _h2h: false,
-                            vs: null,
-                            _activity: act,
-                            _endTime: job.blockA.endMin
-                        };
-                    }
-                });
-            });
-
-            // -----------------------------
-            // BLOCK B
-            // -----------------------------
-            if (job.blockB) {
-                const slotsB = findSlotsForRange(job.blockB.startMin, job.blockB.endMin);
-
-                Object.entries(block2Assignments).forEach(([bunk, act]) => {
-
-                    // SPORTS → generator
-                    if (act.toLowerCase().includes("sport")) {
-                        pushGenerated(bunk, "Sports Slot", job.blockB.startMin, job.blockB.endMin);
-                        return;
-                    }
-
-                    // SPECIAL → generator
-                    if (act.toLowerCase().includes("special")) {
-                        pushGenerated(bunk, "Special Activity Slot", job.blockB.startMin, job.blockB.endMin);
-                        return;
-                    }
-
-                    // GENERAL ACTIVITY → generator
-                    if (act.toLowerCase().includes("general activity")) {
-                        pushGenerated(bunk, "General Activity Slot", job.blockB.startMin, job.blockB.endMin);
-                        return;
-                    }
-
-                    // FIXED / NAMED
-                    slotsB.forEach((slotIndex, idx) => {
-                        if (!window.scheduleAssignments[bunk]) window.scheduleAssignments[bunk] = [];
-                        if (!window.scheduleAssignments[bunk][slotIndex]) {
-                            window.scheduleAssignments[bunk][slotIndex] = {
-                                field: { name: act },
-                                sport: null,
-                                continuation: (idx > 0),
-                                _fixed: true,
-                                _h2h: false,
-                                vs: null,
-                                _activity: act,
-                                _endTime: job.blockB.endMin
-                            };
-                        }
+                // ---- Register locked events
+                events.forEach(evt => {
+                    lockedEvents.push({
+                        bunk: evt.bunk,
+                        division: evt.division,
+                        startMin: evt.start,
+                        endMin: evt.end,
+                        activity: evt.activityLabel,  // IMPORTANT: actual special name
+                        locked: true                 // flag for Pass 4 + fillBlock
                     });
                 });
-            }
+
+                // ---- PRE-HISTORY injection (so Pass 5 knows who got special today)
+                window.__smartTileToday = window.__smartTileToday || {};
+                window.__smartTileToday[job.division] = {
+                    specialAct: job.main1,  // main1 is actual special (already validated)
+                    block1: block1Assignments,
+                    block2: block2Assignments
+                };
+            });
         });
+
+        return lockedEvents;
+    };
+
+})();
 
         // =================================================================
         // PASS 3 — SPECIALTY LEAGUES
@@ -931,76 +866,45 @@
             }
         });
 
-        // =================================================================
-        // PASS 4 — Remaining Schedulable Slots (The Core Generator)
-        // =================================================================
-        remainingBlocks.sort((a, b) => a.startTime - b.startTime);
+       // ============================================================================
+// PASS 4 — PLACE LOCKED EVENTS (V35)
+// - Smart Tile locked events ALWAYS get scheduled first
+// - Field usage counters updated
+// - Prevents ANY overwriting by later passes
+// ============================================================================
 
-        for (const block of remainingBlocks) {
-            if (!block.slots || block.slots.length === 0) continue;
-            if (!window.scheduleAssignments[block.bunk]) continue;
-            if (window.scheduleAssignments[block.bunk][block.slots[0]]) continue;
+(function() {
+    'use strict';
 
-            let pick = null;
+    window.applyLockedEventsV35 = function(lockedEvents, schedule, fieldUsageBySlot) {
 
-            // Smart tiles converted to 'Sports Slot' or 'Special Activity' land here.
-            if (block.event === 'League Game' || block.event === 'Specialty League') {
-                pick = { field: "Unassigned League", sport: null, _activity: "Free" };
-            } else if (block.event === 'Special Activity' || block.event === 'Special Activity Slot') {
-                pick = window.findBestSpecial?.(
-                    block,
-                    allActivities,
-                    fieldUsageBySlot,
-                    yesterdayHistory,
-                    activityProperties,
-                    rotationHistory,
-                    divisions,
-                    historicalCounts
-                );
-            } else if (block.event === 'Sports Slot' || block.event === 'Sports') {
-                pick = window.findBestSportActivity?.(
-                    block,
-                    allActivities,
-                    fieldUsageBySlot,
-                    yesterdayHistory,
-                    activityProperties,
-                    rotationHistory,
-                    divisions,
-                    historicalCounts
-                );
+        lockedEvents.forEach(evt => {
+            const { bunk, startMin, endMin, activity } = evt;
+
+            // place schedule entry
+            schedule.push({
+                bunk,
+                startMin,
+                endMin,
+                _activity: activity,
+                locked: true
+            });
+
+            // Update field/slot usage if activity maps to a resource
+            const res = window.findResourceForActivity(activity);
+            if (res) {
+                const resName = res.name;
+                for (let t = startMin; t < endMin; t += window.INCREMENT_MINS) {
+                    fieldUsageBySlot[t] = fieldUsageBySlot[t] || {};
+                    fieldUsageBySlot[t][resName] = (fieldUsageBySlot[t][resName] || 0) + 1;
+                }
             }
+        });
 
-            // Fallback to General Activity if no pick yet
-            if (!pick) {
-                pick = window.findBestGeneralActivity?.(
-                    block,
-                    allActivities,
-                    h2hActivities,
-                    fieldUsageBySlot,
-                    yesterdayHistory,
-                    activityProperties,
-                    rotationHistory,
-                    divisions,
-                    historicalCounts
-                );
-            }
+        return schedule;
+    };
 
-            if (pick && !isPickValidForBlock(block, pick, activityProperties, fieldUsageBySlot)) {
-                pick = null;
-            }
-
-            if (pick) {
-                fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, false);
-            } else {
-                fillBlock(
-                    block,
-                    { field: "Free", sport: null, _activity: "Free" },
-                    fieldUsageBySlot,
-                    yesterdayHistory,
-                    false
-                );
-            }
-        }
+})();
 
         // =================================================================
         // PASS 5 — Update Rotation History
@@ -1417,41 +1321,105 @@
         return canBlockFit(block, fname, activityProperties, fieldUsageBySlot, pick._activity);
     }
 
-    function fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, isLeagueFill = false) {
-        const fieldName = fieldLabel(pick.field);
-        const sport = pick.sport;
-        (block.slots || []).forEach((slotIndex, idx) => {
-            if (slotIndex === undefined ||
-                slotIndex >= (window.unifiedTimes || []).length) return;
-            if (!window.scheduleAssignments[block.bunk]) return;
-            if (!window.scheduleAssignments[block.bunk][slotIndex]) {
-                window.scheduleAssignments[block.bunk][slotIndex] = {
-                    field: fieldName,
-                    sport: sport,
-                    continuation: (idx > 0),
-                    _fixed: !!pick._fixed,
-                    _h2h: !!pick._h2h,
-                    _activity: pick._activity || null,
-                    _allMatchups: pick._allMatchups || null
-                };
-                if (!isLeagueFill &&
-                    fieldName &&
-                    window.allSchedulableNames &&
-                    window.allSchedulableNames.includes(fieldName)) {
-                    fieldUsageBySlot[slotIndex] =
-                        fieldUsageBySlot[slotIndex] || {};
-                    const usage = fieldUsageBySlot[slotIndex][fieldName] ||
-                        { count: 0, divisions: [], bunks: {} };
-                    usage.count++;
-                    if (!usage.divisions.includes(block.divName))
-                        usage.divisions.push(block.divName);
-                    if (block.bunk && pick._activity)
-                        usage.bunks[block.bunk] = pick._activity;
-                    fieldUsageBySlot[slotIndex][fieldName] = usage;
-                }
-            }
-        });
-    }
+   /**
+ * fillBlock V35 — FINAL VERSION
+ * --------------------------------------------------------------
+ * Rules:
+ *  - NEVER overwrite Smart Tile locked events
+ *  - NEVER overwrite pinned/fixed events
+ *  - Handles continuation correctly
+ *  - Updates fieldUsageBySlot correctly
+ *  - Supports sharable fields (limit: sharable? 2 : 1)
+ *  - Does NOT count fallback toward special-history
+ *  - Works with “_smartTileLocked” flags from Adapter
+ */
+function fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, isLeagueFill = false) {
+    const bunk = block.bunk;
+    if (!bunk) return;
+
+    // Normalize field label
+    const fieldName = (pick && pick.field)
+        ? (typeof pick.field === "string" ? pick.field : pick.field.name)
+        : null;
+
+    const activity = pick?._activity || null;
+    const sport    = pick?.sport || null;
+    const slots    = block.slots || [];
+
+    slots.forEach((slotIndex, idx) => {
+
+        // 1. SAFETY GUARD — No schedules, no slot, no unifiedTimes
+        if (!window.scheduleAssignments[bunk]) return;
+        if (!window.unifiedTimes || !window.unifiedTimes[slotIndex]) return;
+
+        const existing = window.scheduleAssignments[bunk][slotIndex];
+
+        // 2. NEVER OVERWRITE SMART TILE LOCKED EVENTS
+        if (existing && (existing._smartTileLocked || existing._locked)) {
+            return;
+        }
+
+        // 3. NEVER OVERWRITE PINNED EVENTS
+        if (existing && existing._fixed) {
+            return;
+        }
+
+        // 4. WRITE THE BLOCK ENTRY
+        window.scheduleAssignments[bunk][slotIndex] = {
+            field: fieldName,
+            sport: sport,
+            continuation: (idx > 0),
+            _fixed: !!pick._fixed,
+            _locked: !!pick._locked,
+            _smartTileLocked: !!pick._smartTileLocked,
+            _h2h: !!pick._h2h,
+            _activity: activity,
+            _allMatchups: pick._allMatchups || null
+        };
+
+        // 5. LEAGUE EVENTS DO NOT UPDATE FIELD USAGE
+        if (isLeagueFill) return;
+
+        // 6. Fallback special DOES NOT count toward special history
+        //    The Adapter already marks fallback activities by name.
+        const isFallbackSpecial =
+            activity &&
+            window.specialActivityNames &&
+            window.specialActivityNames.includes(activity) &&
+            pick._isFallback === true;
+
+        if (isFallbackSpecial) {
+            return;  // DO NOT count fallback as special usage
+        }
+
+        // 7. UPDATE FIELD USAGE (only if this is a real field)
+        if (!fieldName ||
+            !window.allSchedulableNames ||
+            !window.allSchedulableNames.includes(fieldName)) {
+            return;
+        }
+
+        fieldUsageBySlot[slotIndex] = fieldUsageBySlot[slotIndex] || {};
+
+        const usageObj = fieldUsageBySlot[slotIndex][fieldName] || {
+            count: 0,
+            divisions: [],
+            bunks: {}
+        };
+
+        usageObj.count++;
+
+        if (!usageObj.divisions.includes(block.divName)) {
+            usageObj.divisions.push(block.divName);
+        }
+
+        if (bunk && activity) {
+            usageObj.bunks[bunk] = activity;
+        }
+
+        fieldUsageBySlot[slotIndex][fieldName] = usageObj;
+    });
+}
 
     function loadAndFilterData() {
         const globalSettings = window.loadGlobalSettings?.() || {};
