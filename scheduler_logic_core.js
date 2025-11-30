@@ -1337,34 +1337,33 @@ function fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, isLeagueFill
     const bunk = block.bunk;
     if (!bunk) return;
 
-    // Normalize field label
     const fieldName = (pick && pick.field)
         ? (typeof pick.field === "string" ? pick.field : pick.field.name)
         : null;
 
     const activity = pick?._activity || null;
-    const sport    = pick?.sport || null;
-    const slots    = block.slots || [];
+    const sport = pick?.sport || null;
+    const slots = block.slots || [];
 
     slots.forEach((slotIndex, idx) => {
 
-        // 1. SAFETY GUARD — No schedules, no slot, no unifiedTimes
         if (!window.scheduleAssignments[bunk]) return;
         if (!window.unifiedTimes || !window.unifiedTimes[slotIndex]) return;
 
         const existing = window.scheduleAssignments[bunk][slotIndex];
 
-        // 2. NEVER OVERWRITE SMART TILE LOCKED EVENTS
-        if (existing && (existing._smartTileLocked || existing._locked)) {
-            return;
+        // 🔥 NEW — Only block overwrite if existing is a REAL placed block
+        const hasRealBlock =
+            existing &&
+            (existing._fixed ||
+             existing._locked ||
+             existing._smartTileLocked);
+
+        if (hasRealBlock) {
+            return; // respect fixed/locked entries
         }
 
-        // 3. NEVER OVERWRITE PINNED EVENTS
-        if (existing && existing._fixed) {
-            return;
-        }
-
-        // 4. WRITE THE BLOCK ENTRY
+        // ---------- WRITE THE BLOCK ----------
         window.scheduleAssignments[bunk][slotIndex] = {
             field: fieldName,
             sport: sport,
@@ -1377,22 +1376,19 @@ function fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, isLeagueFill
             _allMatchups: pick._allMatchups || null
         };
 
-        // 5. LEAGUE EVENTS DO NOT UPDATE FIELD USAGE
+        // ---------- LEAGUE DOES NOT UPDATE USAGE ----------
         if (isLeagueFill) return;
 
-        // 6. Fallback special DOES NOT count toward special history
-        //    The Adapter already marks fallback activities by name.
+        // ---------- Fallback special does not count ----------
         const isFallbackSpecial =
             activity &&
             window.specialActivityNames &&
             window.specialActivityNames.includes(activity) &&
             pick._isFallback === true;
 
-        if (isFallbackSpecial) {
-            return;  // DO NOT count fallback as special usage
-        }
+        if (isFallbackSpecial) return;
 
-        // 7. UPDATE FIELD USAGE (only if this is a real field)
+        // ---------- UPDATE FIELD USAGE ----------
         if (!fieldName ||
             !window.allSchedulableNames ||
             !window.allSchedulableNames.includes(fieldName)) {
