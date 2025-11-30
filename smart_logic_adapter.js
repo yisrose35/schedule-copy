@@ -1,9 +1,11 @@
 // ============================================================================
-// SmartLogicAdapter V24
+// SmartLogicAdapter V26
 // - PAIRING UPDATE: Treats distinct Smart Tiles as linked pairs (A & B).
 // - SPECIAL DETECTION FIX: Purely based on 'fallbackFor'.
 // - DYNAMIC CAPACITY: Sums capacity of all resources matching the category.
-// - HISTORY FIX: correctly sums history for categories (e.g. "Sports").
+// - HISTORY FIX:
+//   * Generalizes "Special Activity" history. If sorting for a special, 
+//     sums counts of ALL special activities to ensure global fairness.
 // - RECALCULATION FIX: Calculates capacity independently for Block A and Block B.
 // - ROTATION FIX (STRICT): 
 //   Block 1: Special fills to cap A, rest get Open.
@@ -104,7 +106,7 @@
                 openAct = main1;
             }
 
-            // Helper to calculate capacity
+            // Helper to calculate capacity for a specific time range
             const calculateCapacityForBlock = (startMin, endMin) => {
                 let totalCapacity = 0;
                 const specialLower = specialAct.toLowerCase();
@@ -164,27 +166,45 @@
             const getHistoryCount = (bunk, activityName) => {
                 if (!historical[bunk]) return 0;
                 
-                // Exact match
-                if (historical[bunk][activityName]) return historical[bunk][activityName];
-                
+                let sum = 0;
+                const lowerName = activityName.toLowerCase();
+
+                // If it's a "Special Activity" (generic or specific), sum ALL special activities
+                // This ensures that if you did Gameroom yesterday, you are deprioritized for Canteen today.
+                // We assume anything in 'specialNames' OR 'masterSpecials' is a special activity.
+                const allSpecials = window.getGlobalSpecialActivities ? window.getGlobalSpecialActivities() : [];
+                const isSpecialType = specialNames.includes(activityName) || 
+                                      allSpecials.some(s => s.name === activityName) ||
+                                      lowerName.includes('special');
+
+                if (isSpecialType) {
+                    allSpecials.forEach(s => {
+                        if (historical[bunk][s.name]) sum += historical[bunk][s.name];
+                    });
+                    // Also add generic "Special Activity" counts if tracked
+                    if (historical[bunk]["Special Activity"]) sum += historical[bunk]["Special Activity"];
+                } 
                 // Category Match for "Sports"
-                if (activityName.toLowerCase().includes('sport')) {
-                    let sum = 0;
-                    // Sum up counts for anything that is a field/sport
-                    // We assume masterFields are the "sports"
+                else if (lowerName.includes('sport')) {
                     masterFields.forEach(f => {
                         if (historical[bunk][f.name]) sum += historical[bunk][f.name];
-                        // Also check specific activities on fields? 
-                        // historical counts track 'activity name' (e.g. "Soccer").
-                        // We need a way to know "Soccer" is a sport.
-                        // Simple heuristic: sum everything that isn't a named special?
-                        // Better: Check 'masterFields' activities lists.
                     });
-                    return sum;
+                    if (historical[bunk]["Sports"]) sum += historical[bunk]["Sports"];
+                } 
+                // Exact Match Fallback
+                else {
+                    if (historical[bunk][activityName]) sum += historical[bunk][activityName];
                 }
 
-                return 0;
+                return sum;
             };
+
+            // Debug log for history to see what's happening
+            console.log(`[SmartAdapter] Sorting bunks for ${specialAct} (Div: ${job.division})`);
+            bunks.forEach(b => {
+                const count = getHistoryCount(b, specialAct);
+                console.log(`  - Bunk ${b}: History Count = ${count}`);
+            });
 
             const sortedBunks = [...bunks].sort((a, b) => {
                 const countA = getHistoryCount(a, specialAct);
@@ -196,31 +216,31 @@
             const block1 = {};
             const block2 = {};
             const bunksWhoGotSpecialInB1 = new Set();
+            const bunksWhoGotOpenInB1 = new Set();
             
             // 3. Block 1 Assignment
             const capA = calculateCapacityForBlock(job.blockA.startMin, job.blockA.endMin);
-            console.log(`[SmartAdapter] Div: ${job.division} | Block A Cap: ${capA}`);
+            console.log(`[SmartAdapter] Block A Cap: ${capA}`);
 
             let countB1 = 0;
             for (const bunk of sortedBunks) {
-                // Try to give Special to those who need it most
                 if (countB1 < capA) {
                     block1[bunk] = specialAct;
                     bunksWhoGotSpecialInB1.add(bunk);
                     countB1++;
                 } else {
                     block1[bunk] = openAct;
+                    bunksWhoGotOpenInB1.add(bunk);
                 }
             }
 
             // 4. Block 2 Assignment
             if (job.blockB) {
                 const capB = calculateCapacityForBlock(job.blockB.startMin, job.blockB.endMin);
-                console.log(`[SmartAdapter] Div: ${job.division} | Block B Cap: ${capB}`);
+                console.log(`[SmartAdapter] Block B Cap: ${capB}`);
 
                 let countB2 = 0;
                 
-                // STRICT SEPARATION
                 const mustSwapToOpen = [];
                 const candidatesForSpecial = [];
 
@@ -232,12 +252,10 @@
                     }
                 });
 
-                // Step A: Force swappers to Open
                 mustSwapToOpen.forEach(bunk => {
                     block2[bunk] = openAct;
                 });
 
-                // Step B: Fill Special from the Candidates list ONLY
                 candidatesForSpecial.forEach(bunk => {
                     if (countB2 < capB) {
                         block2[bunk] = specialAct;
