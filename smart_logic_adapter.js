@@ -1,14 +1,13 @@
 // ============================================================================
-// SmartLogicAdapter V29
-// - TIERED FAIRNESS (STREAK BREAKER): 
-//   Introduced "Banded" sorting. Instead of strict A < B, we treat counts
-//   within a small range (e.g., 0 vs 1) as EQUAL and use a random tie-breaker.
-//   This prevents the same bunk from winning Block 1 four days in a row just
-//   to "catch up" by 1 point.
-// - BAND WIDTHS:
-//   * Activity History: Bands of 2 (0-1, 2-3, etc. are ties).
-//   * Total History: Bands of 4 (Breaks ties based on general fairness).
-// - ROBUST CATEGORIES: Retains V28's "Sports" vs "Special" grouping.
+// SmartLogicAdapter V30 (PERFECT ROTATION EDITION)
+// - STRICT SORTING: Removed "Banding". Lower count ALWAYS wins.
+// - YESTERDAY PENALTY: Checks yesterday's schedule. If a bunk had a Smart Activity
+//   yesterday, they are deprioritized today to prevent back-to-back wins.
+// - TIE-BREAKERS:
+//   1. Specific Category Count (Lowest wins)
+//   2. Played Yesterday? (No wins)
+//   3. Total Global History (Lowest wins)
+//   4. Random
 // ============================================================================
 
 (function () {
@@ -78,7 +77,7 @@
         },
 
         // MAIN LOGIC
-        generateAssignments(bunks, job, historical = {}, specialNames = [], activityProperties = {}, masterFields = [], dailyFieldAvailability = {}) {
+        generateAssignments(bunks, job, historical = {}, specialNames = [], activityProperties = {}, masterFields = [], dailyFieldAvailability = {}, yesterdayHistory = {}) {
 
             const main1 = job.main1.trim();
             const main2 = job.main2.trim();
@@ -159,12 +158,31 @@
             };
 
             // --------------------------------------------------------
-            // HISTORY & FAIRNESS LOGIC (UPGRADED)
+            // HISTORY & FAIRNESS LOGIC (STRICT + YESTERDAY)
             // --------------------------------------------------------
             
+            // Helper: Check if bunk did ANY relevant smart activity yesterday
+            const didPlayYesterday = (bunk) => {
+                const sched = yesterdayHistory.schedule ? yesterdayHistory.schedule[bunk] : null;
+                if (!sched || !Array.isArray(sched)) return 0;
+                
+                // Scan yesterday's schedule for generated slots
+                const found = sched.some(entry => {
+                    if (!entry || !entry._activity) return false;
+                    const act = entry._activity.toLowerCase();
+                    // If they had a specific Special or Sport yesterday, count it
+                    return (
+                        act.includes("special") || 
+                        act.includes("sport") || 
+                        act.includes("general activity") ||
+                        (specialNames.includes(entry._activity))
+                    );
+                });
+                return found ? 1 : 0;
+            };
+
             const getCategoryHistory = (bunk, activityName) => {
                 if (!historical[bunk]) return 0;
-                
                 let sum = 0;
                 const lowerName = activityName.toLowerCase();
                 const allSpecials = window.getGlobalSpecialActivities ? window.getGlobalSpecialActivities() : [];
@@ -219,30 +237,28 @@
                 return total;
             };
 
-            // SORT: 1. Category Count (TIERED) -> 2. Total Count (TIERED) -> 3. Random
-            // This prevents the "Sticky Winner" problem.
+            // SORT PRIORITY:
+            // 1. History Count for this category (Lower wins)
+            // 2. Played Yesterday? (No wins)
+            // 3. Total Global History (Lower wins)
+            // 4. Random
             const sortedBunks = [...bunks].sort((a, b) => {
+                // Priority 1: Specific History
                 const catA = getCategoryHistory(a, specialAct);
                 const catB = getCategoryHistory(b, specialAct);
+                if (catA !== catB) return catA - catB;
                 
-                // TIER 1: Activity Fairness (Band size: 2)
-                // Treat 0 and 1 as equal. Treat 2 and 3 as equal.
-                // This stops 0 from beating 1 100% of the time, allowing for rotation.
-                const bandCat = 2;
-                const diffCat = Math.floor(catA / bandCat) - Math.floor(catB / bandCat);
-                if (diffCat !== 0) return diffCat;
-                
-                // TIER 2: Global Fairness (Band size: 4)
-                // If activity history is "tied" (fuzzy), look at total history.
-                // Treat 20, 21, 22, 23 as equal.
+                // Priority 2: Yesterday Penalty (Avoid back-to-back)
+                const yestA = didPlayYesterday(a);
+                const yestB = didPlayYesterday(b);
+                if (yestA !== yestB) return yestA - yestB;
+
+                // Priority 3: General Fairness
                 const totA = getTotalHistory(a);
                 const totB = getTotalHistory(b);
-                const bandTot = 4;
-                const diffTot = Math.floor(totA / bandTot) - Math.floor(totB / bandTot);
-                if (diffTot !== 0) return diffTot;
+                if (totA !== totB) return totA - totB;
 
-                // TIER 3: Coin Flip
-                // If both are in the same fairness bands, randomize it.
+                // Priority 4: Random
                 return 0.5 - Math.random();
             });
 
@@ -279,8 +295,7 @@
                 const mustSwapToOpen = [];
                 const candidatesForSpecial = [];
 
-                // Strict Rotation for Block 2: 
-                // B1 winners go to back of line. Everyone else fights for B2 spots.
+                // Sort candidates by the SAME strict logic
                 sortedBunks.forEach(bunk => {
                     if (bunksWhoGotSpecialInB1.has(bunk)) {
                         mustSwapToOpen.push(bunk);
