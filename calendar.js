@@ -1,9 +1,12 @@
 // =================================================================
 // calendar.js
 //
-// --- UPDATED (Save Now) ---
-// - Added 'window.forceAutoSave' for manual saving.
-// - Updated 'performAutoSave' to show an alert when triggered manually.
+// --- UPDATED (Smart Logic Reset) ---
+// - eraseRotationHistory now clears:
+//   1. Standard Rotation History
+//   2. Smart Tile History (smartTileHistory_v1)
+//   3. Manual Usage Offsets (from Analytics)
+//   This ensures SmartLogicAdapter V29 starts fresh.
 // =================================================================
 
 (function() {
@@ -14,6 +17,9 @@
     const DAILY_DATA_KEY = "campDailyData_v1";
     const ROTATION_HISTORY_KEY = "campRotationHistory_v1";
     const AUTO_SAVE_KEY = "campAutoSave_v1"; 
+    
+    // Key used in daily_adjustments.js for smart tiles
+    const SMART_TILE_HISTORY_KEY = "smartTileHistory_v1"; 
 
     /**
      * Helper function to get a date in YYYY-MM-DD format.
@@ -168,13 +174,32 @@
         }
     }
     
+    // UPDATED: Erase EVERYTHING related to fairness/history
     window.eraseRotationHistory = function() {
         try {
+            // 1. Clear standard rotation history
             localStorage.removeItem(ROTATION_HISTORY_KEY);
-            console.log("Erased all activity rotation history.");
-            alert("Activity rotation history has been reset.");
+            
+            // 2. Clear Smart Tile specific history (Legacy or future use)
+            localStorage.removeItem(SMART_TILE_HISTORY_KEY);
+
+            // 3. Clear Manual Usage Offsets (from Analytics / Global Settings)
+            // This ensures the Smart Adapter doesn't see old manual overrides.
+            const globalSettings = window.loadGlobalSettings();
+            if (globalSettings.manualUsageOffsets) {
+                delete globalSettings.manualUsageOffsets;
+                localStorage.setItem(GLOBAL_SETTINGS_KEY, JSON.stringify(globalSettings));
+            }
+
+            console.log("Erased all activity rotation history, smart tile data, and manual offsets.");
+            alert("Success: Activity history, smart tile data, and manual offsets have been reset.");
+            
+            // Reload to ensure memory is cleared
+            window.location.reload();
+            
         } catch (e) {
             console.error("Failed to erase rotation history:", e);
+            alert("Error resetting history. Check console.");
         }
     }
 
@@ -188,6 +213,7 @@
                     localStorage.removeItem(DAILY_DATA_KEY);
                     localStorage.removeItem(ROTATION_HISTORY_KEY);
                     localStorage.removeItem(AUTO_SAVE_KEY);
+                    localStorage.removeItem(SMART_TILE_HISTORY_KEY);
                     
                     localStorage.removeItem("campSchedulerData");
                     localStorage.removeItem("fixedActivities_v2");
