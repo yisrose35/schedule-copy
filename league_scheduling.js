@@ -89,8 +89,8 @@
       return []; 
     }
    
-    // Ensure state is fresh
-    if (Object.keys(leagueRoundState).length === 0) loadRoundState();
+    // Ensure state is fresh from storage before calculating
+    loadRoundState();
 
     const state = leagueRoundState[leagueName] || { currentRound: 0 };
     const fullSchedule = generateRoundRobin(teams);
@@ -103,31 +103,33 @@
     let roundIndex = state.currentRound;
     if (typeof roundIndex !== 'number' || isNaN(roundIndex)) roundIndex = 0;
     
-    // Use modulo to cycle through matchups, but keep roundIndex absolute for game numbering
+    // Use modulo to cycle through matchups, but keep roundIndex absolute for naming
     const todayMatchups = fullSchedule[roundIndex % fullSchedule.length];
    
     // Increment absolute counter (allows Game 1, Game 2... Game 100)
     const nextRound = roundIndex + 1;
     leagueRoundState[leagueName] = { currentRound: nextRound };
     
-    // Save to global state so it persists
+    // Save to GLOBAL state so it persists
     saveRoundState();
    
     return todayMatchups;
   }
 
   /**
-   * Returns the current absolute round number (e.g., 6 for "Game 6").
-   * This retrieves the value *after* incrementing, so effectively the "Last Played" index + 1?
-   * Actually, currentRound stores the index of the *next* game to play.
-   * So if we just played, we want (currentRound). 
-   * Wait, getLeagueMatchups increments it. 
-   * So if we start at 0. We play. State becomes 1. We want to label it "Game 1".
-   * So simply returning the current state value gives the correct label for the game just played.
+   * Returns the CURRENT absolute round number (e.g., 6 for "Game 6").
+   * Should be called AFTER getLeagueMatchups to get the label for the game just generated.
    */
   function getLeagueCurrentRound(leagueName) {
+      // If we just generated a game, state.currentRound is the NEXT index (e.g., 1).
+      // So returning state.currentRound (1) gives us "Game 1".
+      // If state is 0, it means we haven't played, so next game is Game 1.
       const state = leagueRoundState[leagueName];
-      return state ? state.currentRound : 1; 
+      const val = state ? state.currentRound : 0;
+      // If val is 0, we treat it as 1 for display? 
+      // No, if getLeagueMatchups runs, val becomes 1. So we return 1.
+      // If getLeagueMatchups hasn't run, val is 0.
+      return val === 0 ? 1 : val; 
   }
 
   /**
