@@ -36,15 +36,18 @@
     // -------------------------------------------------------------
     // LOAD + SAVE
     // -------------------------------------------------------------
-    function loadRoundState() {
-        try {
-            const data = window.loadCurrentDailyData?.() || {};
-            leagueRoundState = data.leagueRoundState || {};
-            window.leagueRoundState = leagueRoundState;
-        } catch (e) {
-            leagueRoundState = {};
-        }
+   function loadRoundState() {
+    try {
+        const global = window.loadGlobalSettings?.() || {};
+        leagueRoundState = global.leagueRoundState || {};
+        window.leagueRoundState = leagueRoundState;
+    } catch (e) {
+        console.error("Failed to load league round state:", e);
+        leagueRoundState = {};
+        window.leagueRoundState = leagueRoundState;
     }
+}
+
 
     function saveLeaguesData() {
         window.saveGlobalSettings?.('leaguesByName', leaguesByName);
