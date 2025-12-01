@@ -127,7 +127,7 @@
             fieldsBySport, masterLeagues, masterSpecialtyLeagues, masterSpecials,
             yesterdayHistory, rotationHistory, disabledLeagues, disabledSpecialtyLeagues,
             historicalCounts, specialActivityNames, disabledFields, disabledSpecials,
-            dailyFieldAvailability
+            dailyFieldAvailability, bunkMetaData // Grab metaData for size sorting
         } = config;
 
         let fieldUsageBySlot = {};
@@ -385,10 +385,21 @@
             !b.processed
         );
 
+        // --- SORTING LOGIC: FIRST FIT DECREASING ---
         remainingBlocks.sort((a, b) => {
+            // 1. Time (Morning First)
             if (a.startTime !== b.startTime) return a.startTime - b.startTime;
+            
+            // 2. Smart Tiles Priority
             if (a.fromSmartTile && !b.fromSmartTile) return -1;
             if (!a.fromSmartTile && b.fromSmartTile) return 1;
+            
+            // 3. Bunk Size (Largest First) - "Bin Packing"
+            const sizeA = bunkMetaData[a.bunk]?.size || 0;
+            const sizeB = bunkMetaData[b.bunk]?.size || 0;
+            if (sizeA !== sizeB) return sizeB - sizeA; // Descending
+            
+            // 4. Fairness (Fewest specials first)
             const countA = historicalCounts[a.bunk]?.['_totalSpecials'] || 0;
             const countB = historicalCounts[b.bunk]?.['_totalSpecials'] || 0;
             return countA - countB;
