@@ -1,11 +1,11 @@
 // =================================================================
-// app1.js — COMPLETE MERGE
+// app1.js — COMPLETE MERGE (Bulk Import at Top)
 //
 // THEME: Modern Pro Camp (Emerald/White)
 // FEATURES:
+// - Bulk Import & Rules moved to TOP for visibility
 // - Division Management (Colors, Times)
 // - Bunk Management (Names, Camper Counts)
-// - Bulk Import (CSV)
 // - Sports Capacity Rules
 // =================================================================
 
@@ -20,7 +20,7 @@
   let availableDivisions = [];
   let selectedDivision = null;
 
-  // Metadata (Restored)
+  // Metadata
   let bunkMetaData = {};      // { "Bunk 1": { size: 15 } }
   let sportMetaData = {};     // { "Basketball": { maxCapacity: 20 } }
 
@@ -302,14 +302,16 @@
             cursor: pointer;
         }
 
-        /* Bulk Import Card */
+        /* Bulk Import Card (Styled as Top Header) */
         .bulk-card {
             border: 1px solid #E5E7EB;
             border-radius: 16px;
-            padding: 16px;
+            padding: 18px 24px;
             background: #FFFFFF;
-            box-shadow: 0 4px 14px rgba(0,0,0,0.05);
-            margin-top: 20px;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.04);
+            margin-bottom: 24px; /* Space below to separate from columns */
+            width: 100%;
+            box-sizing: border-box;
         }
         
         /* Sports Modal */
@@ -569,30 +571,40 @@
 
   function renderBulkImportUI() {
     if (document.getElementById("bulk-data-card")) return;
-    const grid = document.querySelector(".setup-grid"); 
-    // If no setup-grid class exists, append to container where init is called or rely on context.
-    // For safety, let's append to the parent of division detail pane if grid not found
+    
+    // Look for grid to Prepend to, or parent of detail pane
+    const grid = document.querySelector(".setup-grid");
     const target = grid || document.getElementById("division-detail-pane")?.parentNode;
     if (!target) return;
 
     const card = document.createElement("section");
     card.className = "setup-card setup-card-wide bulk-card";
     card.id = "bulk-data-card";
+    
+    // Header Style Integration
     card.innerHTML = `
-      <div style="display:flex; align-items:center; justify-content:space-between;">
-        <div>
-          <h3 style="margin:0; font-size:1rem;">Bulk Import & Rules</h3>
-          <p class="muted" style="margin:4px 0 0;">Upload rosters or set sport capacities.</p>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:20px;">
+        <div style="flex:1;">
+          <h3 style="margin:0; font-size:1.1rem; color:#111827; display:flex; align-items:center; gap:8px;">
+             Camp Setup & Configuration
+             <span style="font-size:0.7rem; background:#8A5DFF; color:white; padding:2px 8px; border-radius:999px;">Step 1</span>
+          </h3>
+          <p class="muted" style="margin:4px 0 0;">Use this panel to import data, set rules, or add new divisions below.</p>
         </div>
-        <div style="display:flex; gap:10px;">
-            <button id="btn-manage-sports" style="background:#8A5DFF; color:white; border:none; padding:6px 14px; border-radius:999px; cursor:pointer; font-size:0.85rem;">Sports Rules</button>
-            <button id="btn-download-template" style="background:white; border:1px solid #D1D5DB; padding:6px 14px; border-radius:999px; font-size:0.85rem; cursor:pointer;">Template</button>
-            <button id="btn-trigger-upload" style="background:#0094FF; color:white; border:none; padding:6px 14px; border-radius:999px; font-size:0.85rem; cursor:pointer;">Upload CSV</button>
+        <div style="display:flex; gap:10px; align-items:center;">
+            <button id="btn-manage-sports" style="background:#FFFFFF; border:1px solid #E5E7EB; color:#374151; padding:8px 16px; border-radius:999px; cursor:pointer; font-size:0.85rem; font-weight:500; display:flex; align-items:center; gap:6px;">
+                <span>⚡</span> Sports Rules
+            </button>
+            <div style="height:24px; width:1px; background:#E5E7EB;"></div>
+            <button id="btn-download-template" style="background:white; border:1px solid #D1D5DB; padding:8px 16px; border-radius:999px; font-size:0.85rem; cursor:pointer;">Template</button>
+            <button id="btn-trigger-upload" style="background:#0094FF; color:white; border:none; padding:8px 18px; border-radius:999px; font-size:0.85rem; cursor:pointer; font-weight:600;">Upload CSV</button>
             <input type="file" id="bulk-upload-input" accept=".csv" style="display:none;">
         </div>
       </div>
     `;
-    target.appendChild(card);
+    
+    // IMPORTANT: PREPEND TO TOP
+    target.prepend(card);
 
     card.querySelector("#btn-manage-sports").onclick = showSportsRulesModal;
     card.querySelector("#btn-download-template").onclick = downloadTemplate;
@@ -670,7 +682,7 @@
     cont.innerHTML = "";
 
     if (!availableDivisions || availableDivisions.length === 0) {
-      cont.innerHTML = `<p class="muted">No divisions created yet. Add one above.</p>`;
+      cont.innerHTML = `<p class="muted">No divisions created yet. Add one above or import via CSV.</p>`;
       renderDivisionDetailPane();
       return;
     }
@@ -716,7 +728,6 @@
       const sub = document.createElement("div");
       sub.className = "division-card-subline";
       const bunkCount = (obj.bunks || []).length;
-      const times = obj.startTime && obj.endTime ? `${obj.startTime} \u2013 ${obj.endTime}` : "Times not set";
       
       // Updated Subline with Camper Total
       sub.innerHTML = `${bunkCount} bunks \u2022 <strong>${totalKids}</strong> campers`;
