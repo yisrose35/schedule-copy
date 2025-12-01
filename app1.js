@@ -1,12 +1,11 @@
 // =================================================================
-// app1.js — COMPLETE MERGE (Bulk Import at Top)
+// app1.js — DOUBLE CLICK DELETE & WIDER INPUTS
 //
 // THEME: Modern Pro Camp (Emerald/White)
 // FEATURES:
-// - Bulk Import & Rules moved to TOP for visibility
-// - Division Management (Colors, Times)
-// - Bunk Management (Names, Camper Counts)
-// - Sports Capacity Rules
+// - Bulk Import at TOP
+// - Double-click bunk to DELETE
+// - Wider inputs for bunk editing
 // =================================================================
 
 (function () {
@@ -14,15 +13,15 @@
 
   // -------------------- State --------------------
   let bunks = [];
-  let divisions = {}; // { divName:{ bunks:[], color, startTime, endTime } }
+  let divisions = {}; 
   let specialActivities = [];
 
   let availableDivisions = [];
   let selectedDivision = null;
 
   // Metadata
-  let bunkMetaData = {};      // { "Bunk 1": { size: 15 } }
-  let sportMetaData = {};     // { "Basketball": { maxCapacity: 20 } }
+  let bunkMetaData = {};      
+  let sportMetaData = {};     
 
   // Master list of all sports
   let allSports = [];
@@ -246,6 +245,7 @@
             min-width: 28px;
             box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);
             transition: all 0.12s ease;
+            user-select: none; /* Important for double click */
         }
         .division-bunk-pill:hover {
             background-color: #F3F4F6;
@@ -266,50 +266,55 @@
         .bunk-edit-form {
             display: inline-flex;
             align-items: center;
-            gap: 4px;
-            padding: 2px 4px;
+            gap: 6px;
+            padding: 3px 6px;
             border-radius: 999px;
             border: 1px solid #00C896;
             background: #FFFFFF;
+            box-shadow: 0 2px 8px rgba(0,200,150,0.15);
         }
         .bunk-edit-input {
-            border: none;
+            border: 1px solid #E5E7EB;
             outline: none;
-            padding: 2px 4px;
-            width: 70px;
-            font-size: 0.8rem;
+            padding: 3px 6px;
+            width: 80px; /* Slightly wider name */
+            font-size: 0.85rem;
             border-radius: 4px;
         }
         .bunk-edit-size {
-            width: 40px;
+            width: 65px; /* UPDATED: Much wider for capacity input */
             border: 1px solid #E5E7EB;
             border-radius: 4px;
             text-align: center;
-            font-size: 0.8rem;
-            padding: 2px;
+            font-size: 0.85rem;
+            padding: 3px 2px;
         }
         .bunk-edit-save {
             background: #00C896;
             color: white;
             border: none;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
+            width: 24px;
+            height: 24px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 0.7rem;
+            font-size: 0.8rem;
             cursor: pointer;
+            flex-shrink: 0;
+        }
+        .bunk-edit-save:hover {
+            background: #00A67C;
         }
 
-        /* Bulk Import Card (Styled as Top Header) */
+        /* Bulk Import Card (Top Header) */
         .bulk-card {
             border: 1px solid #E5E7EB;
             border-radius: 16px;
             padding: 18px 24px;
             background: #FFFFFF;
             box-shadow: 0 4px 14px rgba(0,0,0,0.04);
-            margin-bottom: 24px; /* Space below to separate from columns */
+            margin-bottom: 24px;
             width: 100%;
             box-sizing: border-box;
         }
@@ -910,7 +915,7 @@
     // 2. Bunks Card
     const bunksCard = document.createElement("div");
     bunksCard.className = "division-mini-card";
-    bunksCard.innerHTML = `<div class="division-mini-header"><span>Bunks in this Division</span></div><p class="division-mini-help">Click to edit name/size.</p>`;
+    bunksCard.innerHTML = `<div class="division-mini-header"><span>Bunks in this Division</span></div><p class="division-mini-help">Click to edit name/size. <br><strong>Double-click to delete.</strong></p>`;
     
     const bunkList = document.createElement("div");
     bunkList.style.cssText = "margin-top:6px; display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;";
@@ -927,9 +932,11 @@
             pill.className = "division-bunk-pill";
             pill.innerHTML = `${bName} <span class="bunk-size-badge">${meta.size||0}</span>`;
             
-            // Inline Edit Form Logic
-            pill.onclick = (e) => {
-                e.stopPropagation();
+            // --- UPDATED CLICK LOGIC FOR DOUBLE CLICK DELETE ---
+            let clickTimer = null;
+            const clickDelay = 260; // ms
+
+            function startInlineEdit() {
                 const form = document.createElement("span");
                 form.className = "bunk-edit-form";
 
@@ -957,7 +964,30 @@
                 form.append(nameIn, sizeIn, saveBtn);
                 pill.replaceWith(form);
                 nameIn.focus();
+            }
+
+            pill.onclick = (e) => {
+                e.stopPropagation();
+                if (clickTimer) {
+                    // Double Click!
+                    clearTimeout(clickTimer);
+                    clickTimer = null;
+                    const idx = divObj.bunks.indexOf(bName);
+                    if (idx !== -1) {
+                        divObj.bunks.splice(idx, 1);
+                        saveData();
+                        renderDivisionDetailPane();
+                        window.updateTable?.();
+                    }
+                } else {
+                    // Single click... wait to see if second click comes
+                    clickTimer = setTimeout(() => {
+                        clickTimer = null;
+                        startInlineEdit();
+                    }, clickDelay);
+                }
             };
+
             bunkList.appendChild(pill);
         });
     }
