@@ -1,8 +1,8 @@
-
 // ============================================================================
 // scheduler_logic_core.js
 //
-// UPDATED (Smart Logic V30 Integration):
+// UPDATED:
+// - Calculates and saves "Game Number" (e.g. Game 6) for League blocks.
 // - Pass 2.5: Now passes 'yesterdayHistory' to SmartLogicAdapter.generateAssignments.
 //   This enables the "Anti-Streak" logic (Yesterday Penalty).
 // - Usage Fix: Pinned/Split/Smart items registers usage to prevent double-booking.
@@ -463,7 +463,8 @@
                         _fixed: !!pick._fixed,
                         _h2h: !!pick._h2h,
                         _activity: pick._activity || null,
-                        _allMatchups: pick._allMatchups || null
+                        _allMatchups: pick._allMatchups || null,
+                        _gameLabel: pick._gameLabel || null // <-- Save the Game Number (e.g. "Game 6")
                     };
                     if (!isLeagueFill &&
                         fieldName &&
@@ -1198,19 +1199,41 @@
             const allMatchupLabels = [];
             const picksByTeam = {};
 
+            // --- CALCULATE GAME NUMBER ---
+            const leagueTeams = (leagueEntry.teams || [])
+                .map(t => String(t).trim())
+                .filter(Boolean);
+            const numTeams = leagueTeams.length;
+            const totalRounds = (numTeams % 2 === 0) ? (numTeams - 1) : numTeams;
+            const state = window.leagueRoundState?.[leagueName] || {};
+            
+            // getLeagueMatchups increments state internally.
+            // If it's called, the state is updated to NEXT round.
+            // We want the round index that was JUST scheduled.
+            
+            // NOTE: We assume getLeagueMatchups is called below. 
+            // If it is, the state increments.
+            
+            let matchups = [];
+            if (typeof window.getLeagueMatchups === 'function') {
+                matchups = window.getLeagueMatchups(leagueEntry.name, leagueTeams) || [];
+            } else {
+                matchups = pairRoundRobin(leagueTeams);
+            }
+
+            // Now that getLeagueMatchups ran, the state has the NEXT round index.
+            // So we subtract 1 to get the round index we just generated.
+            const nextRoundIndex = window.leagueRoundState?.[leagueName]?.currentRound || 0;
+            // Modulo math for "previous round": (next - 1 + total) % total
+            let playedIndex = (nextRoundIndex - 1 + totalRounds) % totalRounds;
+            if (playedIndex < 0) playedIndex = 0; // fallback safety
+            let gameNumber = playedIndex + 1;
+            const gameLabel = `Game ${gameNumber}`;
+
             if (bestSport) {
                 const leagueFields = leagueEntry.fields || [];
-                const leagueTeams = (leagueEntry.teams || [])
-                    .map(t => String(t).trim())
-                    .filter(Boolean);
                 if (leagueFields.length !== 0 && leagueTeams.length >= 2) {
-                    let matchups = [];
-                    if (typeof window.getLeagueMatchups === 'function') {
-                        matchups = window.getLeagueMatchups(leagueEntry.name, leagueTeams) || [];
-                    } else {
-                        matchups = pairRoundRobin(leagueTeams);
-                    }
-
+                    
                     const gamesPerField = Math.ceil(matchups.length / leagueFields.length);
                     const slotCount = group.slots.length || 1;
                     const usedFieldsInThisBlock = Array.from(
@@ -1290,6 +1313,7 @@
             allBunksInGroup.forEach(bunk => {
                 const pickToAssign = picksByTeam[bunk] || noGamePick;
                 pickToAssign._allMatchups = allMatchupLabels;
+                pickToAssign._gameLabel = gameLabel; // <-- SAVE GAME NUMBER
                 fillBlock(
                     { ...blockBase, bunk },
                     pickToAssign,
@@ -1366,12 +1390,22 @@
             const leagueTeamLastSport = rotationHistory.leagueTeamLastSport[leagueName] || {};
             rotationHistory.leagueTeamLastSport[leagueName] = leagueTeamLastSport;
 
+            // --- GENERATE MATCHUPS ---
             let standardMatchups = [];
             if (typeof window.getLeagueMatchups === "function") {
                 standardMatchups = window.getLeagueMatchups(leagueName, leagueTeams) || [];
             } else {
                 standardMatchups = coreGetNextLeagueRound(leagueName, leagueTeams) || [];
             }
+
+            // --- CALCULATE GAME NUMBER (After Generation) ---
+            const numTeams = leagueTeams.length;
+            const totalRounds = (numTeams % 2 === 0) ? (numTeams - 1) : numTeams;
+            const nextRoundIndex = window.leagueRoundState?.[leagueName]?.currentRound || 0;
+            let playedIndex = (nextRoundIndex - 1 + totalRounds) % totalRounds;
+            if (playedIndex < 0) playedIndex = 0;
+            let gameNumber = playedIndex + 1;
+            const gameLabel = `Game ${gameNumber}`; // e.g. "Game 6"
 
             const slotCount = slots.length || 1;
 
@@ -1567,7 +1601,8 @@
                     _h2h: true,
                     vs: null,
                     _activity: game.sport,
-                    _allMatchups: allMatchupLabels
+                    _allMatchups: allMatchupLabels,
+                    _gameLabel: gameLabel // <-- SAVE GAME NUMBER
                 };
 
                 const bunkADiv = Object.keys(divisions).find(div =>
@@ -1611,6 +1646,11 @@
                     (divisions[div].bunks || []).includes(leftoverBunk)
                 ) || baseDivName;
 
+                const leftoverPick = {
+                    ...noGamePick,
+                    _gameLabel: gameLabel
+                };
+
                 fillBlock(
                     {
                         slots,
@@ -1619,7 +1659,7 @@
                         startTime: group.startTime,
                         endTime: group.endTime + INCREMENT_MINS * slots.length
                     },
-                    noGamePick,
+                    leftoverPick,
                     fieldUsageBySlot,
                     yesterdayHistory,
                     true
