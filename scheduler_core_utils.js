@@ -148,6 +148,7 @@
     };
 
     // Main capacity check
+    // NOW INCLUDES: Bunk Size vs Sport Max Capacity
     Utils.canBlockFit = function(block, fieldName, activityProperties, fieldUsageBySlot, proposedActivity) {
         if (!fieldName) return false;
         const props = activityProperties[fieldName];
@@ -155,8 +156,7 @@
         // If no props, treat as virtual/unconstrained
         if (!props) return true;
 
-        // --- Capacity Logic ---
-        // If specific capacity set in sharableWith, use it. Else default to 2 if sharable, 1 if not.
+        // --- 1. Bunk Count Limit (Shared Fields) ---
         let limit = 1;
         if (props.sharableWith) {
             if (props.sharableWith.capacity) limit = parseInt(props.sharableWith.capacity);
@@ -165,6 +165,16 @@
             limit = 2;
         }
 
+        // --- 2. Headcount Capacity Limit (Bin Packing) ---
+        // Need to check metadata passed via window or args
+        const bunkMetaData = window.SchedulerCoreUtils._bunkMetaData || {};
+        const sportMetaData = window.SchedulerCoreUtils._sportMetaData || {};
+        const maxHeadcount = sportMetaData[proposedActivity]?.maxCapacity || Infinity;
+        
+        // My size
+        const mySize = bunkMetaData[block.bunk]?.size || 0;
+
+        // --- 3. Preference/Exclusivity Checks ---
         if (props.preferences &&
             props.preferences.enabled &&
             props.preferences.exclusive &&
@@ -190,6 +200,7 @@
             }
         }
 
+        // Time Rules Prep
         const { blockStartMin, blockEndMin } = Utils.getBlockTimeRange(block);
         const rules = (props.timeRules || []).map(r => {
             if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
@@ -223,50 +234,45 @@
                     }
                 }
             }
-            for (const slotIndex of block.slots || []) {
-                if (slotIndex === undefined) return false;
-                const usage = fieldUsageBySlot[slotIndex]?.[fieldName] || { count: 0, divisions: [], bunks: {} };
-                
-                if (usage.count >= limit) return false;
-                
-                if (usage.count > 0) {
-                    // Division exclusivity check if needed? (Skipped for now unless explicitly requested in custom rules)
-                    // if (!usage.divisions.includes(block.divName)) return false; // Strict division sharing?
-                    
-                    let existingActivity = null;
-                    for (const bunkName in usage.bunks) {
-                        if (usage.bunks[bunkName]) {
-                            existingActivity = usage.bunks[bunkName];
-                            break;
-                        }
-                    }
-                    if (existingActivity && proposedActivity && existingActivity !== proposedActivity) {
-                        return false;
-                    }
-                }
-                if (!Utils.isTimeAvailable(slotIndex, props)) return false;
-            }
         } else {
             if (!props.available) return false;
-            for (const slotIndex of block.slots || []) {
-                if (slotIndex === undefined) return false;
-                const usage = fieldUsageBySlot[slotIndex]?.[fieldName] || { count: 0, divisions: [], bunks: {} };
+        }
+
+        // SLOT USAGE CHECK
+        for (const slotIndex of block.slots || []) {
+            if (slotIndex === undefined) return false;
+            const usage = fieldUsageBySlot[slotIndex]?.[fieldName] || { count: 0, divisions: [], bunks: {} };
+            
+            // Check Bunk Count Limit
+            if (usage.count >= limit) return false;
+            
+            // Check Headcount Capacity (Velvet Rope)
+            if (maxHeadcount !== Infinity) {
+                let currentHeadcount = 0;
+                // Sum up kids currently on this field
+                Object.keys(usage.bunks).forEach(bName => {
+                    currentHeadcount += (bunkMetaData[bName]?.size || 0);
+                });
                 
-                if (usage.count >= limit) return false;
-                
-                if (usage.count > 0) {
-                    let existingActivity = null;
-                    for (const bunkName in usage.bunks) {
-                        if (usage.bunks[bunkName]) {
-                            existingActivity = usage.bunks[bunkName];
-                            break;
-                        }
-                    }
-                    if (existingActivity && proposedActivity && existingActivity !== proposedActivity) {
-                        return false;
-                    }
+                // Indivisible check: (Current + My Size) > Max?
+                if (currentHeadcount + mySize > maxHeadcount) {
+                    return false; // REJECT: "Overflow" / "Whole Bunk doesn't fit"
                 }
             }
+
+            if (usage.count > 0) {
+                let existingActivity = null;
+                for (const bunkName in usage.bunks) {
+                    if (usage.bunks[bunkName]) {
+                        existingActivity = usage.bunks[bunkName];
+                        break;
+                    }
+                }
+                if (existingActivity && proposedActivity && existingActivity !== proposedActivity) {
+                    return false;
+                }
+            }
+            if (rules.length > 0 && !Utils.isTimeAvailable(slotIndex, props)) return false;
         }
         return true;
     };
@@ -358,6 +364,14 @@
         const masterSpecials = app1Data.specialActivities || [];
         const masterLeagues = globalSettings.leaguesByName || {};
         const masterSpecialtyLeagues = globalSettings.specialtyLeagues || {};
+        
+        // NEW: Load Metadata for Capacity Checks
+        const bunkMetaData = app1Data.bunkMetaData || {};
+        const sportMetaData = app1Data.sportMetaData || {};
+        
+        // Save to Utils scope for canBlockFit access
+        Utils._bunkMetaData = bunkMetaData;
+        Utils._sportMetaData = sportMetaData;
 
         const dailyData = window.loadCurrentDailyData?.() || {};
         const dailyFieldAvailability = dailyData.dailyFieldAvailability || {};
@@ -570,7 +584,9 @@
             disabledSpecials,
             dailyFieldAvailability,
             dailyDisabledSportsByField,
-            masterFields 
+            masterFields,
+            bunkMetaData,  // Exported for completeness
+            sportMetaData
         };
     };
 
