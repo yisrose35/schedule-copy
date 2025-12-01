@@ -2,11 +2,10 @@
 // leagues.js
 //
 // FIXED:
-// - ACCURATE HEADERS: Calculates "League Game 1", "2", etc. by counting
-//   skeleton blocks per division (matching the visual schedule).
-// - NO DOUBLING: Strict deduplication of matchups.
-// - MULTI-DIVISION SUPPORT: Works perfectly for leagues (like Senior)
-//   that span multiple divisions (e.g., 5th Grade & 6th Grade).
+// - MATCHUP GENERATOR: Added window.getLeagueMatchups to provide
+//   randomized pairings to the scheduler (Fixes "Same Teams" issue).
+// - ACCURATE HEADERS: Calculates "League Game 1", "2" properly.
+// - STRICT DEDUPLICATION: Prevents duplicate game entries.
 // ===================================================================
 
 (function () {
@@ -22,6 +21,36 @@
   let selectedLeagueName = null;
   let listEl = null;
   let detailPaneEl = null;
+
+  // ================================================================
+  // CORE: Matchup Generator (Exported for Scheduler Logic)
+  // ================================================================
+  // This function is called by scheduler_logic_core.js to get pairings.
+  // We shuffle the teams every time to ensure variety in matchups.
+  window.getLeagueMatchups = function(leagueName, teamList) {
+    if (!teamList || teamList.length < 2) return [];
+    
+    // 1. Shuffle the team list to ensure random matchups
+    const t = [...teamList];
+    for (let i = t.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [t[i], t[j]] = [t[j], t[i]];
+    }
+
+    // 2. Add BYE if odd number of teams
+    if (t.length % 2 !== 0) t.push("BYE");
+
+    // 3. Fold Method (Top vs Bottom)
+    const half = t.length / 2;
+    const top = t.slice(0, half);
+    const bottom = t.slice(half).reverse();
+    const pairs = [];
+    
+    for (let i = 0; i < half; i++) {
+        pairs.push([top[i], bottom[i]]);
+    }
+    return pairs;
+  };
 
   function getPlaceSuffix(n) {
     const s = ['th', 'st', 'nd', 'rd'];
