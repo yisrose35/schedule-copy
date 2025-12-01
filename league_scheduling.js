@@ -1,7 +1,7 @@
 /**
  * =============================================================
  * LEAGUE SCHEDULING CORE (league_scheduling.js)
- * (UPDATED: Fixed "Same Teams" issue by removing redundant load)
+ * (UPDATED: Global Persistence & Infinite Game Counter)
  * =============================================================
  */
 
@@ -11,17 +11,13 @@
   let leagueRoundState = {}; // { "League Name": { currentRound: 0 } }
 
   /**
-   * Loads the current round for all leagues from the *current day's* data.
+   * Loads the current round for all leagues from GLOBAL settings (Season Persistence).
+   * This ensures "Game 6" carries over to the next day.
    */
   function loadRoundState() {
     try {
-      if (window.currentDailyData && window.currentDailyData.leagueRoundState) {
-        leagueRoundState = window.currentDailyData.leagueRoundState;
-      } else if (window.loadCurrentDailyData) {
-        leagueRoundState = window.loadCurrentDailyData().leagueRoundState || {};
-      } else {
-        leagueRoundState = {};
-      }
+      const global = window.loadGlobalSettings?.() || {};
+      leagueRoundState = global.leagueRoundState || {};
     } catch (e) {
       console.error("Failed to load league state:", e);
       leagueRoundState = {};
@@ -29,11 +25,11 @@
   }
 
   /**
-   * Saves the current round for all leagues to the *current day's* data.
+   * Saves the current round for all leagues to GLOBAL settings.
    */
   function saveRoundState() {
     try {
-      window.saveCurrentDailyData?.("leagueRoundState", leagueRoundState);
+      window.saveGlobalSettings?.("leagueRoundState", leagueRoundState);
     } catch (e) {
       console.error("Failed to save league state:", e);
     }
@@ -93,9 +89,9 @@
       return []; 
     }
    
-    // FIX: Do NOT call loadRoundState() here. It resets the counter mid-schedule.
-    // We rely on the initial load at the bottom of the file.
-   
+    // Ensure state is fresh
+    if (Object.keys(leagueRoundState).length === 0) loadRoundState();
+
     const state = leagueRoundState[leagueName] || { currentRound: 0 };
     const fullSchedule = generateRoundRobin(teams);
    
@@ -107,10 +103,11 @@
     let roundIndex = state.currentRound;
     if (typeof roundIndex !== 'number' || isNaN(roundIndex)) roundIndex = 0;
     
+    // Use modulo to cycle through matchups, but keep roundIndex absolute for game numbering
     const todayMatchups = fullSchedule[roundIndex % fullSchedule.length];
    
-    // Increment and save the round number for next time
-    const nextRound = (roundIndex + 1) % fullSchedule.length;
+    // Increment absolute counter (allows Game 1, Game 2... Game 100)
+    const nextRound = roundIndex + 1;
     leagueRoundState[leagueName] = { currentRound: nextRound };
     
     // Save to global state so it persists
@@ -118,6 +115,20 @@
    
     return todayMatchups;
   }
+
+  /**
+   * Returns the current absolute round number (e.g., 6 for "Game 6").
+   * This retrieves the value *after* incrementing, so effectively the "Last Played" index + 1?
+   * Actually, currentRound stores the index of the *next* game to play.
+   * So if we just played, we want (currentRound). 
+   * Wait, getLeagueMatchups increments it. 
+   * So if we start at 0. We play. State becomes 1. We want to label it "Game 1".
+   * So simply returning the current state value gives the correct label for the game just played.
+   */
+  function getLeagueCurrentRound(leagueName) {
+      const state = leagueRoundState[leagueName];
+      return state ? state.currentRound : 1; 
+  }
 
   /**
    * NEW: Get matchups for a specific round index without modifying state.
@@ -135,7 +146,8 @@
 
   // --- Global Exposure and Initialization ---
   window.getLeagueMatchups = getLeagueMatchups;
-  window.getMatchupsForRound = getMatchupsForRound; // Exposed for leagues.js
+  window.getLeagueCurrentRound = getLeagueCurrentRound;
+  window.getMatchupsForRound = getMatchupsForRound; 
    
   // Load state ONCE when the script loads
   loadRoundState(); 
