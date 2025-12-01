@@ -1205,17 +1205,8 @@
             const leagueTeams = (leagueEntry.teams || [])
                 .map(t => String(t).trim())
                 .filter(Boolean);
-            const numTeams = leagueTeams.length;
-            const totalRounds = (numTeams % 2 === 0) ? (numTeams - 1) : numTeams;
-            const state = window.leagueRoundState?.[leagueName] || {};
             
             // getLeagueMatchups increments state internally.
-            // If it's called, the state is updated to NEXT round.
-            // We want the round index that was JUST scheduled.
-            
-            // NOTE: We assume getLeagueMatchups is called below. 
-            // If it is, the state increments.
-            
             let matchups = [];
             if (typeof window.getLeagueMatchups === 'function') {
                 matchups = window.getLeagueMatchups(leagueEntry.name, leagueTeams) || [];
@@ -1223,13 +1214,13 @@
                 matchups = pairRoundRobin(leagueTeams);
             }
 
-            // Now that getLeagueMatchups ran, the state has the NEXT round index.
-            // So we subtract 1 to get the round index we just generated.
-            const nextRoundIndex = window.leagueRoundState?.[leagueName]?.currentRound || 0;
-            // Modulo math for "previous round": (next - 1 + total) % total
-            let playedIndex = nextRoundIndex - 1; // Direct absolute calculation
-            if (playedIndex < 0) playedIndex = 0; // fallback safety
-            let gameNumber = playedIndex + 1;
+            // GET GAME NUMBER (using absolute counter from global state)
+            let gameNumber = 1;
+            if (typeof window.getLeagueCurrentRound === 'function') {
+                 gameNumber = window.getLeagueCurrentRound(leagueEntry.name);
+            } else if (window.leagueRoundState && window.leagueRoundState[leagueEntry.name]) {
+                 gameNumber = window.leagueRoundState[leagueEntry.name].currentRound || 1;
+            }
             const gameLabel = `Game ${gameNumber}`;
 
             if (bestSport) {
@@ -1392,7 +1383,7 @@
             const leagueTeamLastSport = rotationHistory.leagueTeamLastSport[leagueName] || {};
             rotationHistory.leagueTeamLastSport[leagueName] = leagueTeamLastSport;
 
-            // --- GENERATE MATCHUPS ---
+            // --- GENERATE MATCHUPS (This call increments the Global Season State) ---
             let standardMatchups = [];
             if (typeof window.getLeagueMatchups === "function") {
                 standardMatchups = window.getLeagueMatchups(leagueName, leagueTeams) || [];
@@ -1400,15 +1391,15 @@
                 standardMatchups = coreGetNextLeagueRound(leagueName, leagueTeams) || [];
             }
 
-            // --- CALCULATE GAME NUMBER (After Generation) ---
-            const numTeams = leagueTeams.length;
-            const totalRounds = (numTeams % 2 === 0) ? (numTeams - 1) : numTeams;
-            const nextRoundIndex = window.leagueRoundState?.[leagueName]?.currentRound || 0;
-            // No Modulo here so we get "Game 6" instead of "Game 1" on rollover
-            let playedIndex = nextRoundIndex - 1; 
-            if (playedIndex < 0) playedIndex = 0;
-            let gameNumber = playedIndex + 1;
-            const gameLabel = `Game ${gameNumber}`; // e.g. "Game 6"
+            // --- GET GAME NUMBER (Reads back the new state) ---
+            let gameNumber = 1;
+            if (typeof window.getLeagueCurrentRound === 'function') {
+                 gameNumber = window.getLeagueCurrentRound(leagueName);
+            } else if (window.leagueRoundState && window.leagueRoundState[leagueName]) {
+                 // Fallback
+                 gameNumber = window.leagueRoundState[leagueName].currentRound || 1;
+            }
+            const gameLabel = `Game ${gameNumber}`;
 
             const slotCount = slots.length || 1;
 
