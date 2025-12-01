@@ -8,6 +8,7 @@
 // - League & Specialty League merged rows
 // - Split blocks (UI only — engine already picks activities)
 // - Post-generation manual editing
+// - DISPLAYS GAME NUMBER (e.g. League Game 6)
 // ============================================================================
 
 (function () {
@@ -288,18 +289,37 @@
 
           const slotIdx = findFirstSlotForTime(block.startMin);
           let allMatchups = [];
+          let gameLabel = "";
 
           if (slotIdx >= 0) {
             const first = getEntry(bunks[0], slotIdx);
-            if (first && first._allMatchups) {
-              allMatchups = first._allMatchups;
+            if (first) {
+                if(first._allMatchups) allMatchups = first._allMatchups;
+                if(first._gameLabel) gameLabel = first._gameLabel;
             }
           }
 
+          // Build Title String (e.g., "League Game 6" or "Senior League (Game 6)")
+          let titleHtml = block.event;
+          if (gameLabel) {
+              if (block.event.trim() === "League Game") {
+                  // Direct replacement: "League Game" + " 6" -> "League Game 6"
+                  // But gameLabel comes as "Game 6".
+                  // So we strip "Game " from label if we append.
+                  // Simpler: Just append the whole thing "League Game - Game 6" 
+                  // User asked for: "league game 6". 
+                  // If gameLabel is "Game 6", then replace "Game" with "Game 6"?
+                  // Let's assume gameLabel is fully descriptive e.g. "Game 6"
+                  titleHtml = `${block.event} ${gameLabel.replace(/^Game\s+/i, '')}`;
+              } else {
+                  titleHtml = `${block.event} (${gameLabel})`;
+              }
+          }
+
           if (allMatchups.length === 0) {
-            td.textContent = block.event;
+            td.textContent = titleHtml;
           } else {
-            td.innerHTML = `<div>${block.event}</div><ul>${allMatchups
+            td.innerHTML = `<div>${titleHtml}</div><ul>${allMatchups
               .map((m) => `<li>${m}</li>`)
               .join("")}</ul>`;
           }
