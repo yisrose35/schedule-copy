@@ -36,17 +36,17 @@
     // -------------------------------------------------------------
     // LOAD + SAVE
     // -------------------------------------------------------------
-   function loadRoundState() {
-    try {
-        const global = window.loadGlobalSettings?.() || {};
-        leagueRoundState = global.leagueRoundState || {};
-        window.leagueRoundState = leagueRoundState;
-    } catch (e) {
-        console.error("Failed to load league round state:", e);
-        leagueRoundState = {};
-        window.leagueRoundState = leagueRoundState;
+    function loadRoundState() {
+        try {
+            const global = window.loadGlobalSettings?.() || {};
+            leagueRoundState = global.leagueRoundState || {};
+            window.leagueRoundState = leagueRoundState;
+        } catch (e) {
+            console.error("Failed to load league round state:", e);
+            leagueRoundState = {};
+            window.leagueRoundState = leagueRoundState;
+        }
     }
-}
 
 
     function saveLeaguesData() {
@@ -838,14 +838,14 @@
     }
 
     // =================================================================
-    // IMPORT FROM SCHEDULE (UNCHANGED LOGIC)
+    // IMPORT FROM SCHEDULE (FIXED & REFACTORED)
     // =================================================================
     function importGamesFromSchedule(league, target) {
-        // (Your existing logic — unchanged)
         target.innerHTML = '';
 
         const daily = window.loadCurrentDailyData?.() || {};
         const assignments = daily.scheduleAssignments || {};
+        const skeleton = daily.manualSkeleton || [];
         const saveButton = target.parentElement.querySelector('[data-role="save-game-results"]');
 
         if (!league.teams || league.teams.length === 0) {
@@ -853,80 +853,73 @@
             return;
         }
 
-        const skeleton = daily.manualSkeleton || [];
-        const divisions = window.loadGlobalSettings?.().app1.divisions || {};
+        // FIX 1: Helper to get division directly from slot
+        function getDivisionForSlot(entrySlotDivision) {
+            // If league has only one division — trivial
+            if (league.divisions && league.divisions.length === 1) return league.divisions[0];
 
-        const relevantDivisions = new Set();
+            // If schedule knows the slot's division — use that
+            if (league.divisions.includes(entrySlotDivision)) {
+                return entrySlotDivision;
+            }
 
-        if (league.divisions && league.divisions.length > 0) {
-            league.divisions.forEach(d => relevantDivisions.add(d));
+            return null; // ignore unrelated divisions
         }
 
-        league.teams.forEach(team => {
-            for (const [divName, divData] of Object.entries(divisions)) {
-                if (divData.bunks && divData.bunks.includes(team)) {
-                    relevantDivisions.add(divName);
-                    break;
-                }
-            }
-        });
+        // FIX 2: Helper to extract "League Game X" number from event text
+        function extractGameNumber(evt) {
+            if (!evt) return null;
+            const m = evt.match(/league\s*game\s*(\d+)/i);
+            return m ? parseInt(m[1], 10) : null;
+        }
 
+        // FIX 2: Build Map of Times -> Game Names (Per Division)
         const timeToLabelMap = {};
 
-        relevantDivisions.forEach(divName => {
+        (league.divisions || []).forEach(divName => {
             timeToLabelMap[divName] = {};
 
-            let counter = 0;
             const divItems = skeleton
-                .filter(item => item.division === divName)
-                .sort((a, b) => (parseTimeToMinutes(a.startTime) || 0) - (parseTimeToMinutes(b.startTime) || 0));
+                .filter(i => i.division === divName)
+                .filter(i => /league\s*game/i.test(i.event))
+                .sort((a, b) => parseTimeToMinutes(a.startTime) - parseTimeToMinutes(b.startTime));
 
             divItems.forEach(item => {
-                const evt = (item.event || "").trim();
-                if (evt === "League Game" || evt.toLowerCase().includes("league game")) {
-                    counter++;
-                    const startMin = parseTimeToMinutes(item.startTime);
-                    if (startMin !== null) {
-                        timeToLabelMap[divName][startMin] = `League Game ${counter}`;
-                    }
-                }
+                const num = extractGameNumber(item.event);
+                if (num == null) return;
+
+                const startMin = parseTimeToMinutes(item.startTime);
+                if (startMin == null) return;
+
+                timeToLabelMap[divName][startMin] = `League Game ${num}`;
             });
         });
 
-        const uniqueMatchKeys = new Set();
-        const groups = {};
-
-        function getLabelForGame(team, slotIndex) {
-            let teamDiv = null;
-
-            for (const [dName, dData] of Object.entries(divisions)) {
-                if (dData.bunks && dData.bunks.includes(team)) {
-                    teamDiv = dName;
-                    break;
-                }
-            }
-
-            if (!teamDiv || !timeToLabelMap[teamDiv]) return "Scheduled Games";
-
+        // FIX 3: Correct Label Lookup (Using Div Name + Slot Index)
+        function getLabelForGame(divName, slotIndex) {
             const times = window.unifiedTimes || [];
-            if (!times[slotIndex]) return "Scheduled Games";
+            if (!times[slotIndex]) return null;
 
             const slotStart = new Date(times[slotIndex].start);
             const slotMin = slotStart.getHours() * 60 + slotStart.getMinutes();
 
-            if (timeToLabelMap[teamDiv][slotMin]) {
-                return timeToLabelMap[teamDiv][slotMin];
-            }
-
-            return "Scheduled Games";
+            return timeToLabelMap[divName]?.[slotMin] || null;
         }
 
+        const uniqueMatchKeys = new Set();
+        const groups = {};
+
+        // Iterate through all teams in this league to find their games
         league.teams.forEach(teamName => {
             const schedule = assignments[teamName];
             if (!Array.isArray(schedule)) return;
 
             schedule.forEach((entry, slotIndex) => {
                 if (!entry || !entry._h2h) return;
+
+                // FIX 1: Use direct division check (NO mapping teams to bunks)
+                const divName = getDivisionForSlot(entry.division);
+                if (!divName) return;
 
                 const text = entry.sport || "";
                 const m = text.match(/^(.*?)\s+vs\.?\s+(.*?)(?:\s*\(|$)/i);
@@ -935,15 +928,26 @@
                 const tA = m[1].trim();
                 const tB = m[2].trim();
 
+                // Ensure both teams belong to the league
                 if (league.teams.includes(tA) && league.teams.includes(tB)) {
-                    const label = getLabelForGame(teamName, slotIndex);
-                    const matchKey = [tA, tB].sort().join('::');
-                    const uniqueKey = matchKey + '::' + label;
+                    
+                    const gameLabel = getLabelForGame(divName, slotIndex);
+                    
+                    // Only import if it matches a known "League Game" slot in the skeleton
+                    if (gameLabel) {
+                        
+                        // FIX 5: Label includes Division
+                        const finalLabel = `${divName} – ${gameLabel}`;
 
-                    if (!uniqueMatchKeys.has(uniqueKey)) {
-                        uniqueMatchKeys.add(uniqueKey);
-                        if (!groups[label]) groups[label] = [];
-                        groups[label].push({ teamA: tA, teamB: tB });
+                        // FIX 4: Unique Key (Div + Slot + Teams) to prevent duplicates or cross-div merging
+                        const matchKey = [tA, tB].sort().join('::');
+                        const uniqueKey = `${divName}::${slotIndex}::${matchKey}`;
+
+                        if (!uniqueMatchKeys.has(uniqueKey)) {
+                            uniqueMatchKeys.add(uniqueKey);
+                            if (!groups[finalLabel]) groups[finalLabel] = [];
+                            groups[finalLabel].push({ teamA: tA, teamB: tB });
+                        }
                     }
                 }
             });
@@ -955,10 +959,9 @@
             return;
         }
 
+        // Sort labels naturally (Junior - League Game 1, Junior - League Game 2...)
         labelKeys.sort((a, b) => {
-            const nA = (a.match(/\d+/) || [0])[0];
-            const nB = (b.match(/\d+/) || [0])[0];
-            return parseInt(nA, 10) - parseInt(nB, 10) || a.localeCompare(b);
+            return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
         });
 
         labelKeys.forEach(label => {
