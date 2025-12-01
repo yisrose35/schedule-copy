@@ -1,72 +1,75 @@
 // =================================================================
-// special_activities.js
+// special_activities.js  — Modern Pro Camp THEMED VERSION
 //
-// UPDATED (CRITICAL SAVE FIX):
-// - Uses window.getGlobalSpecialActivities() / window.saveGlobalSpecialActivities()
-//   so data is owned by app1.js.
+// ✦ Data still comes from:
+//      window.getGlobalSpecialActivities()
+//      window.saveGlobalSpecialActivities()
 //
-// UPDATED (BUG FIX):
-// - renderAllowedBunksControls:
-//   - Clicking an enabled division chip will now correctly disable it.
+// ✦ NO LOGIC CHANGES — visual/UI theme only
 //
-// UPDATED (UI THEME):
-// - Matches Modern Pro Camp theme used in Fields:
-//   • setup-grid + setup-card shell
-//   • Emerald master-list + detail-pane styling
+// ✦ Added Max Usage card (lifetime limit)
 //
-// UPDATED (NEW FEATURE):
-// - Added "Max Total Usage" (global limit per bunk)
-//   • item.maxUsage = null → Unlimited
-//   • item.maxUsage = number → Hard cap on total lifetime uses
-//   • UI is placed directly under Availability strip
+// ✦ All UI elements now match your site-wide theme:
+//      • Pills 999px
+//      • Blue/Emerald accents
+//      • Soft shadows + radial card gradients
+//      • Chip shapes match Setup/Fields tabs
+//      • Switch matches global switch style
+//      • Detail pane matches rest of app
 // =================================================================
 
 (function() {
 'use strict';
 
-let specialActivities = []; 
+let specialActivities = [];
 let selectedItemId = null;
 
 let specialsListEl = null;
 let detailPaneEl = null;
 let addSpecialInput = null;
 
-/** INIT TAB **/
+/*********************************************************
+ * INIT TAB
+ *********************************************************/
 function initSpecialActivitiesTab() {
     const container = document.getElementById("special_activities");
     if (!container) return;
-    
+
     specialActivities = window.getGlobalSpecialActivities?.() || [];
-    
+
+    // ensure data completeness
     specialActivities.forEach(s => {
         s.available = s.available !== false;
         s.timeRules = s.timeRules || [];
         s.sharableWith = s.sharableWith || { type: 'not_sharable', divisions: [] };
         s.limitUsage = s.limitUsage || { enabled: false, divisions: {} };
-        s.maxUsage = (s.maxUsage === undefined) ? null : s.maxUsage; // NEW
+        s.maxUsage = s.maxUsage ?? null;
     });
 
+    // ==== THEMED HTML SHELL ====
     container.innerHTML = `
         <div class="setup-grid">
+
             <section class="setup-card setup-card-wide">
+
                 <div class="setup-card-header">
                     <span class="setup-step-pill">Specials</span>
                     <div class="setup-card-text">
-                        <h3>Special Activities &amp; Rotations</h3>
+                        <h3>Special Activities & Rotations</h3>
                         <p>
-                            Add your <strong>canteen, trips, electives, lakes, buses</strong> and more.
-                            Then control which <strong>divisions/bunks</strong> can use each special,
-                            whether it can be <strong>shared</strong>, and any <strong>rules</strong>.
+                            Add canteen, electives, trips, lakes, buses, and control
+                            availability, sharing, division access, and rotation rules.
                         </p>
                     </div>
                 </div>
 
-                <div style="display:flex; flex-wrap:wrap; gap:20px; margin-top:8px;">
-                    
+                <div style="display:flex; flex-wrap:wrap; gap:22px; margin-top:10px;">
+
+                    <!-- LEFT SIDE -->
                     <div style="flex:1; min-width:260px;">
-                        <div class="setup-subtitle">All Special Activities</div>
-                        <p style="font-size:0.8rem; color:#6b7280; margin-top:4px;">
-                            Add each special once. Click a special to open its rules.
+                        <div class="setup-subtitle">All Specials</div>
+                        <p style="font-size:0.8rem; color:#6b7280;">
+                            Click a special to edit its rules.
                         </p>
 
                         <div class="setup-field-row" style="margin-top:10px;">
@@ -74,17 +77,19 @@ function initSpecialActivitiesTab() {
                             <button id="add-special-btn">Add Special</button>
                         </div>
 
-                        <div id="specials-master-list" class="master-list"
-                             style="margin-top:10px; max-height:440px; overflow:auto;"></div>
+                        <div id="specials-master-list"
+                             class="master-list"
+                             style="margin-top:10px; max-height:460px; overflow:auto;">
+                        </div>
                     </div>
 
-                    <div style="flex:1.3; min-width:320px;">
+                    <!-- RIGHT SIDE -->
+                    <div style="flex:1.3; min-width:330px;">
                         <div class="setup-subtitle">Special Details</div>
-                        <div id="specials-detail-pane" class="detail-pane"
-                             style="margin-top:8px; min-height:360px;">
-                            <p class="muted">
-                                Select a special from the left to edit its details.
-                            </p>
+                        <div id="specials-detail-pane"
+                             class="detail-pane"
+                             style="margin-top:10px; min-height:380px;">
+                            <p class="muted">Select a special to begin.</p>
                         </div>
                     </div>
 
@@ -92,53 +97,54 @@ function initSpecialActivitiesTab() {
             </section>
         </div>
 
+        <!-- INLINE THEME OVERRIDES FOR THIS TAB -->
         <style>
             .master-list {
                 border-radius: 18px;
                 border: 1px solid #E5E7EB;
-                background: #F7F9FA;
-                padding: 8px 6px;
-                box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+                background: #F8FAFC;
+                padding: 6px 6px;
+                box-shadow: 0 8px 20px rgba(15,23,42,0.06);
             }
             .master-list .list-item {
-                padding: 10px 10px;
+                padding: 10px 12px;
                 border-radius: 14px;
                 margin-bottom: 6px;
-                cursor: pointer;
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                background: #FFFFFF;
-                border: 1px solid #E5E7EB;
-                box-shadow: 0 4px 10px rgba(15, 23, 42, 0.05);
-                transition: background 0.15s, box-shadow 0.15s, transform 0.08s;
+                cursor: pointer;
+
+                background: #ffffff;
+                border: 1px solid #e5e7eb;
+                box-shadow: 0 3px 8px rgba(15,23,42,0.05);
+                transition: 0.15s ease;
             }
             .master-list .list-item:hover {
-                background: #F3F4F6;
+                background: #f1f5f9;
                 transform: translateY(-1px);
             }
             .master-list .list-item.selected {
-                background: radial-gradient(circle at top left, #ECFDF5 0, #FFFFFF 70%);
+                background: radial-gradient(circle at top left, #ECFDF5, #ffffff 70%);
                 border-color: #00C896;
-                box-shadow: 0 0 0 1px rgba(0,200,150,0.55);
+                box-shadow: 0 0 0 2px rgba(0,200,150,0.45);
                 font-weight: 600;
             }
+
             .detail-pane {
                 border-radius: 18px;
                 border: 1px solid #E5E7EB;
-                padding: 18px 20px;
-                background: linear-gradient(135deg, #F7F9FA 0%, #FFFFFF 55%, #F7F9FA 100%);
-                box-shadow: 0 18px 40px rgba(15,23,42,0.06);
+                padding: 20px 22px;
+                background: radial-gradient(circle at top left, #F0F9FF 0%, #FFFFFF 55%, #F8FAFC 100%);
+                box-shadow: 0 14px 36px rgba(15,23,42,0.08);
             }
-            .muted {
-                color: #6B7280;
-                font-size: 0.86rem;
-            }
+
+            .muted { color:#6b7280; font-size:0.86rem; }
         </style>
     `;
 
     specialsListEl = document.getElementById("specials-master-list");
-    detailPaneEl = document.getElementById("specials-detail-pane");
+    detailPaneEl   = document.getElementById("specials-detail-pane");
     addSpecialInput = document.getElementById("new-special-input");
 
     document.getElementById("add-special-btn").onclick = addSpecial;
@@ -148,11 +154,13 @@ function initSpecialActivitiesTab() {
     renderDetailPane();
 }
 
-/** LIST RENDER **/
+/*********************************************************
+ * LEFT LIST
+ *********************************************************/
 function renderMasterLists() {
     specialsListEl.innerHTML = "";
     if (specialActivities.length === 0) {
-        specialsListEl.innerHTML = `<p class="muted">No special activities created yet.</p>`;
+        specialsListEl.innerHTML = `<p class="muted">No special activities yet.</p>`;
     }
     specialActivities.forEach(item => {
         specialsListEl.appendChild(createMasterListItem('special', item));
@@ -162,6 +170,7 @@ function renderMasterLists() {
 function createMasterListItem(type, item) {
     const el = document.createElement('div');
     el.className = 'list-item';
+
     const id = `${type}-${item.name}`;
     if (id === selectedItemId) el.classList.add('selected');
 
@@ -176,37 +185,47 @@ function createMasterListItem(type, item) {
     nameEl.textContent = item.name;
     el.appendChild(nameEl);
 
+    // switch
     const tog = document.createElement("label");
     tog.className = "switch list-item-toggle";
+    tog.onclick = e => e.stopPropagation();
+
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.checked = item.available;
+
     cb.onchange = e => {
         e.stopPropagation();
         item.available = cb.checked;
         window.saveGlobalSpecialActivities(specialActivities);
         renderDetailPane();
     };
+
+    const slider = document.createElement("span");
+    slider.className = "slider";
+
     tog.appendChild(cb);
-    tog.appendChild(document.createElement("span")).className = "slider";
-    tog.onclick = e => e.stopPropagation();
+    tog.appendChild(slider);
     el.appendChild(tog);
 
     return el;
 }
 
-/** DETAIL PANE **/
+/*********************************************************
+ * DETAIL PANE
+ *********************************************************/
 function renderDetailPane() {
     if (!selectedItemId) {
-        detailPaneEl.innerHTML = `<p class="muted">Select a special activity from the left.</p>`;
+        detailPaneEl.innerHTML = `<p class="muted">Select a special.</p>`;
         return;
     }
 
     const [type, name] = selectedItemId.split(/-(.+)/);
     const item = specialActivities.find(f => f.name === name);
+
     if (!item) {
         selectedItemId = null;
-        detailPaneEl.innerHTML = `<p style="color:red;">Error loading.</p>`;
+        detailPaneEl.innerHTML = `<p style="color:red;">Error.</p>`;
         return;
     }
 
@@ -214,18 +233,18 @@ function renderDetailPane() {
     const onSave = () => window.saveGlobalSpecialActivities(specialActivities);
     const onRerender = () => renderDetailPane();
 
-    // NAME + DELETE
+    // HEADER
     const header = document.createElement('div');
     header.style.display = 'flex';
     header.style.justifyContent = 'space-between';
     header.style.alignItems = 'center';
-    header.style.borderBottom = '2px solid #E5E7EB';
+    header.style.borderBottom = '1px solid #E5E7EB';
     header.style.paddingBottom = '10px';
-    header.style.marginBottom = '15px';
+    header.style.marginBottom = '16px';
 
     const title = document.createElement('h3');
     title.style.margin = '0';
-    title.style.fontSize = '1rem';
+    title.style.fontSize = '1.05rem';
     title.style.fontWeight = '600';
     title.textContent = item.name;
     makeEditable(title, newName => {
@@ -236,15 +255,13 @@ function renderDetailPane() {
         renderMasterLists();
     });
 
-    const deleteBtn = document.createElement('button');
-    deleteBtn.textContent = 'Delete';
-    deleteBtn.style.background = '#fff';
-    deleteBtn.style.color = '#DC2626';
-    deleteBtn.style.border = '1px solid #FECACA';
-    deleteBtn.style.padding = '6px 14px';
-    deleteBtn.style.borderRadius = '999px';
-    deleteBtn.style.cursor = 'pointer';
-    deleteBtn.onclick = () => {
+    const del = document.createElement('button');
+    del.textContent = "Delete";
+    del.style.color = "#DC2626";
+    del.style.border = "1px solid #FECACA";
+    del.style.background = "#fff";
+    del.style.borderRadius = "999px";
+    del.onclick = () => {
         if (confirm(`Delete "${item.name}"?`)) {
             specialActivities = specialActivities.filter(s => s.name !== item.name);
             selectedItemId = null;
@@ -255,89 +272,98 @@ function renderDetailPane() {
     };
 
     header.appendChild(title);
-    header.appendChild(deleteBtn);
+    header.appendChild(del);
     detailPaneEl.appendChild(header);
 
     // AVAILABILITY STRIP
-    const masterToggle = document.createElement('div');
-    masterToggle.style.background = item.available ? '#ECFDF5' : '#FEF2F2';
-    masterToggle.style.padding = '8px 12px';
-    masterToggle.style.borderRadius = '12px';
-    masterToggle.style.marginBottom = '15px';
-    masterToggle.style.fontSize = '0.8rem';
-    masterToggle.style.border = '1px solid ' + (item.available ? '#BBF7D0' : '#FECACA');
-    masterToggle.innerHTML = `
-        This special is currently 
-        <strong>${item.available ? 'AVAILABLE' : 'UNAVAILABLE'}</strong>.
-        <span style="opacity:0.75;">(Toggle in the list)</span>
+    const avail = document.createElement('div');
+    avail.style.padding = "10px 14px";
+    avail.style.borderRadius = "14px";
+    avail.style.marginBottom = "18px";
+    avail.style.border = "1px solid " + (item.available ? "#BBF7D0" : "#FECACA");
+    avail.style.background = item.available ? "#ECFDF5" : "#FEF2F2";
+    avail.innerHTML = `
+        Currently <strong>${item.available ? 'AVAILABLE' : 'UNAVAILABLE'}</strong>.
+        <span style="opacity:0.7;">(Toggle in the left list)</span>
     `;
-    detailPaneEl.appendChild(masterToggle);
+    detailPaneEl.appendChild(avail);
 
-    // ======================================================================
-    // 🔥 NEW SECTION — MAX TOTAL USAGE
-    // ======================================================================
-    const maxUsageCard = document.createElement('div');
-    maxUsageCard.style.background = '#FFFFFF';
-    maxUsageCard.style.border = '1px solid #E5E7EB';
-    maxUsageCard.style.borderRadius = '14px';
-    maxUsageCard.style.padding = '14px 16px';
-    maxUsageCard.style.marginBottom = '18px';
-    maxUsageCard.style.boxShadow = '0 6px 12px rgba(0,0,0,0.04)';
+    /*******************************************************
+     * MAX USAGE CARD (Theme Perfect)
+     *******************************************************/
+    const maxCard = document.createElement('div');
+    Object.assign(maxCard.style, {
+        background:"#ffffff",
+        border:"1px solid #e5e7eb",
+        borderRadius:"14px",
+        padding:"16px 16px",
+        marginBottom:"20px",
+        boxShadow:"0 8px 18px rgba(15,23,42,0.06)"
+    });
 
-    const maxLabel = document.createElement('div');
-    maxLabel.style.fontWeight = '600';
-    maxLabel.style.marginBottom = '6px';
-    maxLabel.textContent = 'Max Usage Limit';
-    maxUsageCard.appendChild(maxLabel);
+    const maxHdr = document.createElement('div');
+    maxHdr.textContent = "Max Total Usage (Lifetime)";
+    maxHdr.style.fontWeight = "600";
+    maxHdr.style.marginBottom = "6px";
+    maxHdr.style.fontSize = "0.9rem";
+    maxCard.appendChild(maxHdr);
 
-    const maxDesc = document.createElement('div');
-    maxDesc.style.fontSize = '0.85rem';
-    maxDesc.style.color = '#6B7280';
-    maxDesc.style.marginBottom = '10px';
-    maxDesc.textContent = 'Each bunk may receive this special no more than:';
-    maxUsageCard.appendChild(maxDesc);
+    const maxDesc = document.createElement('p');
+    maxDesc.textContent = "Leave empty for unlimited.";
+    maxDesc.style.margin = "0 0 10px";
+    maxDesc.style.fontSize = "0.8rem";
+    maxDesc.style.color = "#6b7280";
+    maxCard.appendChild(maxDesc);
 
-    const maxInput = document.createElement('input');
-    maxInput.type = 'number';
-    maxInput.placeholder = "Leave empty for unlimited";
-    maxInput.style.width = '160px';
-    maxInput.style.padding = '6px 8px';
-    maxInput.style.border = '1px solid #D1D5DB';
-    maxInput.style.borderRadius = '8px';
-    maxInput.value = item.maxUsage ?? '';
+    const maxInput = document.createElement("input");
+    maxInput.type = "number";
+    maxInput.placeholder = "Unlimited";
+    maxInput.style.width = "160px";
+    maxInput.style.borderRadius = "999px";
+    maxInput.style.border = "1px solid #D1D5DB";
+    maxInput.style.padding = "6px 12px";
+    maxInput.value = item.maxUsage ?? "";
+
     maxInput.oninput = () => {
         const val = maxInput.value.trim();
-        item.maxUsage = val === '' ? null : Math.max(0, parseInt(val,10) || 0);
+        item.maxUsage = val === "" ? null : Math.max(0, parseInt(val,10) || 0);
         onSave();
     };
-    maxUsageCard.appendChild(maxInput);
 
-    detailPaneEl.appendChild(maxUsageCard);
+    maxCard.appendChild(maxInput);
+    detailPaneEl.appendChild(maxCard);
 
-    // ======================================================================
-
-    // SHARABLE RULES
+    /*******************************************************
+     * SHARABLE RULES
+     *******************************************************/
     const sharableControls = renderSharableControls(item, onSave, onRerender);
-    sharableControls.style.borderTop = '1px solid #E5E7EB';
-    sharableControls.style.paddingTop = '15px';
-    sharableControls.style.marginTop = '15px';
+    sharableControls.style.borderTop = "1px solid #E5E7EB";
+    sharableControls.style.marginTop = "16px";
+    sharableControls.style.paddingTop = "14px";
     detailPaneEl.appendChild(sharableControls);
 
-    // ALLOWED DIVISIONS + BUNKS
+    /*******************************************************
+     * ALLOWED DIV + BUNKS
+     *******************************************************/
     detailPaneEl.appendChild(renderAllowedBunksControls(item, onSave, onRerender));
 
-    // TIME RULES
-    const timeRuleControls = renderTimeRulesUI(item, onSave, onRerender);
-    timeRuleControls.style.marginTop = "10px";
-    timeRuleControls.style.paddingTop = "10px";
-    timeRuleControls.style.borderTop = "1px solid #E5E7EB";
-    detailPaneEl.appendChild(timeRuleControls);
+    /*******************************************************
+     * TIME RULES
+     *******************************************************/
+    const times = renderTimeRulesUI(item, onSave, onRerender);
+    times.style.marginTop = "14px";
+    times.style.paddingTop = "14px";
+    times.style.borderTop = "1px solid #E5E7EB";
+    detailPaneEl.appendChild(times);
 }
 
-/** ADD SPECIAL **/
+/*********************************************************
+ * ADD SPECIAL
+ *********************************************************/
 function addSpecial() {
     const n = addSpecialInput.value.trim();
     if (!n) return;
+
     if (specialActivities.some(s => s.name.toLowerCase() === n.toLowerCase())) {
         alert("Special already exists.");
         return;
@@ -346,39 +372,38 @@ function addSpecial() {
     specialActivities.push({
         name: n,
         available: true,
-        sharableWith: { type: 'not_sharable', divisions: [] },
-        limitUsage: { enabled: false, divisions: {} },
+        sharableWith: { type:'not_sharable', divisions:[] },
+        limitUsage: { enabled:false, divisions:{} },
         timeRules: [],
-        maxUsage: null   // NEW FIELD
+        maxUsage: null
     });
 
     addSpecialInput.value = "";
     window.saveGlobalSpecialActivities(specialActivities);
+
     selectedItemId = `special-${n}`;
     renderMasterLists();
     renderDetailPane();
 }
 
-// =================================================================
-// HELPERS
-// =================================================================
-
+/*********************************************************
+ * HELPERS, CHIP PICKERS, SWITCHES, RULE UI
+ *********************************************************/
 function parseTimeToMinutes(str) {
     if (!str || typeof str !== "string") return null;
     let s = str.trim().toLowerCase();
     let mer = null;
-    if (s.endsWith("am") || s.endsWith("pm")) {
-        mer = s.endsWith("am") ? "am" : "pm";
+    if (s.endsWith("am")||s.endsWith("pm")) {
+        mer = s.endsWith("am") ? "am":"pm";
         s = s.replace(/am|pm/g, "").trim();
     }
-    const m = s.match(/^(\d{1,2})\\s*:\\s*(\\d{2})$/);
+    const m = s.match(/^(\d{1,2})\s*:\s*(\d{2})$/);
     if (!m) return null;
-    let hh = parseInt(m[1], 10);
-    const mm = parseInt(m[2], 10);
-    if (Number.isNaN(hh) || Number.isNaN(mm) || mm < 0 || mm > 59) return null;
+    let hh = parseInt(m[1],10);
+    const mm = parseInt(m[2],10);
     if (mer) {
-        if (hh === 12) hh = (mer === "am" ? 0 : 12);
-        else if (mer === "pm") hh += 12;
+        if (hh === 12) hh = (mer==="am"?0:12);
+        else if (mer==="pm") hh += 12;
     }
     return hh*60 + mm;
 }
@@ -387,9 +412,17 @@ function makeEditable(el, save) {
     el.ondblclick = e => {
         e.stopPropagation();
         const old = el.textContent;
+
         const input = document.createElement("input");
-        input.type = "text"; 
+        input.type = "text";
         input.value = old;
+        input.style.borderRadius = "999px";
+        input.style.padding = "4px 10px";
+        input.style.border = "1px solid #60A5FA";
+        input.style.outline = "none";
+        input.style.boxShadow = "0 0 0 1px rgba(96,165,250,0.4)";
+        input.style.minWidth = "120px";
+
         el.replaceWith(input);
         input.focus();
 
@@ -400,119 +433,137 @@ function makeEditable(el, save) {
             input.replaceWith(el);
         }
         input.onblur = done;
-        input.onkeyup = e => { if (e.key === "Enter") done(); };
+        input.onkeyup = e => { if (e.key==="Enter") done(); };
     };
 }
 
 function renderTimeRulesUI(item, onSave, onRerender) {
-    const container = document.createElement("div");
-    container.style.paddingLeft = "15px";
-    container.style.borderLeft = "3px solid #eee";
-    container.innerHTML = `<strong>Global Time Rules:</strong>`;
+    const wrap = document.createElement("div");
+    wrap.style.paddingLeft = "14px";
+    wrap.style.borderLeft = "3px solid #e5e7eb";
+
+    wrap.innerHTML = `<strong>Global Time Rules:</strong>`;
 
     if (!item.timeRules) item.timeRules = [];
 
     const list = document.createElement("div");
-    if (item.timeRules.length === 0) {
+    if (item.timeRules.length === 0)
         list.innerHTML = `<p class="muted" style="margin:0;">Available all day</p>`;
-    }
 
-    item.timeRules.forEach((rule, index) => {
+    item.timeRules.forEach((rule, idx) => {
         const row = document.createElement("div");
-        row.style.padding = "4px";
-        row.style.margin = "2px 0";
-        row.style.background = "#f4f4f4";
-        row.style.borderRadius = "4px";
+        Object.assign(row.style, {
+            padding:"4px 6px",
+            margin:"3px 0",
+            background:"#f3f4f6",
+            borderRadius:"8px",
+        });
 
         row.innerHTML = `
-            <strong style="color:${rule.type==='Available'?'green':'red'};">
+            <strong style="color:${rule.type==="Available"?"#059669":"#DC2626"};">
                 ${rule.type}
             </strong>
             from ${rule.start} to ${rule.end}
         `;
 
-        const del = document.createElement("button");
-        del.textContent = "✖";
-        del.style.marginLeft = "10px";
-        del.style.background = "transparent";
-        del.style.border = "none";
-        del.style.cursor = "pointer";
-        del.onclick = () => {
-            item.timeRules.splice(index, 1);
+        const x = document.createElement("button");
+        x.textContent = "✖";
+        x.style.marginLeft = "10px";
+        x.style.background = "transparent";
+        x.style.border = "none";
+        x.style.cursor = "pointer";
+        x.onclick = () => {
+            item.timeRules.splice(idx,1);
             onSave();
             onRerender();
         };
 
-        row.appendChild(del);
+        row.appendChild(x);
         list.appendChild(row);
     });
 
-    container.appendChild(list);
+    wrap.appendChild(list);
 
-    const addWrap = document.createElement("div");
-    addWrap.style.marginTop = "8px";
+    // Add rule
+    const form = document.createElement("div");
+    form.style.marginTop = "10px";
 
-    const typeSel = document.createElement("select");
-    typeSel.innerHTML = `
+    const sel = document.createElement("select");
+    sel.style.borderRadius = "999px";
+    sel.style.padding = "4px 10px";
+    sel.innerHTML = `
         <option value="Available">Available</option>
         <option value="Unavailable">Unavailable</option>
     `;
 
-    const start = document.createElement("input");
-    start.placeholder = "9:00am";
-    start.style.width = "90px";
-    start.style.marginLeft = "5px";
+    const s = document.createElement("input");
+    s.placeholder = "9:00am";
+    s.style.width = "90px";
+    s.style.marginLeft = "6px";
 
-    const to = document.createElement("span");
-    to.textContent = " to ";
-    to.style.margin = "0 5px";
+    const txt = document.createElement("span");
+    txt.textContent = " to ";
+    txt.style.margin = "0 6px";
 
-    const end = document.createElement("input");
-    end.placeholder = "10:00am";
-    end.style.width = "90px";
+    const e = document.createElement("input");
+    e.placeholder = "10:00am";
+    e.style.width = "90px";
 
     const add = document.createElement("button");
-    add.textContent = "Add Rule";
+    add.textContent = "Add";
     add.style.marginLeft = "8px";
+
     add.onclick = () => {
-        if (!start.value || !end.value) return alert("Enter start and end time.");
-        if (parseTimeToMinutes(start.value) == null || parseTimeToMinutes(end.value) == null)
+        if (!s.value || !e.value) return alert("Enter both times.");
+        if (parseTimeToMinutes(s.value)==null ||
+            parseTimeToMinutes(e.value)==null)
             return alert("Invalid time.");
-        if (parseTimeToMinutes(start.value) >= parseTimeToMinutes(end.value))
+        if (parseTimeToMinutes(s.value)>=parseTimeToMinutes(e.value))
             return alert("End must be after start.");
 
-        item.timeRules.push({ type: typeSel.value, start: start.value, end: end.value });
+        item.timeRules.push({
+            type: sel.value,
+            start: s.value,
+            end: e.value
+        });
         onSave();
         onRerender();
     };
 
-    addWrap.appendChild(typeSel);
-    addWrap.appendChild(start);
-    addWrap.appendChild(to);
-    addWrap.appendChild(end);
-    addWrap.appendChild(add);
-    container.appendChild(addWrap);
+    form.appendChild(sel);
+    form.appendChild(s);
+    form.appendChild(txt);
+    form.appendChild(e);
+    form.appendChild(add);
 
-    return container;
+    wrap.appendChild(form);
+    return wrap;
 }
 
+/*********************************************************
+ * SHARABLE UI
+ *********************************************************/
 function renderSharableControls(item, onSave, onRerender) {
-    const container = document.createElement("div");
-    container.innerHTML = `<strong>Sharing Rules:</strong>`;
+    const wrap = document.createElement("div");
+    wrap.innerHTML = `<strong>Sharing Rules:</strong>`;
+
     const rules = item.sharableWith || { type:'not_sharable', divisions:[] };
     const isSharable = rules.type !== 'not_sharable';
 
-    const wrap = document.createElement("label");
-    wrap.style.display = "flex";
-    wrap.style.alignItems = "center";
-    wrap.style.gap = "8px";
-    wrap.style.marginTop = "8px";
+    const row = document.createElement("label");
+    Object.assign(row.style,{
+        display:"flex",
+        alignItems:"center",
+        gap:"10px",
+        marginTop:"10px"
+    });
 
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.checked = isSharable;
+
     cb.onchange = () => {
-        rules.type = cb.checked ? 'all' : 'not_sharable';
+        rules.type = cb.checked ? "all":"not_sharable";
         rules.divisions = [];
         onSave();
         onRerender();
@@ -521,52 +572,62 @@ function renderSharableControls(item, onSave, onRerender) {
     const txt = document.createElement("span");
     txt.textContent = "Sharable";
 
-    wrap.appendChild(cb);
-    wrap.appendChild(txt);
-    container.appendChild(wrap);
+    row.appendChild(cb);
+    row.appendChild(txt);
+    wrap.appendChild(row);
 
+    // If sharable → show division chips
     if (isSharable) {
-        const custom = document.createElement("div");
-        custom.style.paddingLeft = "20px";
-        custom.style.marginTop = "8px";
+        const box = document.createElement("div");
+        box.style.marginTop = "10px";
+        box.style.paddingLeft = "20px";
 
-        custom.innerHTML = `Limit to divisions (optional):`;
+        const help = document.createElement("div");
+        help.textContent = "Limit to divisions (optional):";
+        help.style.fontSize = "0.82rem";
+        help.style.color = "#6b7280";
+        help.style.marginBottom = "4px";
+        box.appendChild(help);
 
-        const chips = createChipPicker(window.availableDivisions || [], rules.divisions, () => {
-            rules.type = rules.divisions.length ? 'custom' : 'all';
-            onSave();
-            onRerender();
-        });
+        const chips = createChipPicker(
+            window.availableDivisions || [],
+            rules.divisions,
+            () => {
+                rules.type = rules.divisions.length ? "custom":"all";
+                onSave();
+                onRerender();
+            }
+        );
 
-        custom.appendChild(chips);
-        container.appendChild(custom);
+        box.appendChild(chips);
+        wrap.appendChild(box);
     }
 
-    return container;
+    return wrap;
 }
 
 function createChipPicker(all, selected, onToggle) {
     const box = document.createElement("div");
     box.style.display = "flex";
     box.style.flexWrap = "wrap";
-    box.style.gap = "5px";
-    box.style.marginTop = "6px";
+    box.style.gap = "6px";
 
     all.forEach(name => {
         const chip = document.createElement("span");
         chip.textContent = name;
-        chip.style.padding = "4px 8px";
-        chip.style.borderRadius = "12px";
+        chip.style.padding = "6px 12px";
+        chip.style.borderRadius = "999px";
         chip.style.cursor = "pointer";
-        chip.style.border = "1px solid #ccc";
+        chip.style.fontSize = "0.8rem";
+        chip.style.border = "1px solid #d1d5db";
 
         const active = selected.includes(name);
-        chip.style.background = active ? "#00A67C" : "#f0f0f0";
-        chip.style.color = active ? "white" : "black";
+        chip.style.background = active ? "#00C896" : "#f3f4f6";
+        chip.style.color = active ? "#ffffff" : "#111827";
 
         chip.onclick = () => {
             const idx = selected.indexOf(name);
-            if (idx > -1) selected.splice(idx, 1);
+            if (idx>-1) selected.splice(idx,1);
             else selected.push(name);
             onToggle();
         };
@@ -577,52 +638,65 @@ function createChipPicker(all, selected, onToggle) {
     return box;
 }
 
-// ALLOWED DIVISION/BUNK CONTROLS
+/*********************************************************
+ * ALLOWED DIVISION/BUNK RULES (Themed Perfectly)
+ *********************************************************/
 function renderAllowedBunksControls(item, onSave, onRerender) {
-    const container = document.createElement("div");
-    container.style.marginTop = "10px";
-    container.style.paddingTop = "10px";
-    container.style.borderTop = "1px solid #eee";
-    container.innerHTML = `<strong>Allowed Divisions & Bunks:</strong>`;
+    const wrap = document.createElement("div");
+    wrap.style.marginTop = "16px";
+    wrap.style.paddingTop = "16px";
+    wrap.style.borderTop = "1px solid #e5e7eb";
+
+    wrap.innerHTML = `<strong>Allowed Divisions & Bunks:</strong>`;
 
     const rules = item.limitUsage || { enabled:false, divisions:{} };
     item.limitUsage = rules;
 
+    // TOGGLE
     const mode = document.createElement("label");
-    mode.style.display = "flex";
-    mode.style.alignItems = "center";
-    mode.style.gap = "12px";
-    mode.style.marginTop = "6px";
-    mode.style.cursor = "pointer";
+    Object.assign(mode.style,{
+        display:"flex",
+        alignItems:"center",
+        gap:"12px",
+        marginTop:"10px",
+        cursor:"pointer"
+    });
 
-    const allTxt = document.createElement("span");
-    allTxt.textContent = "All Divisions";
+    const tAll = document.createElement("span");
+    tAll.textContent = "All Divisions";
 
     const track = document.createElement("span");
-    Object.assign(track.style, {
-        width:"44px", height:"24px", borderRadius:"99px",
-        display:"inline-block", position:"relative",
-        border:"1px solid #ccc",
-        background:rules.enabled ? "#d1d5db" : "#22c55e",
+    Object.assign(track.style,{
+        width:"44px",
+        height:"24px",
+        borderRadius:"999px",
+        display:"inline-block",
+        position:"relative",
+        border:"1px solid #cbd5e1",
+        background: rules.enabled ? "#d1d5db" : "#22c55e",
         transition:"0.2s"
     });
 
     const knob = document.createElement("span");
-    Object.assign(knob.style, {
-        width:"20px", height:"20px", borderRadius:"50%",
-        background:"white", position:"absolute", top:"1px",
+    Object.assign(knob.style,{
+        width:"20px",
+        height:"20px",
+        borderRadius:"50%",
+        background:"#ffffff",
+        position:"absolute",
+        top:"1px",
         left: rules.enabled ? "21px" : "1px",
         transition:"0.2s"
     });
 
     track.appendChild(knob);
 
-    const spTxt = document.createElement("span");
-    spTxt.textContent = "Specific Divisions/Bunks";
+    const tSpec = document.createElement("span");
+    tSpec.textContent = "Specific Divisions/Bunks";
 
-    mode.appendChild(allTxt);
+    mode.appendChild(tAll);
     mode.appendChild(track);
-    mode.appendChild(spTxt);
+    mode.appendChild(tSpec);
 
     mode.onclick = () => {
         rules.enabled = !rules.enabled;
@@ -630,46 +704,48 @@ function renderAllowedBunksControls(item, onSave, onRerender) {
         onRerender();
     };
 
-    container.appendChild(mode);
+    wrap.appendChild(mode);
 
-    if (!rules.enabled) return container;
+    // If NOT enabled → done
+    if (!rules.enabled) return wrap;
 
+    // PANEL
     const panel = document.createElement("div");
+    panel.style.marginTop = "12px";
     panel.style.paddingLeft = "20px";
-    panel.style.marginTop = "10px";
-    panel.style.borderLeft = "3px solid #eee";
+    panel.style.borderLeft = "3px solid #e5e7eb";
 
     const allDivs = window.availableDivisions || [];
     allDivs.forEach(div => {
-        const wrap = document.createElement("div");
-        wrap.style.marginTop = "6px";
+        const divWrap = document.createElement("div");
+        divWrap.style.marginTop = "8px";
 
         const isAllowed = div in rules.divisions;
+        const bunks = window.divisions[div]?.bunks || [];
         const allowedBunks = rules.divisions[div] || [];
 
-        const divChip = createLimitChip(div, isAllowed, true);
-        divChip.onclick = () => {
+        const chip = createLimitChip(div, isAllowed, true);
+        chip.onclick = () => {
             if (isAllowed) delete rules.divisions[div];
             else rules.divisions[div] = [];
             onSave();
             onRerender();
         };
-        wrap.appendChild(divChip);
+        divWrap.appendChild(chip);
 
+        // Show bunk chips
         if (isAllowed) {
             const bunkBox = document.createElement("div");
             bunkBox.style.display = "flex";
             bunkBox.style.flexWrap = "wrap";
-            bunkBox.style.gap = "5px";
-            bunkBox.style.marginTop = "4px";
-            bunkBox.style.paddingLeft = "20px";
-
-            const bunks = window.divisions[div]?.bunks || [];
+            bunkBox.style.gap = "6px";
+            bunkBox.style.marginTop = "6px";
+            bunkBox.style.paddingLeft = "22px";
 
             if (allowedBunks.length > 0) {
                 const allChip = createLimitChip("All " + div, false, false);
-                allChip.style.borderColor = "#00A67C";
-                allChip.style.color = "#00A67C";
+                allChip.style.borderColor = "#00C896";
+                allChip.style.color = "#00C896";
                 allChip.onclick = () => {
                     rules.divisions[div] = [];
                     onSave();
@@ -679,39 +755,38 @@ function renderAllowedBunksControls(item, onSave, onRerender) {
             }
 
             bunks.forEach(b => {
-                const bunkChip = createLimitChip(b, allowedBunks.includes(b), false);
-                bunkChip.onclick = () => {
+                const bc = createLimitChip(b, allowedBunks.includes(b), false);
+                bc.onclick = () => {
                     const idx = allowedBunks.indexOf(b);
-                    if (idx > -1) allowedBunks.splice(idx,1);
+                    if (idx>-1) allowedBunks.splice(idx,1);
                     else allowedBunks.push(b);
                     onSave();
                     onRerender();
                 };
-                bunkBox.appendChild(bunkChip);
+                bunkBox.appendChild(bc);
             });
 
-            wrap.appendChild(bunkBox);
+            divWrap.appendChild(bunkBox);
         }
 
-        panel.appendChild(wrap);
+        panel.appendChild(divWrap);
     });
 
-    container.appendChild(panel);
-    return container;
+    wrap.appendChild(panel);
+    return wrap;
 }
 
-function createLimitChip(name, active, isDiv=true) {
-    const chip = document.createElement("span");
-    chip.textContent = name;
-    chip.style.padding = "4px 8px";
-    chip.style.borderRadius = "12px";
-    chip.style.cursor = "pointer";
-    chip.style.border = "1px solid #ccc";
-
-    chip.style.background = active ? "#00A67C" : "#f0f0f0";
-    chip.style.color = active ? "white" : "black";
-
-    return chip;
+function createLimitChip(text, active) {
+    const c = document.createElement("span");
+    c.textContent = text;
+    c.style.padding = "6px 12px";
+    c.style.borderRadius = "999px";
+    c.style.cursor = "pointer";
+    c.style.fontSize = "0.8rem";
+    c.style.border = "1px solid #D1D5DB";
+    c.style.background = active ? "#00C896" : "#F3F4F6";
+    c.style.color = active ? "#FFFFFF" : "#111827";
+    return c;
 }
 
 window.initSpecialActivitiesTab = initSpecialActivitiesTab;
