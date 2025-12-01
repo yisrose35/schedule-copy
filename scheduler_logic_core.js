@@ -11,6 +11,8 @@
 //   to ensure bunks with fewer specials get priority pick.
 // - BUG FIX: Moved helper functions to top of scope to prevent ReferenceErrors.
 // - LEAGUE FIX: Randomizes matchups per slot to prevent same-team replays.
+// - GAME NUMBER FIX: Now correctly increments game numbers (e.g., Game 1, Game 2)
+//   even if multiple games happen on the same day, and supports infinite game numbers.
 // ============================================================================
 
 (function() {
@@ -1225,7 +1227,7 @@
             // So we subtract 1 to get the round index we just generated.
             const nextRoundIndex = window.leagueRoundState?.[leagueName]?.currentRound || 0;
             // Modulo math for "previous round": (next - 1 + total) % total
-            let playedIndex = (nextRoundIndex - 1 + totalRounds) % totalRounds;
+            let playedIndex = nextRoundIndex - 1; // Direct absolute calculation
             if (playedIndex < 0) playedIndex = 0; // fallback safety
             let gameNumber = playedIndex + 1;
             const gameLabel = `Game ${gameNumber}`;
@@ -1402,7 +1404,8 @@
             const numTeams = leagueTeams.length;
             const totalRounds = (numTeams % 2 === 0) ? (numTeams - 1) : numTeams;
             const nextRoundIndex = window.leagueRoundState?.[leagueName]?.currentRound || 0;
-            let playedIndex = (nextRoundIndex - 1 + totalRounds) % totalRounds;
+            // No Modulo here so we get "Game 6" instead of "Game 1" on rollover
+            let playedIndex = nextRoundIndex - 1; 
             if (playedIndex < 0) playedIndex = 0;
             let gameNumber = playedIndex + 1;
             const gameLabel = `Game ${gameNumber}`; // e.g. "Game 6"
