@@ -8,6 +8,7 @@
 // - FIX: Refined "Lookback" logic to check specific end times.
 //        (Fixes 2:15 vs 2:20 gap while catching 2:30 vs 2:20 overlap)
 // - FIX: Removed syntax error (extra brace at end of file)
+// - FIX: Added missing parseTimeRule helper function
 // ============================================================================
 
 (function() {
@@ -344,6 +345,18 @@
     // =================================================================
     // 3. DATA LOADER (Unchanged)
     // =================================================================
+    
+    // --- Helper for Time Rules ---
+    function parseTimeRule(rule) {
+        if (!rule) return null;
+        if (typeof rule.startMin === "number" && typeof rule.endMin === "number") return rule;
+        return {
+            ...rule,
+            startMin: Utils.parseTimeToMinutes(rule.start),
+            endMin: Utils.parseTimeToMinutes(rule.end)
+        };
+    }
+
     Utils.loadAndFilterData = function() {
         const globalSettings = window.loadGlobalSettings?.() || {};
         const app1Data = globalSettings.app1 || {};
