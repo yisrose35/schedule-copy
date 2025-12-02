@@ -114,11 +114,10 @@
     const isClear = (value === "" || value.toUpperCase() === "CLEAR" || value.toUpperCase() === "FREE");
     
     // --- VALIDATION GATE START ---
-    // FIX: Check if SchedulerCoreUtils exists before using it to prevent crashes
     if (!isClear && window.SchedulerCoreUtils && typeof window.SchedulerCoreUtils.loadAndFilterData === 'function') {
         const warnings = [];
         
-        // 1. Load fresh data
+        // Load fresh data
         const config = window.SchedulerCoreUtils.loadAndFilterData();
         const { activityProperties, historicalCounts, lastUsedDates, bunkMetaData, sportMetaData } = config;
         
@@ -126,7 +125,7 @@
         const resolvedName = resolveResourceName(value, allKnown) || value;
         const props = activityProperties[resolvedName]; 
         
-        // A. DUPLICATE CHECK (Already doing this today?)
+        // A. DUPLICATE CHECK
         const currentSchedule = window.scheduleAssignments[bunk] || [];
         const targetSlots = findSlotsForRange(startMin, endMin);
         
@@ -135,7 +134,9 @@
             if (entry && !entry.continuation) {
                 const entryRaw = entry.field || entry._activity;
                 const entryRes = resolveResourceName(entryRaw, allKnown) || entryRaw;
-                if (entryRes && resolvedName && entryRes.toLowerCase() === resolvedName.toLowerCase()) {
+                
+                // FIX HERE: Use String() to safely handle numbers or non-text data
+                if (entryRes && resolvedName && String(entryRes).toLowerCase() === String(resolvedName).toLowerCase()) {
                      const timeLabel = window.unifiedTimes[idx]?.label || minutesToTimeLabel(window.unifiedTimes[idx].start);
                      warnings.push(`⚠️ DUPLICATE: ${bunk} is already scheduled for "${resolvedName}" at ${timeLabel}.`);
                 }
@@ -152,7 +153,8 @@
                     if (targetSlots.includes(idx)) return; 
                     if (entry && !entry.continuation) {
                         const entryRes = resolveResourceName(entry.field || entry._activity, allKnown);
-                        if (entryRes === resolvedName) todayCount++;
+                        // FIX HERE: String safety check
+                        if (String(entryRes).toLowerCase() === String(resolvedName).toLowerCase()) todayCount++;
                     }
                 });
                 const total = historyCount + todayCount + 1; 
@@ -163,7 +165,7 @@
                 }
             }
 
-            // C. CAPACITY CHECK (With Intersection Logic)
+            // C. CAPACITY CHECK
             const slotsToCheck = findSlotsForRange(startMin, endMin);
             const bunkSize = bunkMetaData[bunk]?.size || 0;
             const maxHeadcount = sportMetaData[resolvedName]?.maxCapacity || Infinity;
@@ -183,27 +185,25 @@
                         const entryRaw = (typeof entry.field === 'object') ? entry.field.name : entry.field;
                         const entryRes = resolveResourceName(entryRaw || entry._activity, allKnown);
                         
-                        if (entryRes === resolvedName) {
+                        // FIX HERE: String safety check
+                        if (String(entryRes).toLowerCase() === String(resolvedName).toLowerCase()) {
                             bunksOnField.push(otherBunk);
                             headcountOnField += (bunkMetaData[otherBunk]?.size || 0);
                         }
                     }
                 });
 
-                // Check Bunk Limit
                 if (bunksOnField.length >= bunkLimit) {
                     const timeStr = window.unifiedTimes[slotIdx].label || minutesToTimeLabel(window.unifiedTimes[slotIdx].start);
                     warnings.push(`⚠️ CAPACITY: "${resolvedName}" is full at ${timeStr}.\n   Occupied by: ${bunksOnField.join(", ")}.`);
                     break; 
                 }
 
-                // Check Headcount Limit
                 if (maxHeadcount !== Infinity && (headcountOnField + bunkSize > maxHeadcount)) {
                     warnings.push(`⚠️ HEADCOUNT: "${resolvedName}" will have ${headcountOnField + bunkSize} kids (Max ${maxHeadcount}).`);
                     break;
                 }
                 
-                // D. TIME RULES
                 if (!window.SchedulerCoreUtils.isTimeAvailable(slotIdx, props)) {
                      const timeStr = window.unifiedTimes[slotIdx].label || minutesToTimeLabel(window.unifiedTimes[slotIdx].start);
                      warnings.push(`⚠️ TIME: "${resolvedName}" is closed/unavailable at ${timeStr}.`);
@@ -220,15 +220,13 @@
             }
         }
     } 
-    // Fallback log if utils are missing
     else if (!isClear && (!window.SchedulerCoreUtils || typeof window.SchedulerCoreUtils.loadAndFilterData !== 'function')) {
         console.warn("SchedulerCoreUtils not found or invalid. Skipping validation logic.");
     }
 
-    // --- APPLY EDIT (Using Intersection Logic to fill slots) ---
+    // --- APPLY EDIT ---
     const slots = findSlotsForRange(startMin, endMin);
-
-    // Safety check: ensure slots exist
+    
     if (!slots || slots.length === 0) {
         alert("Error: Could not match this time range to the internal schedule grid. Please refresh the page.");
         return;
@@ -254,7 +252,6 @@
     saveSchedule();
     updateTable();
   }
-
   function getEntry(bunk, slotIndex) {
     const a = window.scheduleAssignments || {};
     if (!a[bunk]) return null;
