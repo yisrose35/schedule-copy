@@ -1,11 +1,11 @@
 // ============================================================================
-// scheduler_ui.js (VALIDATION GATE & LIVE HISTORY)
+// scheduler_ui.js (UPDATED: DETAILED ALERTS + FUZZY MATCHING)
 //
 // Supports:
-// - Manual Editing with Rule Validation (Capacity, Frequency, Time)
-// - "Live" History: Edits update the count immediately for the next check.
-// - Staggered schedule view (one table per division)
-// - League & Specialty League merged rows
+// - Manual Editing with Rule Validation
+// - Smart "Resource Resolver" to handle extras like "- Lineup"
+// - Detailed Capacity alerts (lists specific bunks)
+// - Detailed History alerts (lists specific dates)
 // ============================================================================
 
 (function () {
@@ -48,6 +48,29 @@
   }
 
   // ==========================================================================
+  // RESOURCE RESOLVER (Fuzzy Matcher)
+  // ==========================================================================
+  function resolveResourceName(input, knownNames) {
+      if (!input || !knownNames) return null;
+      const cleanInput = String(input).toLowerCase().trim();
+      
+      // 1. Exact Match (Best)
+      if (knownNames.includes(input)) return input;
+
+      // 2. Starts With (e.g. "Basketball Court B - Lineup" -> "Basketball Court B")
+      // Sort known names by length descending to catch specific ones first
+      const sortedNames = [...knownNames].sort((a,b) => b.length - a.length);
+      
+      for (const name of sortedNames) {
+          const cleanName = name.toLowerCase().trim();
+          if (cleanInput.startsWith(cleanName)) {
+              return name;
+          }
+      }
+      return null; // No match found in official list
+  }
+
+  // ==========================================================================
   // DETECT GENERATED EVENT TYPES
   // ==========================================================================
   const UI_GENERATED_EVENTS = new Set([
@@ -70,7 +93,7 @@
   }
 
   // ==========================================================================
-  // SCHEDULE EDITOR (With Validation Gate)
+  // SCHEDULE EDITOR (With Smart Validation)
   // ==========================================================================
   function findSlotsForRange(startMin, endMin) {
     const slots = [];
@@ -96,7 +119,7 @@
       current
     );
 
-    if (newName === null) return; // User cancelled
+    if (newName === null) return; 
 
     const value = newName.trim();
     const isClear = (value === "" || value.toUpperCase() === "CLEAR" || value.toUpperCase() === "FREE");
@@ -105,86 +128,85 @@
     if (!isClear) {
         const warnings = [];
         
-        // 1. Load fresh data (History + Rules)
-        // We re-load here to ensure we catch any edits made 10 seconds ago.
+        // 1. Load fresh data
         const config = window.SchedulerCoreUtils.loadAndFilterData();
-        const { activityProperties, historicalCounts, bunkMetaData, sportMetaData } = config;
+        const { activityProperties, historicalCounts, lastUsedDates, bunkMetaData, sportMetaData } = config;
         
-        const props = activityProperties[value]; // Rules for the new activity
+        // Resolve the "Official" resource name from the user input (handle fuzzy matches)
+        const allKnown = Object.keys(activityProperties);
+        const resolvedName = resolveResourceName(value, allKnown) || value;
+        const props = activityProperties[resolvedName]; 
         
         if (props) {
             // A. CHECK FREQUENCY / MAX USAGE
-            // History + Today's Usage so far
             const max = props.maxUsage || 0;
             if (max > 0) {
-                const historyCount = historicalCounts[bunk]?.[value] || 0;
+                const historyCount = historicalCounts[bunk]?.[resolvedName] || 0;
                 
-                // Scan "Today" (window.scheduleAssignments) to see if we already scheduled it elsewhere today
+                // Scan "Today"
                 let todayCount = 0;
                 const schedule = window.scheduleAssignments[bunk] || [];
-                // We must count "blocks", not slots. Simplest heuristic: check unique activities that aren't continuations.
-                // Or better: just count every entry that isn't null/free/continuation matching the name.
-                // NOTE: We exclude the *current* slots being edited to avoid double counting if we are just renaming/reconfirming.
                 const targetSlots = findSlotsForRange(startMin, endMin);
                 
                 schedule.forEach((entry, idx) => {
-                    if (targetSlots.includes(idx)) return; // Ignore the slots we are about to overwrite
-                    if (entry && entry._activity === value && !entry.continuation) {
-                        todayCount++;
+                    if (targetSlots.includes(idx)) return; 
+                    if (entry && !entry.continuation) {
+                        const entryRes = resolveResourceName(entry.field || entry._activity, allKnown);
+                        if (entryRes === resolvedName) todayCount++;
                     }
                 });
 
-                const total = historyCount + todayCount + 1; // +1 for this new assignment
+                const total = historyCount + todayCount + 1; 
                 if (total > max) {
-                    warnings.push(`⚠️ MAX USAGE: ${bunk} has used "${value}" ${historyCount + todayCount} times. Limit is ${max}.`);
+                    const lastDateStr = lastUsedDates[bunk]?.[resolvedName];
+                    const dateInfo = lastDateStr ? ` (Last used: ${lastDateStr})` : "";
+                    warnings.push(`⚠️ MAX USAGE: ${bunk} has used "${resolvedName}" ${historyCount + todayCount} times${dateInfo}. Limit is ${max}.`);
                 }
             }
 
-            // B. CHECK FIELD CAPACITY (At this specific time)
-            // We need to check every slot in the range
+            // B. CHECK FIELD CAPACITY
             const slotsToCheck = findSlotsForRange(startMin, endMin);
             const bunkSize = bunkMetaData[bunk]?.size || 0;
-            const maxHeadcount = sportMetaData[value]?.maxCapacity || Infinity;
+            const maxHeadcount = sportMetaData[resolvedName]?.maxCapacity || Infinity;
             
-            // Shared Limit (Number of Bunks)
             let bunkLimit = 1;
             if (props.sharableWith?.capacity) bunkLimit = parseInt(props.sharableWith.capacity);
             else if (props.sharable || props.sharableWith?.type === 'all') bunkLimit = 2;
 
             for (const slotIdx of slotsToCheck) {
-                let bunksOnField = 0;
+                const bunksOnField = []; // Store NAMES of conflicting bunks
                 let headcountOnField = 0;
 
-                // Scan all OTHER bunks at this slot
                 Object.keys(window.scheduleAssignments).forEach(otherBunk => {
-                    if (otherBunk === bunk) return; // Don't count myself
+                    if (otherBunk === bunk) return; 
                     const entry = window.scheduleAssignments[otherBunk][slotIdx];
-                    // Check if entry matches the activity name or field name
                     if (entry) {
-                        const entryName = (typeof entry.field === 'object') ? entry.field.name : entry.field;
-                        // Use loose matching or strict? ActivityProperties uses exact names.
-                        if (entryName === value || entry._activity === value) {
-                            bunksOnField++;
+                        const entryRaw = (typeof entry.field === 'object') ? entry.field.name : entry.field;
+                        const entryRes = resolveResourceName(entryRaw || entry._activity, allKnown);
+                        
+                        if (entryRes === resolvedName) {
+                            bunksOnField.push(otherBunk);
                             headcountOnField += (bunkMetaData[otherBunk]?.size || 0);
                         }
                     }
                 });
 
                 // Check Bunk Limit
-                if (bunksOnField >= bunkLimit) {
-                    warnings.push(`⚠️ CAPACITY: "${value}" is full at ${minutesToTimeLabel(window.unifiedTimes[slotIdx].start)}. (${bunksOnField}/${bunkLimit} bunks).`);
-                    break; // Only warn once per edit
+                if (bunksOnField.length >= bunkLimit) {
+                    const timeStr = minutesToTimeLabel(window.unifiedTimes[slotIdx].start);
+                    warnings.push(`⚠️ CAPACITY: "${resolvedName}" is full at ${timeStr}.\n   Occupied by: ${bunksOnField.join(", ")}.`);
+                    break; 
                 }
 
                 // Check Headcount Limit
                 if (maxHeadcount !== Infinity && (headcountOnField + bunkSize > maxHeadcount)) {
-                    warnings.push(`⚠️ HEADCOUNT: "${value}" will have ${headcountOnField + bunkSize} kids (Max ${maxHeadcount}).`);
+                    warnings.push(`⚠️ HEADCOUNT: "${resolvedName}" will have ${headcountOnField + bunkSize} kids (Max ${maxHeadcount}).`);
                     break;
                 }
                 
                 // C. CHECK TIME RULES
                 if (!window.SchedulerCoreUtils.isTimeAvailable(slotIdx, props)) {
-                     warnings.push(`⚠️ TIME: "${value}" is closed/unavailable at ${minutesToTimeLabel(window.unifiedTimes[slotIdx].start)}.`);
+                     warnings.push(`⚠️ TIME: "${resolvedName}" is closed/unavailable at ${minutesToTimeLabel(window.unifiedTimes[slotIdx].start)}.`);
                      break;
                 }
             }
@@ -192,7 +214,7 @@
 
         // D. BLOCKER PROMPT
         if (warnings.length > 0) {
-            const msg = warnings.join("\n") + "\n\nDo you want to OVERRIDE these rules and schedule anyway?";
+            const msg = warnings.join("\n\n") + "\n\nDo you want to OVERRIDE these rules and schedule anyway?";
             if (!confirm(msg)) {
                 return; // Cancel edit
             }
@@ -227,7 +249,6 @@
       });
     }
 
-    // SAVE IMMEDIATELY to update history for next click
     saveSchedule();
     updateTable();
   }
@@ -398,7 +419,6 @@
             }
           }
 
-          // Build Title String (e.g., "League Game 6" or "Senior League (Game 6)")
           let titleHtml = block.event;
           if (gameLabel) {
               if (block.event.trim() === "League Game") {
