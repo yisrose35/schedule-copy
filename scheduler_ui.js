@@ -1,18 +1,16 @@
 // ============================================================================
-// scheduler_ui.js (FIXED: EDITING BUG & INTERSECTION LOGIC)
+// scheduler_ui.js (FIXED: STRICT DUPLICATES vs BROAD CAPACITY)
 //
-// Features:
-// - Intersection Logic: Catches 10-min overlaps (2:20pm counts as using 2:00pm slot).
-// - Detailed Alerts: Lists specific bunks/dates causing conflicts.
-// - Fuzzy Match: Handles "- Lineup" or case differences.
-// - FIX: Added safety check in editCell so saving works even if SchedulerCoreUtils is missing.
+// Updates:
+// 1. Same-Bunk Check: Compares EXACT TEXT (allows "Blacktop - Basketball" & "Blacktop - Hockey").
+// 2. Diff-Bunk Check: Compares RESOURCE NAME (flags conflict if both need "Blacktop").
+// 3. Time Check: Respects variable slot lengths (e.g. 12:00-12:20) to prevent false overlaps.
 // ============================================================================
 
 (function () {
   "use strict";
 
-  const INCREMENT_MINS = 30;
-  // const PIXELS_PER_MINUTE = 2; // Used if we had a timeline view, kept for ref
+  const INCREMENT_MINS = 30; // Fallback only
 
   // ==========================================================================
   // TIME HELPERS
@@ -44,7 +42,7 @@
   }
 
   // ==========================================================================
-  // RESOURCE RESOLVER (Fuzzy Matcher)
+  // RESOURCE RESOLVER (Extracts "Blacktop" from "Blacktop - Basketball")
   // ==========================================================================
   function resolveResourceName(input, knownNames) {
       if (!input || !knownNames) return null;
@@ -53,10 +51,8 @@
       // 1. Exact Match
       if (knownNames.includes(input)) return input;
 
-      // 2. Starts With (e.g. "Basketball Court B - Lineup" -> "Basketball Court B")
-      // Sort by length desc so we match "Court B" before "Court"
+      // 2. Starts With (Sort by length so "Court B" matches before "Court")
       const sortedNames = [...knownNames].sort((a,b) => b.length - a.length);
-      
       for (const name of sortedNames) {
           const cleanName = name.toLowerCase().trim();
           if (cleanInput.startsWith(cleanName)) {
@@ -78,7 +74,7 @@
   }
 
   // ==========================================================================
-  // SLOT FINDER (CRITICAL FIX: INTERSECTION LOGIC)
+  // SLOT FINDER (FIX: PRECISE END TIMES)
   // ==========================================================================
   function findSlotsForRange(startMin, endMin) {
     const slots = [];
@@ -87,12 +83,19 @@
 
     for (let i = 0; i < times.length; i++) {
       const slotStart = new Date(times[i].start).getHours() * 60 + new Date(times[i].start).getMinutes();
-      const slotEnd = slotStart + INCREMENT_MINS;
+      
+      // FIX: Use the specific end time from the schedule data.
+      // If the slot is 12:00-12:20, slotEnd is 12:20.
+      let slotEnd;
+      if (times[i].end) {
+         slotEnd = new Date(times[i].end).getHours() * 60 + new Date(times[i].end).getMinutes();
+      } else {
+         slotEnd = slotStart + INCREMENT_MINS;
+      }
 
-      // LOGIC: If the activity touches the slot AT ALL, it counts.
-      // Activity: [startMin, endMin)
-      // Slot:     [slotStart, slotEnd)
-      // Overlap if: startMin < slotEnd AND endMin > slotStart
+      // LOGIC: Standard Intersection
+      // If I start at 12:20, and Slot ends at 12:20:
+      // 12:20 < 12:20 is FALSE. No Overlap. (Correct).
       if (startMin < slotEnd && endMin > slotStart) {
         slots.push(i);
       }
@@ -101,19 +104,19 @@
   }
 
   // ==========================================================================
-  // EDIT LOGIC (FIXED: Smart Validation with Safety Check)
+  // EDIT CELL (THE MAIN FIX)
   // ==========================================================================
   function editCell(bunk, startMin, endMin, current) {
     if (!bunk) return;
     
     // 1. Get user input
     const newName = prompt(`Edit activity for ${bunk}\n${minutesToTimeLabel(startMin)} - ${minutesToTimeLabel(endMin)}\n(Enter CLEAR or FREE to empty)`, current);
-    if (newName === null) return; // User hit Cancel
+    if (newName === null) return; 
 
     const value = newName.trim();
     const isClear = (value === "" || value.toUpperCase() === "CLEAR" || value.toUpperCase() === "FREE");
     
-    // --- VALIDATION GATE START ---
+    // --- VALIDATION GATE ---
     if (!isClear && window.SchedulerCoreUtils && typeof window.SchedulerCoreUtils.loadAndFilterData === 'function') {
         const warnings = [];
         
@@ -122,29 +125,34 @@
         const { activityProperties, historicalCounts, lastUsedDates, bunkMetaData, sportMetaData } = config;
         
         const allKnown = Object.keys(activityProperties);
-        const resolvedName = resolveResourceName(value, allKnown) || value;
+        const resolvedName = resolveResourceName(value, allKnown) || value; // e.g., "Blacktop"
         const props = activityProperties[resolvedName]; 
         
-        // A. DUPLICATE CHECK
+        // -------------------------------------------------------------
+        // A. SAME BUNK CHECK -> STRICT (Check Exact Text)
+        // -------------------------------------------------------------
         const currentSchedule = window.scheduleAssignments[bunk] || [];
         const targetSlots = findSlotsForRange(startMin, endMin);
         
         currentSchedule.forEach((entry, idx) => {
             if (targetSlots.includes(idx)) return; // Skip self
             if (entry && !entry.continuation) {
-                const entryRaw = entry.field || entry._activity;
-                const entryRes = resolveResourceName(entryRaw, allKnown) || entryRaw;
+                const entryRaw = entry.field || entry._activity; // e.g. "Blacktop - Basketball"
                 
-                // FIX HERE: Use String() to safely handle numbers or non-text data
-                if (entryRes && resolvedName && String(entryRes).toLowerCase() === String(resolvedName).toLowerCase()) {
+                // FIX: Compare EXACT STRINGS. 
+                // "Blacktop - Basketball" !== "Blacktop - Hockey" (No Warning)
+                // "Blacktop - Basketball" === "Blacktop - Basketball" (Warning)
+                if (String(entryRaw).trim().toLowerCase() === String(value).trim().toLowerCase()) {
                      const timeLabel = window.unifiedTimes[idx]?.label || minutesToTimeLabel(window.unifiedTimes[idx].start);
-                     warnings.push(`⚠️ DUPLICATE: ${bunk} is already scheduled for "${resolvedName}" at ${timeLabel}.`);
+                     warnings.push(`⚠️ DUPLICATE: ${bunk} is already scheduled for "${entryRaw}" at ${timeLabel}.`);
                 }
             }
         });
 
         if (props) {
-            // B. MAX USAGE / FREQUENCY
+            // -------------------------------------------------------------
+            // B. MAX USAGE CHECK -> BROAD (Check Resource)
+            // -------------------------------------------------------------
             const max = props.maxUsage || 0;
             if (max > 0) {
                 const historyCount = historicalCounts[bunk]?.[resolvedName] || 0;
@@ -153,7 +161,7 @@
                     if (targetSlots.includes(idx)) return; 
                     if (entry && !entry.continuation) {
                         const entryRes = resolveResourceName(entry.field || entry._activity, allKnown);
-                        // FIX HERE: String safety check
+                        // Check Resource: Counting how many times we used "Blacktop" regardless of sport
                         if (String(entryRes).toLowerCase() === String(resolvedName).toLowerCase()) todayCount++;
                     }
                 });
@@ -165,7 +173,9 @@
                 }
             }
 
-            // C. CAPACITY CHECK
+            // -------------------------------------------------------------
+            // C. CAPACITY/DIFF BUNK CHECK -> BROAD (Check Resource)
+            // -------------------------------------------------------------
             const slotsToCheck = findSlotsForRange(startMin, endMin);
             const bunkSize = bunkMetaData[bunk]?.size || 0;
             const maxHeadcount = sportMetaData[resolvedName]?.maxCapacity || Infinity;
@@ -185,7 +195,10 @@
                         const entryRaw = (typeof entry.field === 'object') ? entry.field.name : entry.field;
                         const entryRes = resolveResourceName(entryRaw || entry._activity, allKnown);
                         
-                        // FIX HERE: String safety check
+                        // FIX: Compare RESOURCE Names.
+                        // Bunk 1: "Blacktop - Soccer" (Res: Blacktop)
+                        // Bunk 2: "Blacktop - Football" (Res: Blacktop)
+                        // MATCH! -> Capacity Warning.
                         if (String(entryRes).toLowerCase() === String(resolvedName).toLowerCase()) {
                             bunksOnField.push(otherBunk);
                             headcountOnField += (bunkMetaData[otherBunk]?.size || 0);
@@ -252,6 +265,7 @@
     saveSchedule();
     updateTable();
   }
+
   function getEntry(bunk, slotIndex) {
     const a = window.scheduleAssignments || {};
     if (!a[bunk]) return null;
@@ -269,7 +283,6 @@
     return label;
   }
 
-  // Reused for UI logic
   function findFirstSlotForTime(startMin) {
     if (!window.unifiedTimes) return -1;
     for (let i = 0; i < window.unifiedTimes.length; i++) {
@@ -393,6 +406,9 @@
           } else {
             td.innerHTML = `<div>${titleHtml}</div><ul>${allMatchups.map((m) => `<li>${m}</li>`).join("")}</ul>`;
           }
+
+          td.style.cursor = "pointer";
+          td.onclick = () => editCell(bunks[0], block.startMin, block.endMin, block.event);
 
           tr.appendChild(td);
           tbody.appendChild(tr);
