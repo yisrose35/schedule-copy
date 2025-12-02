@@ -7,7 +7,7 @@
 //
 // ✦ NO LOGIC CHANGES — visual/UI theme only
 //
-// ✦ UPDATE: Max Usage now uses an "Add/Remove" button flow
+// ✦ UPDATE: Max Usage now includes Frequency (Weeks)
 // =================================================================
 
 (function() {
@@ -35,8 +35,10 @@ function initSpecialActivitiesTab() {
         s.timeRules = s.timeRules || [];
         s.sharableWith = s.sharableWith || { type: 'not_sharable', divisions: [] };
         s.limitUsage = s.limitUsage || { enabled: false, divisions: {} };
-        // Ensure maxUsage is either a number or null (not undefined)
+        // Ensure maxUsage is number or null
         s.maxUsage = (s.maxUsage !== undefined && s.maxUsage !== "") ? s.maxUsage : null;
+        // Ensure frequency is set (default 0 = lifetime/unlimited period)
+        s.frequencyWeeks = s.frequencyWeeks || 0; 
     });
 
     // ==== THEMED HTML SHELL ====
@@ -279,7 +281,7 @@ function renderDetailPane() {
     detailPaneEl.appendChild(avail);
 
     /*******************************************************
-     * MAX USAGE CARD (Theme Perfect with ADD BUTTON)
+     * MAX USAGE CARD (FREQUENCY UPDATE)
      *******************************************************/
     const maxCard = document.createElement('div');
     Object.assign(maxCard.style, {
@@ -292,15 +294,14 @@ function renderDetailPane() {
     });
 
     const maxHdr = document.createElement('div');
-    maxHdr.textContent = "Max Total Usage (Lifetime)";
+    maxHdr.textContent = "Frequency Limits";
     maxHdr.style.fontWeight = "600";
     maxHdr.style.marginBottom = "6px";
     maxHdr.style.fontSize = "0.9rem";
     maxCard.appendChild(maxHdr);
 
-    // LOGIC: If null, show "Add Limit". If set, show input + remove button.
+    // If null/undefined -> "Add Limit"
     if (item.maxUsage === null || item.maxUsage === undefined) {
-        
         const noLimitText = document.createElement('p');
         noLimitText.textContent = "Unlimited usage allowed.";
         noLimitText.style.margin = "0 0 10px";
@@ -309,23 +310,23 @@ function renderDetailPane() {
         maxCard.appendChild(noLimitText);
 
         const addLimitBtn = document.createElement("button");
-        addLimitBtn.textContent = "+ Add Limit";
+        addLimitBtn.textContent = "+ Add Frequency Rule";
         addLimitBtn.style.background = "#00C896";
         addLimitBtn.style.color = "white";
         addLimitBtn.style.border = "none";
         addLimitBtn.style.fontSize = "0.8rem";
         
         addLimitBtn.onclick = () => {
-            item.maxUsage = 1; // Default to 1
+            item.maxUsage = 1;      // Default count
+            item.frequencyWeeks = 0; // Default (Lifetime/Summer)
             onSave();
             onRerender();
         };
         maxCard.appendChild(addLimitBtn);
 
     } else {
-        
         const limitDesc = document.createElement('p');
-        limitDesc.textContent = "Maximum times a bunk can ever play this activity:";
+        limitDesc.textContent = "Bunks are allowed to play this:";
         limitDesc.style.margin = "0 0 8px";
         limitDesc.style.fontSize = "0.8rem";
         limitDesc.style.color = "#6b7280";
@@ -335,38 +336,74 @@ function renderDetailPane() {
         controlRow.style.display = "flex";
         controlRow.style.gap = "10px";
         controlRow.style.alignItems = "center";
+        controlRow.style.flexWrap = "wrap";
 
+        // 1. Count Input
         const maxInput = document.createElement("input");
         maxInput.type = "number";
-        maxInput.style.width = "80px";
+        maxInput.style.width = "60px";
         maxInput.style.borderRadius = "999px";
         maxInput.style.border = "1px solid #D1D5DB";
         maxInput.style.padding = "6px 12px";
         maxInput.value = item.maxUsage;
+        maxInput.min = 1;
 
         maxInput.oninput = () => {
             const val = maxInput.value.trim();
-            // If user deletes content, keep it as number but 0, or handle elsewhere. 
-            // Better to keep it bound.
             if (val !== "") {
                 item.maxUsage = Math.max(1, parseInt(val,10) || 1);
                 onSave();
             }
         };
 
+        const timeLabel = document.createElement("span");
+        timeLabel.textContent = "time(s) per";
+        timeLabel.style.fontSize = "0.85rem";
+
+        // 2. Frequency Dropdown
+        const freqSelect = document.createElement("select");
+        freqSelect.style.borderRadius = "999px";
+        freqSelect.style.padding = "6px 12px";
+        freqSelect.style.border = "1px solid #D1D5DB";
+        
+        const opts = [
+            {v: 0, t: "Summer (Lifetime)"},
+            {v: 1, t: "1 Week (7 Days)"},
+            {v: 2, t: "2 Weeks (14 Days)"},
+            {v: 3, t: "3 Weeks (21 Days)"},
+            {v: 4, t: "4 Weeks (28 Days)"}
+        ];
+        
+        opts.forEach(o => {
+            const op = document.createElement("option");
+            op.value = o.v;
+            op.textContent = o.t;
+            if(item.frequencyWeeks === o.v) op.selected = true;
+            freqSelect.appendChild(op);
+        });
+
+        freqSelect.onchange = () => {
+            item.frequencyWeeks = parseInt(freqSelect.value, 10);
+            onSave();
+        };
+
+        // 3. Remove Button
         const removeBtn = document.createElement("button");
-        removeBtn.textContent = "Remove";
+        removeBtn.textContent = "Remove Rule";
         removeBtn.style.background = "#FEE2E2";
         removeBtn.style.color = "#DC2626";
         removeBtn.style.border = "1px solid #FECACA";
         
         removeBtn.onclick = () => {
             item.maxUsage = null;
+            item.frequencyWeeks = 0;
             onSave();
             onRerender();
         };
 
         controlRow.appendChild(maxInput);
+        controlRow.appendChild(timeLabel);
+        controlRow.appendChild(freqSelect);
         controlRow.appendChild(removeBtn);
         maxCard.appendChild(controlRow);
     }
@@ -415,7 +452,8 @@ function addSpecial() {
         sharableWith: { type:'not_sharable', divisions:[] },
         limitUsage: { enabled:false, divisions:{} },
         timeRules: [],
-        maxUsage: null
+        maxUsage: null,
+        frequencyWeeks: 0
     });
 
     addSpecialInput.value = "";
