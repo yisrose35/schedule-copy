@@ -3,10 +3,9 @@
 // PART 1 of 3: THE FOUNDATION
 //
 // Role:
-// - Helper functions (Time, Strings, Formatting)
 // - Data Loading (loadAndFilterData)
-// - Constraint Logic (canBlockFit, isTimeAvailable)
-// - Shared Constants
+// - Constraint Logic (canBlockFit)
+// - UPDATED: Tracks 'lastUsedDates' for detailed error messages.
 // ============================================================================
 
 (function() {
@@ -103,8 +102,6 @@
     // =================================================================
     // 2. CONSTRAINT LOGIC
     // =================================================================
-    
-    // Check if time rules allow this slot
     Utils.isTimeAvailable = function(slotIndex, fieldProps) {
         if (!window.unifiedTimes || !window.unifiedTimes[slotIndex]) return false;
         const slot = window.unifiedTimes[slotIndex];
@@ -147,16 +144,11 @@
         return isAvailable;
     };
 
-    // Main capacity check
-    // NOW INCLUDES: Bunk Size vs Sport Max Capacity
     Utils.canBlockFit = function(block, fieldName, activityProperties, fieldUsageBySlot, proposedActivity) {
         if (!fieldName) return false;
         const props = activityProperties[fieldName];
-
-        // If no props, treat as virtual/unconstrained
         if (!props) return true;
 
-        // --- 1. Bunk Count Limit (Shared Fields) ---
         let limit = 1;
         if (props.sharableWith) {
             if (props.sharableWith.capacity) limit = parseInt(props.sharableWith.capacity);
@@ -165,42 +157,21 @@
             limit = 2;
         }
 
-        // --- 2. Headcount Capacity Limit (Bin Packing) ---
-        // Need to check metadata passed via window or args
         const bunkMetaData = window.SchedulerCoreUtils._bunkMetaData || {};
         const sportMetaData = window.SchedulerCoreUtils._sportMetaData || {};
         const maxHeadcount = sportMetaData[proposedActivity]?.maxCapacity || Infinity;
-        
-        // My size
         const mySize = bunkMetaData[block.bunk]?.size || 0;
 
-        // --- 3. Preference/Exclusivity Checks ---
-        if (props.preferences &&
-            props.preferences.enabled &&
-            props.preferences.exclusive &&
-            !props.preferences.list.includes(block.divName)) {
-            return false;
-        }
-
-        if (props &&
-            Array.isArray(props.allowedDivisions) &&
-            props.allowedDivisions.length > 0 &&
-            !props.allowedDivisions.includes(block.divName)) {
-            return false;
-        }
+        if (props.preferences && props.preferences.enabled && props.preferences.exclusive && !props.preferences.list.includes(block.divName)) return false;
+        if (props && Array.isArray(props.allowedDivisions) && props.allowedDivisions.length > 0 && !props.allowedDivisions.includes(block.divName)) return false;
 
         const limitRules = props.limitUsage;
         if (limitRules && limitRules.enabled) {
             if (!limitRules.divisions[block.divName]) return false;
             const allowedBunks = limitRules.divisions[block.divName];
-            if (allowedBunks.length > 0 &&
-                block.bunk &&
-                !allowedBunks.includes(block.bunk)) {
-                return false;
-            }
+            if (allowedBunks.length > 0 && block.bunk && !allowedBunks.includes(block.bunk)) return false;
         }
 
-        // Time Rules Prep
         const { blockStartMin, blockEndMin } = Utils.getBlockTimeRange(block);
         const rules = (props.timeRules || []).map(r => {
             if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
@@ -211,7 +182,6 @@
             };
         });
 
-        // Time Rules + Usage Check Loop
         if (rules.length > 0) {
             if (!props.available) return false;
             const hasAvailableRules = rules.some(r => r.type === 'Available');
@@ -229,75 +199,70 @@
                 }
                 for (const rule of rules) {
                     if (rule.type !== 'Unavailable' || rule.startMin == null || rule.endMin == null) continue;
-                    if (blockStartMin < rule.endMin && blockEndMin > rule.startMin) {
-                        return false;
-                    }
+                    if (blockStartMin < rule.endMin && blockEndMin > rule.startMin) return false;
                 }
+            }
+            for (const slotIndex of block.slots || []) {
+                if (slotIndex === undefined) return false;
+                const usage = fieldUsageBySlot[slotIndex]?.[fieldName] || { count: 0, divisions: [], bunks: {} };
+                if (usage.count >= limit) return false;
+                
+                if (maxHeadcount !== Infinity) {
+                    let currentHeadcount = 0;
+                    Object.keys(usage.bunks).forEach(bName => {
+                        currentHeadcount += (bunkMetaData[bName]?.size || 0);
+                    });
+                    if (currentHeadcount + mySize > maxHeadcount) return false;
+                }
+
+                if (usage.count > 0) {
+                    let existingActivity = null;
+                    for (const bunkName in usage.bunks) {
+                        if (usage.bunks[bunkName]) {
+                            existingActivity = usage.bunks[bunkName];
+                            break;
+                        }
+                    }
+                    if (existingActivity && proposedActivity && existingActivity !== proposedActivity) return false;
+                }
+                if (!Utils.isTimeAvailable(slotIndex, props)) return false;
             }
         } else {
             if (!props.available) return false;
-        }
-
-        // SLOT USAGE CHECK
-        for (const slotIndex of block.slots || []) {
-            if (slotIndex === undefined) return false;
-            const usage = fieldUsageBySlot[slotIndex]?.[fieldName] || { count: 0, divisions: [], bunks: {} };
-            
-            // Check Bunk Count Limit
-            if (usage.count >= limit) return false;
-            
-            // Check Headcount Capacity (Velvet Rope)
-            if (maxHeadcount !== Infinity) {
-                let currentHeadcount = 0;
-                // Sum up kids currently on this field
-                Object.keys(usage.bunks).forEach(bName => {
-                    currentHeadcount += (bunkMetaData[bName]?.size || 0);
-                });
-                
-                // Indivisible check: (Current + My Size) > Max?
-                if (currentHeadcount + mySize > maxHeadcount) {
-                    return false; // REJECT: "Overflow" / "Whole Bunk doesn't fit"
+            for (const slotIndex of block.slots || []) {
+                if (slotIndex === undefined) return false;
+                const usage = fieldUsageBySlot[slotIndex]?.[fieldName] || { count: 0, divisions: [], bunks: {} };
+                if (usage.count >= limit) return false;
+                if (maxHeadcount !== Infinity) {
+                    let currentHeadcount = 0;
+                    Object.keys(usage.bunks).forEach(bName => {
+                        currentHeadcount += (bunkMetaData[bName]?.size || 0);
+                    });
+                    if (currentHeadcount + mySize > maxHeadcount) return false;
                 }
-            }
-
-            if (usage.count > 0) {
-                let existingActivity = null;
-                for (const bunkName in usage.bunks) {
-                    if (usage.bunks[bunkName]) {
-                        existingActivity = usage.bunks[bunkName];
-                        break;
+                if (usage.count > 0) {
+                    let existingActivity = null;
+                    for (const bunkName in usage.bunks) {
+                        if (usage.bunks[bunkName]) {
+                            existingActivity = usage.bunks[bunkName];
+                            break;
+                        }
                     }
-                }
-                if (existingActivity && proposedActivity && existingActivity !== proposedActivity) {
-                    return false;
+                    if (existingActivity && proposedActivity && existingActivity !== proposedActivity) return false;
                 }
             }
-            if (rules.length > 0 && !Utils.isTimeAvailable(slotIndex, props)) return false;
         }
         return true;
     };
 
-    // Specific lighter constraint check for Leagues
     Utils.canLeagueGameFit = function(block, fieldName, fieldUsageBySlot, activityProperties) {
         if (!fieldName) return false;
         const props = activityProperties[fieldName];
         if (!props) return false;
-        
-        // Leagues typically need the WHOLE field (limit 1) unless otherwise specified
         const limit = 1;
 
-        if (props.preferences &&
-            props.preferences.enabled &&
-            props.preferences.exclusive &&
-            !props.preferences.list.includes(block.divName)) {
-            return false;
-        }
-        if (props &&
-            Array.isArray(props.allowedDivisions) &&
-            props.allowedDivisions.length > 0 &&
-            !props.allowedDivisions.includes(block.divName)) {
-            return false;
-        }
+        if (props.preferences && props.preferences.enabled && props.preferences.exclusive && !props.preferences.list.includes(block.divName)) return false;
+        if (props && Array.isArray(props.allowedDivisions) && props.allowedDivisions.length > 0 && !props.allowedDivisions.includes(block.divName)) return false;
 
         const limitRules = props.limitUsage;
         if (limitRules && limitRules.enabled) {
@@ -307,35 +272,11 @@
         const { blockStartMin, blockEndMin } = Utils.getBlockTimeRange(block);
         const rules = (props.timeRules || []).map(r => {
             if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
-            return {
-                ...r,
-                startMin: Utils.parseTimeToMinutes(r.start),
-                endMin: Utils.parseTimeToMinutes(r.end)
-            };
+            return { ...r, startMin: Utils.parseTimeToMinutes(r.start), endMin: Utils.parseTimeToMinutes(r.end) };
         });
 
         if (rules.length > 0) {
             if (!props.available) return false;
-            const hasAvailableRules = rules.some(r => r.type === 'Available');
-            if (blockStartMin != null && blockEndMin != null) {
-                if (hasAvailableRules) {
-                    let insideAvailable = false;
-                    for (const rule of rules) {
-                        if (rule.type !== 'Available' || rule.startMin == null || rule.endMin == null) continue;
-                        if (blockStartMin >= rule.startMin && blockEndMin <= rule.endMin) {
-                            insideAvailable = true;
-                            break;
-                        }
-                    }
-                    if (!insideAvailable) return false;
-                }
-                for (const rule of rules) {
-                    if (rule.type !== 'Unavailable' || rule.startMin == null || rule.endMin == null) continue;
-                    if (blockStartMin < rule.endMin && blockEndMin > rule.startMin) {
-                        return false;
-                    }
-                }
-            }
             for (const slotIndex of block.slots || []) {
                 if (slotIndex === undefined) return false;
                 const usage = fieldUsageBySlot[slotIndex]?.[fieldName] || { count: 0, divisions: [] };
@@ -354,7 +295,7 @@
     };
 
     // =================================================================
-    // 3. DATA LOADER (UPDATED: FREQUENCY WALK-THROUGH)
+    // 3. DATA LOADER (UPDATED for Detailed Alerts)
     // =================================================================
     Utils.loadAndFilterData = function() {
         const globalSettings = window.loadGlobalSettings?.() || {};
@@ -365,7 +306,6 @@
         const masterLeagues = globalSettings.leaguesByName || {};
         const masterSpecialtyLeagues = globalSettings.specialtyLeagues || {};
         
-        // Metadata
         const bunkMetaData = app1Data.bunkMetaData || {};
         const sportMetaData = app1Data.sportMetaData || {};
         Utils._bunkMetaData = bunkMetaData;
@@ -389,11 +329,10 @@
         };
 
         const historicalCounts = {};
-        window.debugHistoricalCounts = historicalCounts;
-
+        const lastUsedDates = {}; // NEW: To track "Last Used" date string
+        
         const specialActivityNames = [];
         const specialNamesSet = new Set();
-        // Map special name -> frequency rules
         const specialRules = {};
 
         try {
@@ -406,14 +345,12 @@
                  };
             });
 
-            // GATHER RAW HISTORY DATES
-            // We need the actual date strings to do the window calculation
-            const rawHistory = {}; // { bunk: { activity: [dateString, dateString] } }
+            const rawHistory = {}; 
             
             const allDaily = window.loadAllDailyData?.() || {};
             const manualOffsets = globalSettings.manualUsageOffsets || {};
 
-            // 1. Scan All Past Schedules for Dates
+            // 1. Scan All Past Schedules
             Object.entries(allDaily).forEach(([dateStr, dayData]) => {
                 const sched = dayData.scheduleAssignments || {};
                 Object.keys(sched).forEach(b => {
@@ -427,59 +364,54 @@
                 });
             });
 
-            // 2. Calculate Effective Counts (The Walk Through)
-            const todayStr = window.currentScheduleDate; // "YYYY-MM-DD"
+            // 2. Calculate Effective Counts & Last Used
+            const todayStr = window.currentScheduleDate; 
             const todayDate = new Date(todayStr);
 
             Object.keys(rawHistory).forEach(b => {
                 if (!historicalCounts[b]) historicalCounts[b] = {};
+                if (!lastUsedDates[b]) lastUsedDates[b] = {};
                 
                 Object.keys(rawHistory[b]).forEach(act => {
-                    const dates = rawHistory[b][act].sort(); // Sort chronologically
+                    const dates = rawHistory[b][act].sort(); 
+                    
+                    // NEW: Capture the very last date used for UI feedback
+                    if (dates.length > 0) {
+                        lastUsedDates[b][act] = dates[dates.length - 1];
+                    }
+
                     const rule = specialRules[act];
                     
-                    // If no frequency rule (0 weeks) -> Just count total (Lifetime)
                     if (!rule || !rule.frequencyWeeks || rule.frequencyWeeks === 0) {
                         historicalCounts[b][act] = dates.length;
                     } else {
-                        // Sliding Window Logic (Triggered by first use)
                         const windowDays = rule.frequencyWeeks * 7;
                         let windowStart = null;
                         let windowCount = 0;
 
-                        // Simulate history to find current state
                         for (const dStr of dates) {
                             const d = new Date(dStr);
-                            
-                            // If we don't have a window, start one
                             if (!windowStart) {
                                 windowStart = d;
                                 windowCount = 1;
                             } else {
-                                // Check if this date fits in current window
                                 const diffTime = Math.abs(d - windowStart);
                                 const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
-                                
                                 if (diffDays <= windowDays) {
                                     windowCount++;
                                 } else {
-                                    // Window expired, start new one here
                                     windowStart = d;
                                     windowCount = 1;
                                 }
                             }
                         }
 
-                        // Now check TODAY relative to the active window
                         if (windowStart) {
                             const diffTime = Math.abs(todayDate - windowStart);
                             const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                            
                             if (diffDays <= windowDays) {
-                                // We are still inside the active window
                                 historicalCounts[b][act] = windowCount;
                             } else {
-                                // Window expired before today -> Count resets to 0
                                 historicalCounts[b][act] = 0;
                             }
                         } else {
@@ -487,7 +419,6 @@
                         }
                     }
                     
-                    // Add to total specials count (for fairness)
                     if (specialNamesSet.has(act)) {
                          historicalCounts[b]['_totalSpecials'] = 
                              (historicalCounts[b]['_totalSpecials'] || 0) + 1;
@@ -495,7 +426,7 @@
                 });
             });
 
-            // 3. Add Manual Offsets (Simple Add)
+            // 3. Add Manual Offsets
             Object.keys(manualOffsets).forEach(b => {
                 if (!historicalCounts[b]) historicalCounts[b] = {};
                 Object.keys(manualOffsets[b]).forEach(act => {
@@ -569,7 +500,6 @@
                 ? { enabled: true, divisions: f.limitUsage.divisions || {} }
                 : { enabled: false, divisions: {} };
 
-            // Ensure capacity default
             let capacity = 1;
             if (f.sharableWith) {
                 if (f.sharableWith.capacity) capacity = parseInt(f.sharableWith.capacity);
@@ -584,7 +514,7 @@
                 available: isMasterAvailable,
                 sharable: f.sharableWith?.type === 'all' || f.sharableWith?.type === 'custom',
                 sharableWith: f.sharableWith,
-                maxUsage: f.maxUsage || 0, // NEW: Pass Max Usage
+                maxUsage: f.maxUsage || 0, 
                 allowedDivisions,
                 limitUsage: safeLimitUsage,
                 preferences: f.preferences || { enabled: false, exclusive: false, list: [] },
@@ -648,13 +578,14 @@
             disabledLeagues,
             disabledSpecialtyLeagues,
             historicalCounts,
+            lastUsedDates, // Exported to UI
             specialActivityNames,
             disabledFields,
             disabledSpecials,
             dailyFieldAvailability,
             dailyDisabledSportsByField,
             masterFields,
-            bunkMetaData,  // Exported for completeness
+            bunkMetaData, 
             sportMetaData
         };
     };
