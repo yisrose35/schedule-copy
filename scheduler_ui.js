@@ -1,14 +1,11 @@
 // ============================================================================
-// scheduler_ui.js (FULLY UPDATED)
+// scheduler_ui.js (VALIDATION GATE & LIVE HISTORY)
 //
 // Supports:
+// - Manual Editing with Rule Validation (Capacity, Frequency, Time)
+// - "Live" History: Edits update the count immediately for the next check.
 // - Staggered schedule view (one table per division)
-// - Reading from saved data (NOT from old globals)
-// - Pinned vs generated events
 // - League & Specialty League merged rows
-// - Split blocks (UI only — engine already picks activities)
-// - Post-generation manual editing
-// - DISPLAYS GAME NUMBER (e.g. League Game 6)
 // ============================================================================
 
 (function () {
@@ -27,7 +24,7 @@
     if (s.endsWith("am") || s.endsWith("pm")) {
       mer = s.endsWith("am") ? "am" : "pm";
       s = s.replace(/am|pm/g, "").trim();
-    } else return null; // AM/PM required
+    } else return null;
 
     const m = s.match(/^(\d{1,2})\s*[:]\s*(\d{2})$/);
     if (!m) return null;
@@ -73,7 +70,7 @@
   }
 
   // ==========================================================================
-  // SCHEDULE EDITOR (manual override)
+  // SCHEDULE EDITOR (With Validation Gate)
   // ==========================================================================
   function findSlotsForRange(startMin, endMin) {
     const slots = [];
@@ -99,15 +96,116 @@
       current
     );
 
-    if (newName === null) return;
+    if (newName === null) return; // User cancelled
 
     const value = newName.trim();
-    const slots = findSlotsForRange(startMin, endMin);
+    const isClear = (value === "" || value.toUpperCase() === "CLEAR" || value.toUpperCase() === "FREE");
+    
+    // --- VALIDATION GATE START ---
+    if (!isClear) {
+        const warnings = [];
+        
+        // 1. Load fresh data (History + Rules)
+        // We re-load here to ensure we catch any edits made 10 seconds ago.
+        const config = window.SchedulerCoreUtils.loadAndFilterData();
+        const { activityProperties, historicalCounts, bunkMetaData, sportMetaData } = config;
+        
+        const props = activityProperties[value]; // Rules for the new activity
+        
+        if (props) {
+            // A. CHECK FREQUENCY / MAX USAGE
+            // History + Today's Usage so far
+            const max = props.maxUsage || 0;
+            if (max > 0) {
+                const historyCount = historicalCounts[bunk]?.[value] || 0;
+                
+                // Scan "Today" (window.scheduleAssignments) to see if we already scheduled it elsewhere today
+                let todayCount = 0;
+                const schedule = window.scheduleAssignments[bunk] || [];
+                // We must count "blocks", not slots. Simplest heuristic: check unique activities that aren't continuations.
+                // Or better: just count every entry that isn't null/free/continuation matching the name.
+                // NOTE: We exclude the *current* slots being edited to avoid double counting if we are just renaming/reconfirming.
+                const targetSlots = findSlotsForRange(startMin, endMin);
+                
+                schedule.forEach((entry, idx) => {
+                    if (targetSlots.includes(idx)) return; // Ignore the slots we are about to overwrite
+                    if (entry && entry._activity === value && !entry.continuation) {
+                        todayCount++;
+                    }
+                });
 
+                const total = historyCount + todayCount + 1; // +1 for this new assignment
+                if (total > max) {
+                    warnings.push(`⚠️ MAX USAGE: ${bunk} has used "${value}" ${historyCount + todayCount} times. Limit is ${max}.`);
+                }
+            }
+
+            // B. CHECK FIELD CAPACITY (At this specific time)
+            // We need to check every slot in the range
+            const slotsToCheck = findSlotsForRange(startMin, endMin);
+            const bunkSize = bunkMetaData[bunk]?.size || 0;
+            const maxHeadcount = sportMetaData[value]?.maxCapacity || Infinity;
+            
+            // Shared Limit (Number of Bunks)
+            let bunkLimit = 1;
+            if (props.sharableWith?.capacity) bunkLimit = parseInt(props.sharableWith.capacity);
+            else if (props.sharable || props.sharableWith?.type === 'all') bunkLimit = 2;
+
+            for (const slotIdx of slotsToCheck) {
+                let bunksOnField = 0;
+                let headcountOnField = 0;
+
+                // Scan all OTHER bunks at this slot
+                Object.keys(window.scheduleAssignments).forEach(otherBunk => {
+                    if (otherBunk === bunk) return; // Don't count myself
+                    const entry = window.scheduleAssignments[otherBunk][slotIdx];
+                    // Check if entry matches the activity name or field name
+                    if (entry) {
+                        const entryName = (typeof entry.field === 'object') ? entry.field.name : entry.field;
+                        // Use loose matching or strict? ActivityProperties uses exact names.
+                        if (entryName === value || entry._activity === value) {
+                            bunksOnField++;
+                            headcountOnField += (bunkMetaData[otherBunk]?.size || 0);
+                        }
+                    }
+                });
+
+                // Check Bunk Limit
+                if (bunksOnField >= bunkLimit) {
+                    warnings.push(`⚠️ CAPACITY: "${value}" is full at ${minutesToTimeLabel(window.unifiedTimes[slotIdx].start)}. (${bunksOnField}/${bunkLimit} bunks).`);
+                    break; // Only warn once per edit
+                }
+
+                // Check Headcount Limit
+                if (maxHeadcount !== Infinity && (headcountOnField + bunkSize > maxHeadcount)) {
+                    warnings.push(`⚠️ HEADCOUNT: "${value}" will have ${headcountOnField + bunkSize} kids (Max ${maxHeadcount}).`);
+                    break;
+                }
+                
+                // C. CHECK TIME RULES
+                if (!window.SchedulerCoreUtils.isTimeAvailable(slotIdx, props)) {
+                     warnings.push(`⚠️ TIME: "${value}" is closed/unavailable at ${minutesToTimeLabel(window.unifiedTimes[slotIdx].start)}.`);
+                     break;
+                }
+            }
+        }
+
+        // D. BLOCKER PROMPT
+        if (warnings.length > 0) {
+            const msg = warnings.join("\n") + "\n\nDo you want to OVERRIDE these rules and schedule anyway?";
+            if (!confirm(msg)) {
+                return; // Cancel edit
+            }
+        }
+    }
+    // --- VALIDATION GATE END ---
+
+    // Apply the Edit
+    const slots = findSlotsForRange(startMin, endMin);
     if (!window.scheduleAssignments[bunk])
       window.scheduleAssignments[bunk] = new Array(window.unifiedTimes.length);
 
-    if (value === "" || value.toUpperCase() === "CLEAR" || value.toUpperCase() === "FREE") {
+    if (isClear) {
       slots.forEach((idx, i) => {
         window.scheduleAssignments[bunk][idx] = {
           field: "Free",
@@ -129,6 +227,7 @@
       });
     }
 
+    // SAVE IMMEDIATELY to update history for next click
     saveSchedule();
     updateTable();
   }
@@ -303,13 +402,6 @@
           let titleHtml = block.event;
           if (gameLabel) {
               if (block.event.trim() === "League Game") {
-                  // Direct replacement: "League Game" + " 6" -> "League Game 6"
-                  // But gameLabel comes as "Game 6".
-                  // So we strip "Game " from label if we append.
-                  // Simpler: Just append the whole thing "League Game - Game 6" 
-                  // User asked for: "league game 6". 
-                  // If gameLabel is "Game 6", then replace "Game" with "Game 6"?
-                  // Let's assume gameLabel is fully descriptive e.g. "Game 6"
                   titleHtml = `${block.event} ${gameLabel.replace(/^Game\s+/i, '')}`;
               } else {
                   titleHtml = `${block.event} (${gameLabel})`;
