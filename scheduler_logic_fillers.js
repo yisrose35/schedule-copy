@@ -1,4 +1,3 @@
-
 // =================================================================
 // scheduler_logic_fillers.js
 //
@@ -6,6 +5,7 @@
 // - Removed local 'canBlockFit' to prevent logic duplication.
 // - Now strictly uses window.SchedulerCoreUtils.canBlockFit.
 // - Uses SchedulerCoreUtils.fieldLabel for consistency.
+// - ADDED: Max Usage Limit check in findBestSpecial/General
 // =================================================================
 
 (function() {
@@ -37,9 +37,10 @@ function sortPicksByFreshness(possiblePicks, bunkHistory = {}, divName, activity
     });
 }
 
-// --- HELPER: Check Usage Limit ---
+// --- HELPER: Check Usage Limit (Safety Net for Generator) ---
 function isOverUsageLimit(activityName, bunk, activityProperties, historicalCounts, activitiesDoneToday) {
     const props = activityProperties[activityName];
+    // maxUsage comes from Utils.loadAndFilterData
     const max = props?.maxUsage || 0;
     
     // 0 means unlimited
@@ -53,7 +54,7 @@ function isOverUsageLimit(activityName, bunk, activityProperties, historicalCoun
     if (pastCount >= max) return true;
 
     // If they are at limit-1, and they already did it today, they can't do it again
-    if (activitiesDoneToday.has(activityName) && (pastCount + 1 >= max)) return true;
+    if (activitiesDoneToday.has(activityName) && (pastCount + 1 > max)) return true;
 
     return false;
 }
@@ -69,7 +70,7 @@ window.findBestSpecial = function(block, allActivities, fieldUsageBySlot, yester
         // 1. Check standard constraints (time, sharing, field availability) using CORE UTILS
         if (!window.SchedulerCoreUtils.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, name)) return false;
         
-        // 2. Check Max Usage Limit
+        // 2. Check Max Usage Limit (The Safety Net)
         if (isOverUsageLimit(name, block.bunk, activityProperties, historicalCounts, activitiesDoneToday)) return false;
 
         // 3. Check if done today
