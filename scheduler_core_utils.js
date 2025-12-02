@@ -4,8 +4,8 @@
 //
 // Role:
 // - Data Loading (loadAndFilterData)
-// - Constraint Logic (canBlockFit)
-// - UPDATED: Tracks 'lastUsedDates' for detailed error messages.
+// - Constraint Logic (canBlockFit, isTimeAvailable)
+// - UPDATED: findSlotsForRange now detects ALL overlaps (Intersection Logic)
 // ============================================================================
 
 (function() {
@@ -64,14 +64,26 @@
         return d;
     };
 
+    /**
+     * UPDATED: Uses INTERSECTION logic.
+     * Returns any slot that has ANY overlap with the requested time range.
+     * This fixes the "10 minute overlap" bug.
+     */
     Utils.findSlotsForRange = function(startMin, endMin) {
         const slots = [];
         if (!window.unifiedTimes || startMin == null || endMin == null) return slots;
+        
         for (let i = 0; i < window.unifiedTimes.length; i++) {
             const slot = window.unifiedTimes[i];
             const d = new Date(slot.start);
             const slotStart = d.getHours() * 60 + d.getMinutes();
-            if (slotStart >= startMin && slotStart < endMin) slots.push(i);
+            const slotEnd = slotStart + INCREMENT_MINS; // e.g. 30 mins later
+
+            // Strict Overlap Check:
+            // Activity starts before Slot ends AND Activity ends after Slot starts
+            if (startMin < slotEnd && endMin > slotStart) {
+                slots.push(i);
+            }
         }
         return slots;
     };
@@ -91,6 +103,7 @@
                 const firstStart = new Date(firstSlot.start);
                 const lastStart = new Date(lastSlot.start);
                 blockStartMin = firstStart.getHours() * 60 + firstStart.getMinutes();
+                // For the end time, we now look at the END of the last slot
                 blockEndMin = lastStart.getHours() * 60 +
                               lastStart.getMinutes() +
                               INCREMENT_MINS;
@@ -126,7 +139,8 @@
         for (const rule of rules) {
             if (rule.type === 'Available') {
                 if (rule.startMin == null || rule.endMin == null) continue;
-                if (slotStartMin >= rule.startMin && slotEndMin <= rule.endMin) {
+                // Check overlap with available window
+                if (slotStartMin < rule.endMin && slotEndMin > rule.startMin) {
                     isAvailable = true;
                     break;
                 }
@@ -135,6 +149,7 @@
         for (const rule of rules) {
             if (rule.type === 'Unavailable') {
                 if (rule.startMin == null || rule.endMin == null) continue;
+                // Check overlap with unavailable window
                 if (slotStartMin < rule.endMin && slotEndMin > rule.startMin) {
                     isAvailable = false;
                     break;
@@ -190,7 +205,7 @@
                     let insideAvailable = false;
                     for (const rule of rules) {
                         if (rule.type !== 'Available' || rule.startMin == null || rule.endMin == null) continue;
-                        if (blockStartMin >= rule.startMin && blockEndMin <= rule.endMin) {
+                        if (blockStartMin < rule.endMin && blockEndMin > rule.startMin) {
                             insideAvailable = true;
                             break;
                         }
@@ -295,7 +310,7 @@
     };
 
     // =================================================================
-    // 3. DATA LOADER (UPDATED for Detailed Alerts)
+    // 3. DATA LOADER
     // =================================================================
     Utils.loadAndFilterData = function() {
         const globalSettings = window.loadGlobalSettings?.() || {};
@@ -329,7 +344,7 @@
         };
 
         const historicalCounts = {};
-        const lastUsedDates = {}; // NEW: To track "Last Used" date string
+        const lastUsedDates = {}; 
         
         const specialActivityNames = [];
         const specialNamesSet = new Set();
@@ -350,7 +365,6 @@
             const allDaily = window.loadAllDailyData?.() || {};
             const manualOffsets = globalSettings.manualUsageOffsets || {};
 
-            // 1. Scan All Past Schedules
             Object.entries(allDaily).forEach(([dateStr, dayData]) => {
                 const sched = dayData.scheduleAssignments || {};
                 Object.keys(sched).forEach(b => {
@@ -364,7 +378,6 @@
                 });
             });
 
-            // 2. Calculate Effective Counts & Last Used
             const todayStr = window.currentScheduleDate; 
             const todayDate = new Date(todayStr);
 
@@ -374,14 +387,11 @@
                 
                 Object.keys(rawHistory[b]).forEach(act => {
                     const dates = rawHistory[b][act].sort(); 
-                    
-                    // NEW: Capture the very last date used for UI feedback
                     if (dates.length > 0) {
                         lastUsedDates[b][act] = dates[dates.length - 1];
                     }
 
                     const rule = specialRules[act];
-                    
                     if (!rule || !rule.frequencyWeeks || rule.frequencyWeeks === 0) {
                         historicalCounts[b][act] = dates.length;
                     } else {
@@ -418,7 +428,6 @@
                             historicalCounts[b][act] = 0;
                         }
                     }
-                    
                     if (specialNamesSet.has(act)) {
                          historicalCounts[b]['_totalSpecials'] = 
                              (historicalCounts[b]['_totalSpecials'] || 0) + 1;
@@ -426,7 +435,6 @@
                 });
             });
 
-            // 3. Add Manual Offsets
             Object.keys(manualOffsets).forEach(b => {
                 if (!historicalCounts[b]) historicalCounts[b] = {};
                 Object.keys(manualOffsets[b]).forEach(act => {
