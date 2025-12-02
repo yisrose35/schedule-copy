@@ -1,11 +1,11 @@
 // ============================================================================
-// scheduler_ui.js (UPDATED: DETAILED ALERTS + FUZZY MATCHING)
+// scheduler_ui.js (FIXED: TIME RANGES, DUPLICATES, & FUZZY MATCHING)
 //
 // Supports:
 // - Manual Editing with Rule Validation
-// - Smart "Resource Resolver" to handle extras like "- Lineup"
-// - Detailed Capacity alerts (lists specific bunks)
-// - Detailed History alerts (lists specific dates)
+// - Smart "Resource Resolver" handles "Basketball Court B - Lineup" matches
+// - Detailed Capacity alerts with CORRECT Time Range Labels
+// - NEW: specific "Duplicate Activity" warning
 // ============================================================================
 
 (function () {
@@ -63,11 +63,12 @@
       
       for (const name of sortedNames) {
           const cleanName = name.toLowerCase().trim();
+          // Check if input starts with the resource name
           if (cleanInput.startsWith(cleanName)) {
               return name;
           }
       }
-      return null; // No match found in official list
+      return null; 
   }
 
   // ==========================================================================
@@ -137,18 +138,35 @@
         const resolvedName = resolveResourceName(value, allKnown) || value;
         const props = activityProperties[resolvedName]; 
         
+        // A. DUPLICATE CHECK (Already doing this today?)
+        const currentSchedule = window.scheduleAssignments[bunk] || [];
+        const targetSlots = findSlotsForRange(startMin, endMin);
+        
+        currentSchedule.forEach((entry, idx) => {
+            // Skip the slots we are currently editing/overwriting
+            if (targetSlots.includes(idx)) return;
+
+            if (entry && !entry.continuation) {
+                // Resolve the existing entry's name to see if it matches the new one
+                const entryRaw = entry.field || entry._activity;
+                const entryRes = resolveResourceName(entryRaw, allKnown) || entryRaw;
+                
+                if (entryRes && resolvedName && entryRes.toLowerCase() === resolvedName.toLowerCase()) {
+                     const timeLabel = window.unifiedTimes[idx]?.label || minutesToTimeLabel(window.unifiedTimes[idx].start);
+                     warnings.push(`⚠️ DUPLICATE: ${bunk} is already scheduled for "${resolvedName}" at ${timeLabel}.`);
+                }
+            }
+        });
+
         if (props) {
-            // A. CHECK FREQUENCY / MAX USAGE
+            // B. CHECK FREQUENCY / MAX USAGE
             const max = props.maxUsage || 0;
             if (max > 0) {
                 const historyCount = historicalCounts[bunk]?.[resolvedName] || 0;
                 
-                // Scan "Today"
+                // Count "Today" matches (excluding current edit slots)
                 let todayCount = 0;
-                const schedule = window.scheduleAssignments[bunk] || [];
-                const targetSlots = findSlotsForRange(startMin, endMin);
-                
-                schedule.forEach((entry, idx) => {
+                currentSchedule.forEach((entry, idx) => {
                     if (targetSlots.includes(idx)) return; 
                     if (entry && !entry.continuation) {
                         const entryRes = resolveResourceName(entry.field || entry._activity, allKnown);
@@ -164,7 +182,7 @@
                 }
             }
 
-            // B. CHECK FIELD CAPACITY
+            // C. CHECK FIELD CAPACITY
             const slotsToCheck = findSlotsForRange(startMin, endMin);
             const bunkSize = bunkMetaData[bunk]?.size || 0;
             const maxHeadcount = sportMetaData[resolvedName]?.maxCapacity || Infinity;
@@ -193,7 +211,8 @@
 
                 // Check Bunk Limit
                 if (bunksOnField.length >= bunkLimit) {
-                    const timeStr = minutesToTimeLabel(window.unifiedTimes[slotIdx].start);
+                    // FIX: Use .label for full range (e.g. "3:30 PM - 4:10 PM")
+                    const timeStr = window.unifiedTimes[slotIdx].label || minutesToTimeLabel(window.unifiedTimes[slotIdx].start);
                     warnings.push(`⚠️ CAPACITY: "${resolvedName}" is full at ${timeStr}.\n   Occupied by: ${bunksOnField.join(", ")}.`);
                     break; 
                 }
@@ -204,15 +223,16 @@
                     break;
                 }
                 
-                // C. CHECK TIME RULES
+                // D. CHECK TIME RULES
                 if (!window.SchedulerCoreUtils.isTimeAvailable(slotIdx, props)) {
-                     warnings.push(`⚠️ TIME: "${resolvedName}" is closed/unavailable at ${minutesToTimeLabel(window.unifiedTimes[slotIdx].start)}.`);
+                     const timeStr = window.unifiedTimes[slotIdx].label || minutesToTimeLabel(window.unifiedTimes[slotIdx].start);
+                     warnings.push(`⚠️ TIME: "${resolvedName}" is closed/unavailable at ${timeStr}.`);
                      break;
                 }
             }
         }
 
-        // D. BLOCKER PROMPT
+        // E. BLOCKER PROMPT
         if (warnings.length > 0) {
             const msg = warnings.join("\n\n") + "\n\nDo you want to OVERRIDE these rules and schedule anyway?";
             if (!confirm(msg)) {
