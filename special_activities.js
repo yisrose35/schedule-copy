@@ -7,15 +7,7 @@
 //
 // ✦ NO LOGIC CHANGES — visual/UI theme only
 //
-// ✦ Added Max Usage card (lifetime limit)
-//
-// ✦ All UI elements now match your site-wide theme:
-//      • Pills 999px
-//      • Blue/Emerald accents
-//      • Soft shadows + radial card gradients
-//      • Chip shapes match Setup/Fields tabs
-//      • Switch matches global switch style
-//      • Detail pane matches rest of app
+// ✦ UPDATE: Max Usage now uses an "Add/Remove" button flow
 // =================================================================
 
 (function() {
@@ -43,7 +35,8 @@ function initSpecialActivitiesTab() {
         s.timeRules = s.timeRules || [];
         s.sharableWith = s.sharableWith || { type: 'not_sharable', divisions: [] };
         s.limitUsage = s.limitUsage || { enabled: false, divisions: {} };
-        s.maxUsage = s.maxUsage ?? null;
+        // Ensure maxUsage is either a number or null (not undefined)
+        s.maxUsage = (s.maxUsage !== undefined && s.maxUsage !== "") ? s.maxUsage : null;
     });
 
     // ==== THEMED HTML SHELL ====
@@ -65,7 +58,6 @@ function initSpecialActivitiesTab() {
 
                 <div style="display:flex; flex-wrap:wrap; gap:22px; margin-top:10px;">
 
-                    <!-- LEFT SIDE -->
                     <div style="flex:1; min-width:260px;">
                         <div class="setup-subtitle">All Specials</div>
                         <p style="font-size:0.8rem; color:#6b7280;">
@@ -83,7 +75,6 @@ function initSpecialActivitiesTab() {
                         </div>
                     </div>
 
-                    <!-- RIGHT SIDE -->
                     <div style="flex:1.3; min-width:330px;">
                         <div class="setup-subtitle">Special Details</div>
                         <div id="specials-detail-pane"
@@ -97,7 +88,6 @@ function initSpecialActivitiesTab() {
             </section>
         </div>
 
-        <!-- INLINE THEME OVERRIDES FOR THIS TAB -->
         <style>
             .master-list {
                 border-radius: 18px;
@@ -289,7 +279,7 @@ function renderDetailPane() {
     detailPaneEl.appendChild(avail);
 
     /*******************************************************
-     * MAX USAGE CARD (Theme Perfect)
+     * MAX USAGE CARD (Theme Perfect with ADD BUTTON)
      *******************************************************/
     const maxCard = document.createElement('div');
     Object.assign(maxCard.style, {
@@ -308,29 +298,79 @@ function renderDetailPane() {
     maxHdr.style.fontSize = "0.9rem";
     maxCard.appendChild(maxHdr);
 
-    const maxDesc = document.createElement('p');
-    maxDesc.textContent = "Leave empty for unlimited.";
-    maxDesc.style.margin = "0 0 10px";
-    maxDesc.style.fontSize = "0.8rem";
-    maxDesc.style.color = "#6b7280";
-    maxCard.appendChild(maxDesc);
+    // LOGIC: If null, show "Add Limit". If set, show input + remove button.
+    if (item.maxUsage === null || item.maxUsage === undefined) {
+        
+        const noLimitText = document.createElement('p');
+        noLimitText.textContent = "Unlimited usage allowed.";
+        noLimitText.style.margin = "0 0 10px";
+        noLimitText.style.fontSize = "0.8rem";
+        noLimitText.style.color = "#6b7280";
+        maxCard.appendChild(noLimitText);
 
-    const maxInput = document.createElement("input");
-    maxInput.type = "number";
-    maxInput.placeholder = "Unlimited";
-    maxInput.style.width = "160px";
-    maxInput.style.borderRadius = "999px";
-    maxInput.style.border = "1px solid #D1D5DB";
-    maxInput.style.padding = "6px 12px";
-    maxInput.value = item.maxUsage ?? "";
+        const addLimitBtn = document.createElement("button");
+        addLimitBtn.textContent = "+ Add Limit";
+        addLimitBtn.style.background = "#00C896";
+        addLimitBtn.style.color = "white";
+        addLimitBtn.style.border = "none";
+        addLimitBtn.style.fontSize = "0.8rem";
+        
+        addLimitBtn.onclick = () => {
+            item.maxUsage = 1; // Default to 1
+            onSave();
+            onRerender();
+        };
+        maxCard.appendChild(addLimitBtn);
 
-    maxInput.oninput = () => {
-        const val = maxInput.value.trim();
-        item.maxUsage = val === "" ? null : Math.max(0, parseInt(val,10) || 0);
-        onSave();
-    };
+    } else {
+        
+        const limitDesc = document.createElement('p');
+        limitDesc.textContent = "Maximum times a bunk can ever play this activity:";
+        limitDesc.style.margin = "0 0 8px";
+        limitDesc.style.fontSize = "0.8rem";
+        limitDesc.style.color = "#6b7280";
+        maxCard.appendChild(limitDesc);
 
-    maxCard.appendChild(maxInput);
+        const controlRow = document.createElement("div");
+        controlRow.style.display = "flex";
+        controlRow.style.gap = "10px";
+        controlRow.style.alignItems = "center";
+
+        const maxInput = document.createElement("input");
+        maxInput.type = "number";
+        maxInput.style.width = "80px";
+        maxInput.style.borderRadius = "999px";
+        maxInput.style.border = "1px solid #D1D5DB";
+        maxInput.style.padding = "6px 12px";
+        maxInput.value = item.maxUsage;
+
+        maxInput.oninput = () => {
+            const val = maxInput.value.trim();
+            // If user deletes content, keep it as number but 0, or handle elsewhere. 
+            // Better to keep it bound.
+            if (val !== "") {
+                item.maxUsage = Math.max(1, parseInt(val,10) || 1);
+                onSave();
+            }
+        };
+
+        const removeBtn = document.createElement("button");
+        removeBtn.textContent = "Remove";
+        removeBtn.style.background = "#FEE2E2";
+        removeBtn.style.color = "#DC2626";
+        removeBtn.style.border = "1px solid #FECACA";
+        
+        removeBtn.onclick = () => {
+            item.maxUsage = null;
+            onSave();
+            onRerender();
+        };
+
+        controlRow.appendChild(maxInput);
+        controlRow.appendChild(removeBtn);
+        maxCard.appendChild(controlRow);
+    }
+
     detailPaneEl.appendChild(maxCard);
 
     /*******************************************************
