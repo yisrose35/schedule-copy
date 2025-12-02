@@ -1,11 +1,12 @@
 // ============================================================================
-// scheduler_ui.js (FIXED: TIME RANGES, DUPLICATES, & FUZZY MATCHING)
+// scheduler_ui.js (FIXED: TIME RANGES, DUPLICATES, FUZZY MATCHING, & INTERSECTION)
 //
 // Supports:
 // - Manual Editing with Rule Validation
 // - Smart "Resource Resolver" handles "Basketball Court B - Lineup" matches
 // - Detailed Capacity alerts with CORRECT Time Range Labels
 // - NEW: specific "Duplicate Activity" warning
+// - FIX: Intersection Logic for manual edits (matches Generator logic)
 // ============================================================================
 
 (function () {
@@ -105,7 +106,10 @@
       const slotStart =
         new Date(times[i].start).getHours() * 60 +
         new Date(times[i].start).getMinutes();
-      if (slotStart >= startMin && slotStart < endMin) {
+      const slotEnd = slotStart + INCREMENT_MINS; // 30 mins later
+
+      // FIX: Intersection Logic matches Core Utils
+      if (startMin < slotEnd && endMin > slotStart) {
         slots.push(i);
       }
     }
@@ -211,7 +215,6 @@
 
                 // Check Bunk Limit
                 if (bunksOnField.length >= bunkLimit) {
-                    // FIX: Use .label for full range (e.g. "3:30 PM - 4:10 PM")
                     const timeStr = window.unifiedTimes[slotIdx].label || minutesToTimeLabel(window.unifiedTimes[slotIdx].start);
                     warnings.push(`⚠️ CAPACITY: "${resolvedName}" is full at ${timeStr}.\n   Occupied by: ${bunksOnField.join(", ")}.`);
                     break; 
