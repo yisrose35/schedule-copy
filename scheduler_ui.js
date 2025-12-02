@@ -1,13 +1,21 @@
 // ============================================================================
-// scheduler_ui.js (FIXED: Reverted Grid Logic + Lookback Validation)
+// scheduler_ui.js (FIXED: INTERSECTION LOGIC, DETAILED ALERTS, FUZZY MATCH)
+//
+// Features:
+// - Intersection Logic: Catches 10-min overlaps (2:20pm counts as using 2:00pm slot).
+// - Detailed Alerts: Lists specific bunks/dates causing conflicts.
+// - Fuzzy Match: Handles "- Lineup" or case differences.
 // ============================================================================
 
 (function () {
   "use strict";
 
   const INCREMENT_MINS = 30;
+  const PIXELS_PER_MINUTE = 2; // Used if we had a timeline view, kept for ref
 
-  // ... (Helpers: parseTimeToMinutes, minutesToTimeLabel, resolveResourceName, UI_GENERATED_EVENTS... same as before) ...
+  // ==========================================================================
+  // TIME HELPERS
+  // ==========================================================================
   function parseTimeToMinutes(str) {
     if (!str || typeof str !== "string") return null;
     let s = str.trim().toLowerCase();
@@ -34,18 +42,32 @@
     return `${h12}:${m} ${ap}`;
   }
 
+  // ==========================================================================
+  // RESOURCE RESOLVER (Fuzzy Matcher)
+  // ==========================================================================
   function resolveResourceName(input, knownNames) {
       if (!input || !knownNames) return null;
       const cleanInput = String(input).toLowerCase().trim();
+      
+      // 1. Exact Match
       if (knownNames.includes(input)) return input;
+
+      // 2. Starts With (e.g. "Basketball Court B - Lineup" -> "Basketball Court B")
+      // Sort by length desc so we match "Court B" before "Court"
       const sortedNames = [...knownNames].sort((a,b) => b.length - a.length);
+      
       for (const name of sortedNames) {
           const cleanName = name.toLowerCase().trim();
-          if (cleanInput.startsWith(cleanName)) return name;
+          if (cleanInput.startsWith(cleanName)) {
+              return name;
+          }
       }
       return null; 
   }
 
+  // ==========================================================================
+  // DETECT GENERATED EVENTS
+  // ==========================================================================
   const UI_GENERATED_EVENTS = new Set([
     "general activity", "general activity slot", "activity", "activities", "sports", "sport", "sports slot", "special activity", "swim", "league game", "specialty league"
   ]);
@@ -54,20 +76,32 @@
     return UI_GENERATED_EVENTS.has(String(name).trim().toLowerCase());
   }
 
-  // --- REVERTED: Standard Start-Time Logic ---
+  // ==========================================================================
+  // SLOT FINDER (CRITICAL FIX: INTERSECTION LOGIC)
+  // ==========================================================================
   function findSlotsForRange(startMin, endMin) {
     const slots = [];
     const times = window.unifiedTimes;
     if (!times) return slots;
+
     for (let i = 0; i < times.length; i++) {
       const slotStart = new Date(times[i].start).getHours() * 60 + new Date(times[i].start).getMinutes();
-      if (slotStart >= startMin && slotStart < endMin) {
+      const slotEnd = slotStart + INCREMENT_MINS;
+
+      // LOGIC: If the activity touches the slot AT ALL, it counts.
+      // Activity: [startMin, endMin)
+      // Slot:     [slotStart, slotEnd)
+      // Overlap if: startMin < slotEnd AND endMin > slotStart
+      if (startMin < slotEnd && endMin > slotStart) {
         slots.push(i);
       }
     }
     return slots;
   }
 
+  // ==========================================================================
+  // EDIT LOGIC (Smart Validation)
+  // ==========================================================================
   function editCell(bunk, startMin, endMin, current) {
     if (!bunk) return;
     const newName = prompt(`Edit activity for ${bunk}\n${minutesToTimeLabel(startMin)} - ${minutesToTimeLabel(endMin)}\n(Enter CLEAR or FREE to empty)`, current);
@@ -79,6 +113,9 @@
     // --- VALIDATION GATE START ---
     if (!isClear) {
         const warnings = [];
+        
+        // 1. Load fresh data
+        // We assume SchedulerCoreUtils is available and has loaded data
         const config = window.SchedulerCoreUtils.loadAndFilterData();
         const { activityProperties, historicalCounts, lastUsedDates, bunkMetaData, sportMetaData } = config;
         
@@ -86,12 +123,12 @@
         const resolvedName = resolveResourceName(value, allKnown) || value;
         const props = activityProperties[resolvedName]; 
         
-        // A. DUPLICATE CHECK
+        // A. DUPLICATE CHECK (Already doing this today?)
         const currentSchedule = window.scheduleAssignments[bunk] || [];
         const targetSlots = findSlotsForRange(startMin, endMin);
         
         currentSchedule.forEach((entry, idx) => {
-            if (targetSlots.includes(idx)) return;
+            if (targetSlots.includes(idx)) return; // Skip self
             if (entry && !entry.continuation) {
                 const entryRaw = entry.field || entry._activity;
                 const entryRes = resolveResourceName(entryRaw, allKnown) || entryRaw;
@@ -103,7 +140,7 @@
         });
 
         if (props) {
-            // B. MAX USAGE
+            // B. MAX USAGE / FREQUENCY
             const max = props.maxUsage || 0;
             if (max > 0) {
                 const historyCount = historicalCounts[bunk]?.[resolvedName] || 0;
@@ -123,7 +160,7 @@
                 }
             }
 
-            // C. CAPACITY CHECK (WITH LOOKBACK)
+            // C. CAPACITY CHECK (With Intersection Logic)
             const slotsToCheck = findSlotsForRange(startMin, endMin);
             const bunkSize = bunkMetaData[bunk]?.size || 0;
             const maxHeadcount = sportMetaData[resolvedName]?.maxCapacity || Infinity;
@@ -131,31 +168,6 @@
             let bunkLimit = 1;
             if (props.sharableWith?.capacity) bunkLimit = parseInt(props.sharableWith.capacity);
             else if (props.sharable || props.sharableWith?.type === 'all') bunkLimit = 2;
-
-            // NEW: Lookback check for manual editor
-            if (slotsToCheck.length > 0) {
-                const firstSlotIndex = slotsToCheck[0];
-                const firstSlotStart = new Date(window.unifiedTimes[firstSlotIndex].start).getHours() * 60 + 
-                                       new Date(window.unifiedTimes[firstSlotIndex].start).getMinutes();
-                
-                if (startMin < firstSlotStart && firstSlotIndex > 0) {
-                    const prevSlotIndex = firstSlotIndex - 1;
-                    // Check usage in previous slot
-                    let prevBunksOnField = 0;
-                    Object.keys(window.scheduleAssignments).forEach(otherBunk => {
-                        if (otherBunk === bunk) return;
-                        const entry = window.scheduleAssignments[otherBunk][prevSlotIndex];
-                        if (entry) {
-                            const entryRaw = (typeof entry.field === 'object') ? entry.field.name : entry.field;
-                            const entryRes = resolveResourceName(entryRaw || entry._activity, allKnown);
-                            if (entryRes === resolvedName) prevBunksOnField++;
-                        }
-                    });
-                    if (prevBunksOnField >= bunkLimit) {
-                        warnings.push(`⚠️ CAPACITY: "${resolvedName}" is busy in the previous slot (overlap collision).`);
-                    }
-                }
-            }
 
             for (const slotIdx of slotsToCheck) {
                 const bunksOnField = []; 
@@ -175,17 +187,20 @@
                     }
                 });
 
+                // Check Bunk Limit
                 if (bunksOnField.length >= bunkLimit) {
                     const timeStr = window.unifiedTimes[slotIdx].label || minutesToTimeLabel(window.unifiedTimes[slotIdx].start);
                     warnings.push(`⚠️ CAPACITY: "${resolvedName}" is full at ${timeStr}.\n   Occupied by: ${bunksOnField.join(", ")}.`);
                     break; 
                 }
 
+                // Check Headcount Limit
                 if (maxHeadcount !== Infinity && (headcountOnField + bunkSize > maxHeadcount)) {
                     warnings.push(`⚠️ HEADCOUNT: "${resolvedName}" will have ${headcountOnField + bunkSize} kids (Max ${maxHeadcount}).`);
                     break;
                 }
                 
+                // D. TIME RULES
                 if (!window.SchedulerCoreUtils.isTimeAvailable(slotIdx, props)) {
                      const timeStr = window.unifiedTimes[slotIdx].label || minutesToTimeLabel(window.unifiedTimes[slotIdx].start);
                      warnings.push(`⚠️ TIME: "${resolvedName}" is closed/unavailable at ${timeStr}.`);
@@ -194,6 +209,7 @@
             }
         }
 
+        // E. BLOCKER PROMPT
         if (warnings.length > 0) {
             const msg = warnings.join("\n\n") + "\n\nDo you want to OVERRIDE these rules and schedule anyway?";
             if (!confirm(msg)) {
@@ -202,6 +218,7 @@
         }
     }
 
+    // Apply Edit (Using Intersection Logic to fill slots)
     const slots = findSlotsForRange(startMin, endMin);
     if (!window.scheduleAssignments[bunk])
       window.scheduleAssignments[bunk] = new Array(window.unifiedTimes.length);
@@ -241,7 +258,7 @@
     return label;
   }
 
-  // --- REVERTED: Standard Start-Time Logic ---
+  // Reused for UI logic
   function findFirstSlotForTime(startMin) {
     if (!window.unifiedTimes) return -1;
     for (let i = 0; i < window.unifiedTimes.length; i++) {
