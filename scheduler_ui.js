@@ -1,17 +1,18 @@
 // ============================================================================
-// scheduler_ui.js (FIXED: INTERSECTION LOGIC, DETAILED ALERTS, FUZZY MATCH)
+// scheduler_ui.js (FIXED: EDITING BUG & INTERSECTION LOGIC)
 //
 // Features:
 // - Intersection Logic: Catches 10-min overlaps (2:20pm counts as using 2:00pm slot).
 // - Detailed Alerts: Lists specific bunks/dates causing conflicts.
 // - Fuzzy Match: Handles "- Lineup" or case differences.
+// - FIX: Added safety check in editCell so saving works even if SchedulerCoreUtils is missing.
 // ============================================================================
 
 (function () {
   "use strict";
 
   const INCREMENT_MINS = 30;
-  const PIXELS_PER_MINUTE = 2; // Used if we had a timeline view, kept for ref
+  // const PIXELS_PER_MINUTE = 2; // Used if we had a timeline view, kept for ref
 
   // ==========================================================================
   // TIME HELPERS
@@ -100,22 +101,24 @@
   }
 
   // ==========================================================================
-  // EDIT LOGIC (Smart Validation)
+  // EDIT LOGIC (FIXED: Smart Validation with Safety Check)
   // ==========================================================================
   function editCell(bunk, startMin, endMin, current) {
     if (!bunk) return;
+    
+    // 1. Get user input
     const newName = prompt(`Edit activity for ${bunk}\n${minutesToTimeLabel(startMin)} - ${minutesToTimeLabel(endMin)}\n(Enter CLEAR or FREE to empty)`, current);
-    if (newName === null) return; 
+    if (newName === null) return; // User hit Cancel
 
     const value = newName.trim();
     const isClear = (value === "" || value.toUpperCase() === "CLEAR" || value.toUpperCase() === "FREE");
     
     // --- VALIDATION GATE START ---
-    if (!isClear) {
+    // FIX: Check if SchedulerCoreUtils exists before using it to prevent crashes
+    if (!isClear && window.SchedulerCoreUtils && typeof window.SchedulerCoreUtils.loadAndFilterData === 'function') {
         const warnings = [];
         
         // 1. Load fresh data
-        // We assume SchedulerCoreUtils is available and has loaded data
         const config = window.SchedulerCoreUtils.loadAndFilterData();
         const { activityProperties, historicalCounts, lastUsedDates, bunkMetaData, sportMetaData } = config;
         
@@ -216,10 +219,21 @@
                 return; 
             }
         }
+    } 
+    // Fallback log if utils are missing
+    else if (!isClear && (!window.SchedulerCoreUtils || typeof window.SchedulerCoreUtils.loadAndFilterData !== 'function')) {
+        console.warn("SchedulerCoreUtils not found or invalid. Skipping validation logic.");
     }
 
-    // Apply Edit (Using Intersection Logic to fill slots)
+    // --- APPLY EDIT (Using Intersection Logic to fill slots) ---
     const slots = findSlotsForRange(startMin, endMin);
+
+    // Safety check: ensure slots exist
+    if (!slots || slots.length === 0) {
+        alert("Error: Could not match this time range to the internal schedule grid. Please refresh the page.");
+        return;
+    }
+
     if (!window.scheduleAssignments[bunk])
       window.scheduleAssignments[bunk] = new Array(window.unifiedTimes.length);
 
