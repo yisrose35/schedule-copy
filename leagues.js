@@ -1,11 +1,5 @@
 // ===================================================================
-// leagues.js  — THEMED VERSION (MATCHES ENTIRE WEBSITE)
-// ===================================================================
-// ✔ Correct mount point: <div id="leagues">
-// ✔ Blue theme (global site theme)
-// ✔ Master-list + detail-pane identical to Fields & Specials
-// ✔ Rounded cards, soft shadows, pill buttons, blue chips
-// ✔ ZERO logic changed
+// leagues.js  — THEMED VERSION (FIXED IMPORT LOGIC)
 // ===================================================================
 
 (function () {
@@ -47,7 +41,6 @@
             window.leagueRoundState = leagueRoundState;
         }
     }
-
 
     function saveLeaguesData() {
         window.saveGlobalSettings?.('leaguesByName', leaguesByName);
@@ -102,7 +95,7 @@
     }
 
     // -------------------------------------------------------------
-    // TIME HELPER
+    // TIME HELPERS
     // -------------------------------------------------------------
     function parseTimeToMinutes(str) {
         if (!str || typeof str !== "string") return null;
@@ -128,12 +121,24 @@
 
         return hh * 60 + mm;
     }
+    
+    // Find slot index for a given time
+    function findSlotIndexForTime(minutes) {
+        const times = window.unifiedTimes || [];
+        for (let i = 0; i < times.length; i++) {
+            const d = new Date(times[i].start);
+            const startMin = d.getHours() * 60 + d.getMinutes();
+            // Assuming 30 min slots or checking generic overlap
+            if (minutes >= startMin && minutes < startMin + 30) return i;
+        }
+        return -1;
+    }
 
     // =================================================================
     // INIT — MOUNT ON #leagues
     // =================================================================
     window.initLeagues = function () {
-        const container = document.getElementById('leagues');  // FIXED
+        const container = document.getElementById('leagues');
 
         if (!container) return;
 
@@ -154,7 +159,6 @@
 
                     <div style="display:flex; flex-wrap:wrap; gap:20px; margin-top:10px;">
 
-                        <!-- LEFT PANEL -->
                         <div style="flex:1; min-width:260px;">
                             <div class="setup-subtitle">Add New League</div>
 
@@ -171,7 +175,6 @@
                             </div>
                         </div>
 
-                        <!-- RIGHT PANEL -->
                         <div style="flex:1.4; min-width:320px;">
                             <div class="setup-subtitle">League Details</div>
 
@@ -189,7 +192,6 @@
             </div>
 
             <style>
-                /* IDENTICAL master-list AS SPECIALS/FIELDS */
                 .master-list {
                     border-radius: 18px;
                     border: 1px solid #E5E7EB;
@@ -197,7 +199,6 @@
                     padding: 8px 6px;
                     box-shadow: 0 10px 24px rgba(15,23,42,0.04);
                 }
-
                 .master-list .list-item {
                     padding: 10px 10px;
                     border-radius: 14px;
@@ -211,19 +212,16 @@
                     box-shadow: 0 4px 10px rgba(15,23,42,0.05);
                     transition: background 0.15s, box-shadow 0.15s, transform 0.08s;
                 }
-
                 .master-list .list-item:hover {
                     background: #E7F0FF;
                     transform: translateY(-1px);
                 }
-
                 .master-list .list-item.selected {
                     background: radial-gradient(circle at top left, #E1ECFF 0, #FFFFFF 70%);
                     border-color: #2563EB;
                     box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.45);
                     font-weight: 600;
                 }
-
                 .detail-pane {
                     border-radius: 18px;
                     border: 1px solid #E5E7EB;
@@ -231,14 +229,12 @@
                     background: linear-gradient(135deg, #F7F9FA 0%, #FFFFFF 55%, #F7F9FA 100%);
                     box-shadow: 0 18px 40px rgba(15,23,42,0.06);
                 }
-
                 .chips {
                     display: flex;
                     flex-wrap: wrap;
                     gap: 6px;
                     margin-top: 6px;
                 }
-
                 .chip {
                     padding: 4px 9px;
                     border-radius: 999px;
@@ -247,13 +243,11 @@
                     font-size: 0.85rem;
                     background: #f3f4f6;
                 }
-
                 .chip.active {
                     background: #2563EB;
                     border-color: #2563EB;
                     color: #fff;
                 }
-
                 .group-header {
                     background: #DBEAFE;
                     padding: 8px 12px;
@@ -265,11 +259,9 @@
                     margin-bottom: 8px;
                     border-left: 5px solid #2563EB;
                 }
-
                 .match-row {
                     transition: background 0.15s ease, transform 0.12s ease, box-shadow 0.12s ease;
                 }
-
                 .match-row:hover {
                     background: #E7F0FF;
                     transform: translateY(-1px);
@@ -787,9 +779,8 @@
             });
 
             const labels = Object.keys(groupedMatches).sort((a, b) => {
-                const nA = (a.match(/\d+/) || [0])[0];
-                const nB = (b.match(/\d+/) || [0])[0];
-                return parseInt(nA, 10) - parseInt(nB, 10) || a.localeCompare(b);
+                // Natural sort logic if needed
+                return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
             });
 
             labels.forEach((label) => {
@@ -838,141 +829,113 @@
     }
 
     // =================================================================
-    // IMPORT FROM SCHEDULE (FIXED & REFACTORED)
+    // IMPORT FROM SCHEDULE (FIXED: STRICT DIVISION & LABEL MATCH)
     // =================================================================
     function importGamesFromSchedule(league, target) {
         target.innerHTML = '';
-
+        
+        // 1. Get Core Data
         const daily = window.loadCurrentDailyData?.() || {};
-        const assignments = daily.scheduleAssignments || {};
         const skeleton = daily.manualSkeleton || [];
+        const assignments = daily.scheduleAssignments || {};
+        const divisions = window.divisions || {}; // Needed to find bunks inside a division
+        
         const saveButton = target.parentElement.querySelector('[data-role="save-game-results"]');
 
         if (!league.teams || league.teams.length === 0) {
             target.innerHTML = `<p class="muted">Add teams to this league first.</p>`;
             return;
         }
-
-        // FIX 1: Helper to get division directly from slot
-        function getDivisionForSlot(entrySlotDivision) {
-            // If league has only one division — trivial
-            if (league.divisions && league.divisions.length === 1) return league.divisions[0];
-
-            // If schedule knows the slot's division — use that
-            if (league.divisions.includes(entrySlotDivision)) {
-                return entrySlotDivision;
-            }
-
-            return null; // ignore unrelated divisions
-        }
-
-        // FIX 2: Helper to extract "League Game X" number from event text
-        function extractGameNumber(evt) {
-            if (!evt) return null;
-            const m = evt.match(/league\s*game\s*(\d+)/i);
-            return m ? parseInt(m[1], 10) : null;
-        }
-
-        // FIX 2: Build Map of Times -> Game Names (Per Division)
-        const timeToLabelMap = {};
-
-        (league.divisions || []).forEach(divName => {
-            timeToLabelMap[divName] = {};
-
-            const divItems = skeleton
-                .filter(i => i.division === divName)
-                .filter(i => /league\s*game/i.test(i.event))
-                .sort((a, b) => parseTimeToMinutes(a.startTime) - parseTimeToMinutes(b.startTime));
-
-            divItems.forEach(item => {
-                const num = extractGameNumber(item.event);
-                if (num == null) return;
-
-                const startMin = parseTimeToMinutes(item.startTime);
-                if (startMin == null) return;
-
-                timeToLabelMap[divName][startMin] = `League Game ${num}`;
-            });
+        
+        // 2. Scan Skeleton: Only look at blocks in THIS LEAGUE'S DIVISIONS that are labeled "League Game"
+        const relevantBlocks = skeleton.filter(block => {
+            return league.divisions.includes(block.division) &&
+                   block.event.toLowerCase().includes("league game");
         });
 
-        // FIX 3: Correct Label Lookup (Using Div Name + Slot Index)
-        function getLabelForGame(divName, slotIndex) {
-            const times = window.unifiedTimes || [];
-            if (!times[slotIndex]) return null;
-
-            const slotStart = new Date(times[slotIndex].start);
-            const slotMin = slotStart.getHours() * 60 + slotStart.getMinutes();
-
-            return timeToLabelMap[divName]?.[slotMin] || null;
+        if (relevantBlocks.length === 0) {
+             target.innerHTML = `<p class="muted">No "League Game" blocks found for the divisions: ${league.divisions.join(", ")}.</p>`;
+             return;
         }
 
-        const uniqueMatchKeys = new Set();
-        const groups = {};
+        const gamesFound = {}; // { "League Game 5": [ {teamA, teamB}, ... ] }
 
-        // Iterate through all teams in this league to find their games
-        league.teams.forEach(teamName => {
-            const schedule = assignments[teamName];
-            if (!Array.isArray(schedule)) return;
+        // 3. Process Each Found Block
+        relevantBlocks.forEach(block => {
+            const blockName = block.event; // This is the GROUP Header (e.g. "League Game 5")
+            
+            const startMin = parseTimeToMinutes(block.startTime);
+            const slotIdx = findSlotIndexForTime(startMin);
 
-            schedule.forEach((entry, slotIndex) => {
-                if (!entry || !entry._h2h) return;
+            if (slotIdx === -1) return;
 
-                // FIX 1: Use direct division check (NO mapping teams to bunks)
-                const divName = getDivisionForSlot(entry.division);
-                if (!divName) return;
+            // Get the list of bunks in this division so we can access their schedule data
+            // Since it is a merged cell, we only need to look at the FIRST bunk in the division
+            const divBunks = divisions[block.division]?.bunks || [];
+            if (divBunks.length === 0) return;
 
-                const text = entry.sport || "";
-                const m = text.match(/^(.*?)\s+vs\.?\s+(.*?)(?:\s*\(|$)/i);
-                if (!m) return;
+            const representativeBunk = divBunks[0];
+            const entry = assignments[representativeBunk]?.[slotIdx];
 
-                const tA = m[1].trim();
-                const tB = m[2].trim();
+            if (!entry) return;
 
-                // Ensure both teams belong to the league
-                if (league.teams.includes(tA) && league.teams.includes(tB)) {
-                    
-                    const gameLabel = getLabelForGame(divName, slotIndex);
-                    
-                    // Only import if it matches a known "League Game" slot in the skeleton
-                    if (gameLabel) {
+            // 4. Extract Text Content (Look in _allMatchups first, then raw field text)
+            let linesToScan = [];
+            
+            if (entry._allMatchups && Array.isArray(entry._allMatchups) && entry._allMatchups.length > 0) {
+                linesToScan = entry._allMatchups;
+            } else if (typeof entry.field === 'string') {
+                linesToScan = entry.field.split('\n');
+            } else if (entry.sport) {
+                // Sometimes formatted as "Field - Sport (Team vs Team)"
+                linesToScan = [entry.sport];
+            }
+
+            // 5. Parse Text for "Team A vs Team B"
+            linesToScan.forEach(line => {
+                // Regex looks for:  Start... TeamA ... vs ... TeamB ... (optional extra info)
+                const m = line.match(/^(.*?)\s+vs\.?\s+(.*?)(?:\s*[@\(]|$)/i); 
+                
+                if (m) {
+                    const tA = m[1].trim();
+                    const tB = m[2].trim();
+
+                    // STRICT CHECK: Teams must exist in the current league roster
+                    if (league.teams.includes(tA) && league.teams.includes(tB)) {
+                        if (!gamesFound[blockName]) gamesFound[blockName] = [];
                         
-                        // FIX 5: Label includes Division
-                        const finalLabel = `${divName} – ${gameLabel}`;
-
-                        // FIX 4: Unique Key (Div + Slot + Teams) to prevent duplicates or cross-div merging
-                        const matchKey = [tA, tB].sort().join('::');
-                        const uniqueKey = `${divName}::${slotIndex}::${matchKey}`;
-
-                        if (!uniqueMatchKeys.has(uniqueKey)) {
-                            uniqueMatchKeys.add(uniqueKey);
-                            if (!groups[finalLabel]) groups[finalLabel] = [];
-                            groups[finalLabel].push({ teamA: tA, teamB: tB });
+                        // Prevent duplicates (in case multiple bunks had the same text)
+                        const exists = gamesFound[blockName].some(g => 
+                            (g.teamA === tA && g.teamB === tB) || 
+                            (g.teamA === tB && g.teamB === tA)
+                        );
+                        
+                        if (!exists) {
+                            gamesFound[blockName].push({ teamA: tA, teamB: tB });
                         }
                     }
                 }
             });
         });
 
-        const labelKeys = Object.keys(groups);
-        if (labelKeys.length === 0) {
-            target.innerHTML = `<p class="muted">No scheduled league games found for these teams today.</p>`;
+        // 6. Render Results
+        const groupNames = Object.keys(gamesFound).sort((a,b) => 
+            a.localeCompare(b, undefined, {numeric: true})
+        );
+
+        if (groupNames.length === 0) {
+            target.innerHTML = `<p class="muted">Found League blocks, but no valid team matchups (e.g. "Team A vs Team B") inside them matching your roster.</p>`;
             return;
         }
 
-        // Sort labels naturally (Junior - League Game 1, Junior - League Game 2...)
-        labelKeys.sort((a, b) => {
-            return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
-        });
-
-        labelKeys.forEach(label => {
+        groupNames.forEach(headerLabel => {
             const header = document.createElement('div');
             header.className = 'group-header';
-            header.textContent = label;
-
+            header.textContent = headerLabel; // e.g. "League Game 5"
             target.appendChild(header);
 
-            groups[label].forEach(m => {
-                addMatchRow(target, m.teamA, m.teamB, '', '', saveButton, label);
+            gamesFound[headerLabel].forEach(m => {
+                addMatchRow(target, m.teamA, m.teamB, '', '', saveButton, headerLabel);
             });
         });
 
