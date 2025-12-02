@@ -354,7 +354,7 @@
     };
 
     // =================================================================
-    // 3. DATA LOADER
+    // 3. DATA LOADER (UPDATED: FREQUENCY WALK-THROUGH)
     // =================================================================
     Utils.loadAndFilterData = function() {
         const globalSettings = window.loadGlobalSettings?.() || {};
@@ -365,11 +365,9 @@
         const masterLeagues = globalSettings.leaguesByName || {};
         const masterSpecialtyLeagues = globalSettings.specialtyLeagues || {};
         
-        // NEW: Load Metadata for Capacity Checks
+        // Metadata
         const bunkMetaData = app1Data.bunkMetaData || {};
         const sportMetaData = app1Data.sportMetaData || {};
-        
-        // Save to Utils scope for canBlockFit access
         Utils._bunkMetaData = bunkMetaData;
         Utils._sportMetaData = sportMetaData;
 
@@ -395,44 +393,115 @@
 
         const specialActivityNames = [];
         const specialNamesSet = new Set();
+        // Map special name -> frequency rules
+        const specialRules = {};
 
         try {
             masterSpecials.forEach(s => {
                  specialActivityNames.push(s.name);
                  specialNamesSet.add(s.name);
+                 specialRules[s.name] = { 
+                     frequencyWeeks: s.frequencyWeeks || 0,
+                     limit: s.maxUsage || 0 
+                 };
             });
 
+            // GATHER RAW HISTORY DATES
+            // We need the actual date strings to do the window calculation
+            const rawHistory = {}; // { bunk: { activity: [dateString, dateString] } }
+            
             const allDaily = window.loadAllDailyData?.() || {};
             const manualOffsets = globalSettings.manualUsageOffsets || {};
 
-            // 1. Tally History from Previous Days
-            Object.values(allDaily).forEach(day => {
-                const sched = day.scheduleAssignments || {};
+            // 1. Scan All Past Schedules for Dates
+            Object.entries(allDaily).forEach(([dateStr, dayData]) => {
+                const sched = dayData.scheduleAssignments || {};
                 Object.keys(sched).forEach(b => {
-                    if (!historicalCounts[b]) historicalCounts[b] = {};
+                    if (!rawHistory[b]) rawHistory[b] = {};
                     (sched[b] || []).forEach(e => {
                         if (e && e._activity && !e.continuation) {
-                            historicalCounts[b][e._activity] = (historicalCounts[b][e._activity] || 0) + 1;
-                            if (specialNamesSet.has(e._activity)) {
-                                historicalCounts[b]['_totalSpecials'] = 
-                                    (historicalCounts[b]['_totalSpecials'] || 0) + 1;
-                            }
+                            if (!rawHistory[b][e._activity]) rawHistory[b][e._activity] = [];
+                            rawHistory[b][e._activity].push(dateStr);
                         }
                     });
                 });
             });
 
-            // 2. Add Manual Offsets
+            // 2. Calculate Effective Counts (The Walk Through)
+            const todayStr = window.currentScheduleDate; // "YYYY-MM-DD"
+            const todayDate = new Date(todayStr);
+
+            Object.keys(rawHistory).forEach(b => {
+                if (!historicalCounts[b]) historicalCounts[b] = {};
+                
+                Object.keys(rawHistory[b]).forEach(act => {
+                    const dates = rawHistory[b][act].sort(); // Sort chronologically
+                    const rule = specialRules[act];
+                    
+                    // If no frequency rule (0 weeks) -> Just count total (Lifetime)
+                    if (!rule || !rule.frequencyWeeks || rule.frequencyWeeks === 0) {
+                        historicalCounts[b][act] = dates.length;
+                    } else {
+                        // Sliding Window Logic (Triggered by first use)
+                        const windowDays = rule.frequencyWeeks * 7;
+                        let windowStart = null;
+                        let windowCount = 0;
+
+                        // Simulate history to find current state
+                        for (const dStr of dates) {
+                            const d = new Date(dStr);
+                            
+                            // If we don't have a window, start one
+                            if (!windowStart) {
+                                windowStart = d;
+                                windowCount = 1;
+                            } else {
+                                // Check if this date fits in current window
+                                const diffTime = Math.abs(d - windowStart);
+                                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+                                
+                                if (diffDays <= windowDays) {
+                                    windowCount++;
+                                } else {
+                                    // Window expired, start new one here
+                                    windowStart = d;
+                                    windowCount = 1;
+                                }
+                            }
+                        }
+
+                        // Now check TODAY relative to the active window
+                        if (windowStart) {
+                            const diffTime = Math.abs(todayDate - windowStart);
+                            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                            
+                            if (diffDays <= windowDays) {
+                                // We are still inside the active window
+                                historicalCounts[b][act] = windowCount;
+                            } else {
+                                // Window expired before today -> Count resets to 0
+                                historicalCounts[b][act] = 0;
+                            }
+                        } else {
+                            historicalCounts[b][act] = 0;
+                        }
+                    }
+                    
+                    // Add to total specials count (for fairness)
+                    if (specialNamesSet.has(act)) {
+                         historicalCounts[b]['_totalSpecials'] = 
+                             (historicalCounts[b]['_totalSpecials'] || 0) + 1;
+                    }
+                });
+            });
+
+            // 3. Add Manual Offsets (Simple Add)
             Object.keys(manualOffsets).forEach(b => {
                 if (!historicalCounts[b]) historicalCounts[b] = {};
                 Object.keys(manualOffsets[b]).forEach(act => {
                     const offset = manualOffsets[b][act] || 0;
                     const current = historicalCounts[b][act] || 0;
                     historicalCounts[b][act] = Math.max(0, current + offset);
-                    if (specialNamesSet.has(act)) {
-                         const curTotal = historicalCounts[b]['_totalSpecials'] || 0;
-                         historicalCounts[b]['_totalSpecials'] = Math.max(0, curTotal + offset);
-                    }
                 });
             });
 
