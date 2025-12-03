@@ -516,13 +516,21 @@
                          historicalCounts[block.bunk]['_totalSpecials'] = (historicalCounts[block.bunk]['_totalSpecials'] || 0) + 1;
                     }
                 }
-            } else {
-                // Check if the first slot was a buffer from a failed attempt, and clear it
-                if (window.scheduleAssignments[bunk]?.[block.slots[0]]?._activity === TRANSITION_TYPE) {
-                     window.scheduleAssignments[bunk][block.slots[0]] = null;
-                }
-                fillBlock(block, { field: "Free", sport: null, _activity: "Free" }, fieldUsageBySlot, yesterdayHistory, false, activityProperties);
+                    } else {
+            // Check if the first slot was a buffer from a failed attempt, and clear it
+            if (window.scheduleAssignments[block.bunk]?.[block.slots[0]]?._activity === TRANSITION_TYPE) {
+                window.scheduleAssignments[block.bunk][block.slots[0]] = null;
             }
+            fillBlock(
+                block,
+                { field: "Free", sport: null, _activity: "Free" },
+                fieldUsageBySlot,
+                yesterdayHistory,
+                false,
+                activityProperties
+            );
+        }
+
         }
 
         // 8. Pass 5 - History Update (No change)
