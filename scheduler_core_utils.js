@@ -4,15 +4,15 @@
 //
 // Role:
 // - Data Loading
-// - Constraint Logic (canBlockFit) WITH HARD LEAGUE LOCK
-// - Helpers
+// - Constraint Logic (canBlockFit)
+// - STRICT DIVISION FIREWALL & LEAGUE LOCK
 // ============================================================================
 
 (function() {
     'use strict';
 
     // ===== CONFIG =====
-    const INCREMENT_MINS = 30;
+    const INCREMENT_MINS = 5;
     window.INCREMENT_MINS = INCREMENT_MINS;
 
     const Utils = {};
@@ -146,32 +146,27 @@
         return isAvailable;
     };
 
-    // --- LEAGUE HELPER ---
     // Detects if an assignment is a League Game (Deep Check)
     function isLeagueAssignment(assignmentObj, activityName) {
-        // 1. Deep Object Check (Priority)
         if (assignmentObj) {
-            // It's a league if it has a Game Label or Matchups (populated by Leagues Core)
             if (assignmentObj._gameLabel || assignmentObj._allMatchups) return true;
-            // Or if the internal activity string says so
             if (assignmentObj._activity && String(assignmentObj._activity).toLowerCase().includes("league")) return true;
         }
-        // 2. Name Check (Fallback)
         const s = String(activityName || "").toLowerCase();
         if (s.includes("league game") || s.includes("specialty league")) return true;
-        
         return false;
     }
 
-    // --- WEIGHT HELPER ---
     function calculateAssignmentWeight(activityName, assignmentObj, maxCapacity) {
         if (isLeagueAssignment(assignmentObj, activityName)) {
-            return maxCapacity; // Maxes out weight immediately
+            return maxCapacity;
         }
-        return 1; // Regular activity
+        return 1;
     }
 
-    // Main capacity check
+    // =================================================================
+    // MAIN CAPACITY CHECK (THE BOUNCER)
+    // =================================================================
     Utils.canBlockFit = function(block, fieldName, activityProperties, fieldUsageBySlot, proposedActivity) {
         if (!fieldName) return false;
         const props = activityProperties[fieldName];
@@ -202,12 +197,13 @@
         }
 
         const { blockStartMin, blockEndMin } = Utils.getBlockTimeRange(block);
+        
+        // Time Availability Check
         const rules = (props.timeRules || []).map(r => {
             if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
             return { ...r, startMin: Utils.parseTimeToMinutes(r.start), endMin: Utils.parseTimeToMinutes(r.end) };
         });
 
-        // Time Rules
         if (rules.length > 0) {
             if (!props.available) return false;
             const hasAvailableRules = rules.some(r => r.type === 'Available');
@@ -232,94 +228,114 @@
             if (!props.available) return false;
         }
 
-        // PRE-SLOT LOOKBACK
+        // =========================================================
+        // 1. PRE-SLOT LOOKBACK (The "Bleed" Check)
+        // =========================================================
+        // This handles cases where an activity started at 10:30 and ends at 12:20,
+        // and you want to start at 11:00.
         if (blockStartMin != null && block.slots && block.slots.length > 0) {
             const firstSlotIndex = block.slots[0];
             if (firstSlotIndex > 0) {
                 const firstSlotStart = new Date(window.unifiedTimes[firstSlotIndex].start).getHours() * 60 + 
                                        new Date(window.unifiedTimes[firstSlotIndex].start).getMinutes();
-                if (blockStartMin < firstSlotStart) {
+                
+                // If the block starts mid-slot or we need to check continuity
+                if (blockStartMin < firstSlotStart || true) { // Force check previous slot usage
                     const prevSlotIndex = firstSlotIndex - 1;
                     const prevUsage = fieldUsageBySlot[prevSlotIndex]?.[fieldName];
                     
                     if (prevUsage && prevUsage.count > 0) {
-                        let overlappingCount = 0;
                         const assignments = window.scheduleAssignments || {};
+                        let overlappingWeight = 0;
+
+                        // FIREWALL: Check Division of previous occupants
+                        if (prevUsage.divisions && prevUsage.divisions.length > 0) {
+                            // If previous slot has a different division...
+                            if (!prevUsage.divisions.includes(block.divName)) {
+                                // ...AND they are still on the field (end time > my start time)
+                                const isStillHere = Object.keys(prevUsage.bunks).some(bunkName => {
+                                    const entry = assignments[bunkName]?.[prevSlotIndex];
+                                    const entEnd = entry?._endTime ?? (firstSlotStart + INCREMENT_MINS);
+                                    return entEnd > blockStartMin;
+                                });
+                                if (isStillHere) return false; // BLOCKED: Overlapping with different division
+                            }
+                        }
+
+                        // Cap Check
                         Object.keys(prevUsage.bunks).forEach(bunkName => {
                             const entry = assignments[bunkName]?.[prevSlotIndex];
                             if (entry) {
                                 const entEnd = entry._endTime ?? firstSlotStart; 
-                                if (entEnd > blockStartMin) overlappingCount++;
-                            } else {
-                                overlappingCount++;
+                                if (entEnd > blockStartMin) {
+                                    overlappingWeight += calculateAssignmentWeight(prevUsage.bunks[bunkName], entry, maxCapacity);
+                                }
                             }
                         });
-                        if (overlappingCount >= maxCapacity) return false; 
+                        
+                        // If we are a league, we count as Max. 
+                        let myWeight = (String(proposedActivity).toLowerCase().includes("league")) ? maxCapacity : 1;
+                        if (overlappingWeight + myWeight > maxCapacity) return false; 
                     }
                 }
             }
         }
 
-        // --- MAIN SLOT LOOP ---
+        // =========================================================
+        // 2. MAIN SLOT LOOP
+        // =========================================================
         for (const slotIndex of block.slots || []) {
             if (slotIndex === undefined) return false;
             const usage = fieldUsageBySlot[slotIndex]?.[fieldName] || { count: 0, divisions: [], bunks: {} };
             
-            // 1. DIVISION ISOLATION GUARD
-            // If field is used by a DIFFERENT division, block it completely.
+            // --- STRICT DIVISION FIREWALL ---
+            // If the field is currently occupied by a DIFFERENT division,
+            // it is completely invisible to us.
             if (usage.divisions && usage.divisions.length > 0) {
-                if (!usage.divisions.includes(block.divName)) {
-                    return false; // BLOCKED: Inter-division sharing not allowed
+                // If ANY division in the list is not us, block.
+                // (Assumes a field usually has 1 division unless incorrectly shared previously)
+                if (usage.divisions.some(d => d !== block.divName)) {
+                    return false; 
                 }
             }
 
+            // --- LEAGUE LOCK & WEIGHT CALC ---
             let currentWeight = 0;
             const existingBunks = Object.keys(usage.bunks);
 
-            // Determine if PROPOSED activity is a League
             const myProposedObj = { _gameLabel: block._gameLabel, _activity: proposedActivity };
             const proposedIsLeague = isLeagueAssignment(myProposedObj, proposedActivity);
 
             for (const existingBunk of existingBunks) {
                 const activityName = usage.bunks[existingBunk];
-                
-                // Fetch the actual assignment object to check for League Flags (_gameLabel)
                 const actualAssignment = window.scheduleAssignments[existingBunk]?.[slotIndex];
 
                 if (existingBunk === block.bunk) continue;
 
-                // Check Identity (Same Game?)
+                // Check Same Game Identity
                 const myLabel = block._gameLabel || (String(proposedActivity).includes("League") ? proposedActivity : null);
                 const theirLabel = actualAssignment?._gameLabel || actualAssignment?._activity;
                 const isSameGame = (myLabel && theirLabel && String(myLabel) === String(theirLabel));
 
                 const existingIsLeague = isLeagueAssignment(actualAssignment, activityName);
 
-                // --- HARD LOCK: LEAGUE EXCLUSIVITY ---
-                // A) If existing activity is a League (and we aren't part of it), LOCK THE FIELD.
-                if (existingIsLeague && !isSameGame) {
-                    return false; 
-                }
-                // B) If proposed activity is a League (and existing isn't part of it), WE NEED EMPTY FIELD.
-                if (proposedIsLeague && !isSameGame) {
-                    return false;
-                }
+                // If existing is League and we aren't part of it -> BLOCK
+                if (existingIsLeague && !isSameGame) return false;
+                
+                // If we are League and existing isn't part of it -> BLOCK
+                if (proposedIsLeague && !isSameGame) return false;
 
-                // If not locked, accumulate weight
                 if (!isSameGame) {
                     currentWeight += calculateAssignmentWeight(activityName, actualAssignment, maxCapacity);
                 }
             }
 
-            // 2. Final Weight Check
-            let myWeight = 1;
-            if (proposedIsLeague) myWeight = maxCapacity;
+            let myWeight = proposedIsLeague ? maxCapacity : 1;
 
             if (currentWeight + myWeight > maxCapacity) {
-                return false; // WEIGHT EXCEEDED
+                return false; 
             }
             
-            // 3. Headcount Check
             if (maxHeadcount !== Infinity) {
                 let currentHeadcount = 0;
                 Object.keys(usage.bunks).forEach(bName => {
