@@ -1,16 +1,12 @@
 // ============================================================================
-// scheduler_ui.js (UPDATED: TIMELINE GATEKEEPER)
-//
-// Updates:
-// 1. Validation now uses the global TIMELINE system for precise capacity checks.
-// 2. Maintains "Duplicate" and "Max Usage" checks for user feedback.
-// 3. Grid rendering logic remains untouched.
+// scheduler_ui.js (UPDATED: LEAGUE MATCHUP RENDERING + FIXED formatEntry)
+// Timeline-aware, fully integrated with league_core and SmartTile system
 // ============================================================================
 
 (function () {
   "use strict";
 
-  const INCREMENT_MINS = 30; // Fallback only
+  const INCREMENT_MINS = 30; // fallback
 
   // ==========================================================================
   // TIME HELPERS
@@ -45,27 +41,35 @@
   // RESOURCE RESOLVER
   // ==========================================================================
   function resolveResourceName(input, knownNames) {
-      if (!input || !knownNames) return null;
-      const cleanInput = String(input).toLowerCase().trim();
-      
-      if (knownNames.includes(input)) return input;
+    if (!input || !knownNames) return null;
+    const cleanInput = String(input).toLowerCase().trim();
+    if (knownNames.includes(input)) return input;
 
-      const sortedNames = [...knownNames].sort((a,b) => b.length - a.length);
-      for (const name of sortedNames) {
-          const cleanName = name.toLowerCase().trim();
-          if (cleanInput.startsWith(cleanName)) {
-              return name;
-          }
-      }
-      return null; 
+    const sortedNames = [...knownNames].sort((a, b) => b.length - a.length);
+    for (const name of sortedNames) {
+      const cleanName = name.toLowerCase().trim();
+      if (cleanInput.startsWith(cleanName)) return name;
+    }
+    return null;
   }
 
   // ==========================================================================
   // DETECT GENERATED EVENTS
   // ==========================================================================
   const UI_GENERATED_EVENTS = new Set([
-    "general activity", "general activity slot", "activity", "activities", "sports", "sport", "sports slot", "special activity", "swim", "league game", "specialty league"
+    "general activity",
+    "general activity slot",
+    "activity",
+    "activities",
+    "sports",
+    "sport",
+    "sports slot",
+    "special activity",
+    "swim",
+    "league game",
+    "specialty league",
   ]);
+
   function uiIsGeneratedEventName(name) {
     if (!name) return false;
     return UI_GENERATED_EVENTS.has(String(name).trim().toLowerCase());
@@ -80,137 +84,170 @@
     if (!times) return slots;
 
     for (let i = 0; i < times.length; i++) {
-      const slotStart = new Date(times[i].start).getHours() * 60 + new Date(times[i].start).getMinutes();
+      const slotStart =
+        new Date(times[i].start).getHours() * 60 +
+        new Date(times[i].start).getMinutes();
+
       let slotEnd;
       if (times[i].end) {
-         slotEnd = new Date(times[i].end).getHours() * 60 + new Date(times[i].end).getMinutes();
+        slotEnd =
+          new Date(times[i].end).getHours() * 60 +
+          new Date(times[i].end).getMinutes();
       } else {
-         slotEnd = slotStart + INCREMENT_MINS;
+        slotEnd = slotStart + INCREMENT_MINS;
       }
 
-      if (startMin < slotEnd && endMin > slotStart) {
-        slots.push(i);
-      }
+      if (startMin < slotEnd && endMin > slotStart) slots.push(i);
     }
     return slots;
   }
 
   // ==========================================================================
-  // EDIT CELL (TIMELINE UPDATED)
+  // EDIT CELL — TIMELINE VALIDATION
   // ==========================================================================
   function editCell(bunk, startMin, endMin, current) {
     if (!bunk) return;
-    
-    // 1. Get user input
-    const newName = prompt(`Edit activity for ${bunk}\n${minutesToTimeLabel(startMin)} - ${minutesToTimeLabel(endMin)}\n(Enter CLEAR or FREE to empty)`, current);
-    if (newName === null) return; 
+
+    const newName = prompt(
+      `Edit activity for ${bunk}\n${minutesToTimeLabel(startMin)} - ${minutesToTimeLabel(
+        endMin
+      )}\n(Enter CLEAR or FREE to empty)`,
+      current
+    );
+    if (newName === null) return;
 
     const value = newName.trim();
-    const isClear = (value === "" || value.toUpperCase() === "CLEAR" || value.toUpperCase() === "FREE");
-    
-    // --- VALIDATION GATE ---
-    if (!isClear && window.SchedulerCoreUtils && typeof window.SchedulerCoreUtils.loadAndFilterData === 'function') {
-        const warnings = [];
-        
-        // Load fresh data (This REBUILDS the Timeline with current grid state)
-        const config = window.SchedulerCoreUtils.loadAndFilterData();
-        const { activityProperties, historicalCounts, lastUsedDates, bunkMetaData, sportMetaData } = config;
-        
-        const allKnown = Object.keys(activityProperties);
-        const resolvedName = resolveResourceName(value, allKnown) || value; 
-        const props = activityProperties[resolvedName]; 
-        
-        // -------------------------------------------------------------
-        // A. SAME BUNK CHECK (Duplicate Warning)
-        // -------------------------------------------------------------
-        const currentSchedule = window.scheduleAssignments[bunk] || [];
-        const targetSlots = findSlotsForRange(startMin, endMin);
-        
-        currentSchedule.forEach((entry, idx) => {
-            if (targetSlots.includes(idx)) return; // Skip self
-            if (entry && !entry.continuation) {
-                const entryRaw = entry.field || entry._activity;
-                if (String(entryRaw).trim().toLowerCase() === String(value).trim().toLowerCase()) {
-                     const timeLabel = window.unifiedTimes[idx]?.label || minutesToTimeLabel(window.unifiedTimes[idx].start);
-                     warnings.push(`⚠️ DUPLICATE: ${bunk} is already scheduled for "${entryRaw}" at ${timeLabel}.`);
-                }
-            }
-        });
+    const isClear =
+      value === "" ||
+      value.toUpperCase() === "CLEAR" ||
+      value.toUpperCase() === "FREE";
 
-        if (props) {
-            // -------------------------------------------------------------
-            // B. MAX USAGE CHECK (Frequency)
-            // -------------------------------------------------------------
-            const max = props.maxUsage || 0;
-            if (max > 0) {
-                const historyCount = historicalCounts[bunk]?.[resolvedName] || 0;
-                let todayCount = 0;
-                currentSchedule.forEach((entry, idx) => {
-                    if (targetSlots.includes(idx)) return; 
-                    if (entry && !entry.continuation) {
-                        const entryRes = resolveResourceName(entry.field || entry._activity, allKnown);
-                        if (String(entryRes).toLowerCase() === String(resolvedName).toLowerCase()) todayCount++;
-                    }
-                });
-                const total = historyCount + todayCount + 1; 
-                if (total > max) {
-                    const lastDateStr = lastUsedDates[bunk]?.[resolvedName];
-                    const dateInfo = lastDateStr ? ` (Last used: ${lastDateStr})` : "";
-                    warnings.push(`⚠️ MAX USAGE: ${bunk} has used "${resolvedName}" ${historyCount + todayCount} times${dateInfo}. Limit is ${max}.`);
-                }
-            }
+    // VALIDATION (unchanged)
+    if (
+      !isClear &&
+      window.SchedulerCoreUtils &&
+      typeof window.SchedulerCoreUtils.loadAndFilterData === "function"
+    ) {
+      const warnings = [];
+      const config = window.SchedulerCoreUtils.loadAndFilterData();
+      const {
+        activityProperties,
+        historicalCounts,
+        lastUsedDates,
+      } = config;
 
-            // -------------------------------------------------------------
-            // C. TIMELINE CAPACITY CHECK (The Gatekeeper)
-            // -------------------------------------------------------------
-            // Determine Capacity Limit
-            let capacityLimit = 1; // Default
-            if (props.sharableWith?.capacity) capacityLimit = parseInt(props.sharableWith.capacity);
-            else if (props.sharable || props.sharableWith?.type === 'all' || props.sharableWith?.type === 'custom') capacityLimit = 2;
+      const allKnown = Object.keys(activityProperties);
+      const resolvedName = resolveResourceName(value, allKnown) || value;
+      const props = activityProperties[resolvedName];
 
-            // Determine My Weight (Manual edits are usually standard weight 1)
-            // Unless user typed "League Game", but usually they type the field name.
-            let myWeight = 1;
+      // DUPLICATE CHECK
+      const currentSchedule = window.scheduleAssignments[bunk] || [];
+      const targetSlots = findSlotsForRange(startMin, endMin);
 
-            // Check availability via Timeline System
-            // We pass 'bunk' as excludeOwner so we don't count ourselves if we are just editing the name in place
-            const isAvailable = window.SchedulerCoreUtils.timeline.checkAvailability(
-                resolvedName, 
-                startMin, 
-                endMin, 
-                myWeight, 
-                capacityLimit,
-                bunk 
+      currentSchedule.forEach((entry, idx) => {
+        if (targetSlots.includes(idx)) return;
+        if (entry && !entry.continuation) {
+          const entryRaw = entry.field || entry._activity;
+          if (
+            String(entryRaw).trim().toLowerCase() ===
+            String(value).trim().toLowerCase()
+          ) {
+            const timeLabel =
+              window.unifiedTimes[idx]?.label ||
+              minutesToTimeLabel(window.unifiedTimes[idx].start);
+            warnings.push(
+              `⚠️ DUPLICATE: ${bunk} already has "${entryRaw}" at ${timeLabel}.`
             );
+          }
+        }
+      });
 
-            if (!isAvailable) {
-                const currentPeak = window.SchedulerCoreUtils.timeline.getPeakUsage(resolvedName, startMin, endMin, bunk);
-                warnings.push(`⚠️ CAPACITY CONFLICT: "${resolvedName}" is full during this time.\n   Current Peak: ${currentPeak} bunks.\n   Limit: ${capacityLimit}.`);
+      // MAX USAGE CHECK
+      if (props) {
+        const max = props.maxUsage || 0;
+        if (max > 0) {
+          const historyCount = historicalCounts[bunk]?.[resolvedName] || 0;
+          let todayCount = 0;
+          currentSchedule.forEach((entry, idx) => {
+            if (targetSlots.includes(idx)) return;
+            if (entry && !entry.continuation) {
+              const entryRes = resolveResourceName(
+                entry.field || entry._activity,
+                allKnown
+              );
+              if (
+                String(entryRes).toLowerCase() ===
+                String(resolvedName).toLowerCase()
+              )
+                todayCount++;
             }
-            
-            // -------------------------------------------------------------
-            // D. TIME RULES CHECK
-            // -------------------------------------------------------------
-            if (!window.SchedulerCoreUtils.isTimeAvailable(startMin, endMin, props)) {
-                 warnings.push(`⚠️ TIME RESTRICTION: "${resolvedName}" is closed/unavailable during this time block.`);
-            }
+          });
+          const total = historyCount + todayCount + 1;
+          if (total > max) {
+            const lastDateStr = lastUsedDates[bunk]?.[resolvedName];
+            const dateInfo = lastDateStr
+              ? ` (Last used: ${lastDateStr})`
+              : "";
+            warnings.push(
+              `⚠️ MAX USAGE: "${resolvedName}" exceeded limit (${total}/${max})${dateInfo}.`
+            );
+          }
         }
 
-        // E. BLOCKER PROMPT
-        if (warnings.length > 0) {
-            const msg = warnings.join("\n\n") + "\n\nDo you want to OVERRIDE these rules and schedule anyway?";
-            if (!confirm(msg)) {
-                return; 
-            }
-        }
-    } 
+        // CAPACITY CHECK via TIMELINE
+        let capacityLimit = 1;
+        if (props.sharableWith?.capacity)
+          capacityLimit = parseInt(props.sharableWith.capacity);
+        else if (
+          props.sharable ||
+          props.sharableWith?.type === "all" ||
+          props.sharableWith?.type === "custom"
+        )
+          capacityLimit = 2;
 
-    // --- APPLY EDIT ---
+        const isAvailable =
+          window.SchedulerCoreUtils.timeline.checkAvailability(
+            resolvedName,
+            startMin,
+            endMin,
+            1,
+            capacityLimit,
+            bunk
+          );
+
+        if (!isAvailable) {
+          warnings.push(
+            `⚠️ CAPACITY: "${resolvedName}" is full during this time.`
+          );
+        }
+
+        // TIME RULE CHECK
+        if (
+          !window.SchedulerCoreUtils.isTimeAvailable(
+            startMin,
+            endMin,
+            props
+          )
+        ) {
+          warnings.push(
+            `⚠️ TIME: "${resolvedName}" unavailable at this time.`
+          );
+        }
+      }
+
+      if (warnings.length > 0) {
+        const msg =
+          warnings.join("\n\n") +
+          "\n\nOverride rules and schedule anyway?";
+        if (!confirm(msg)) return;
+      }
+    }
+
+    // APPLY EDIT
     const slots = findSlotsForRange(startMin, endMin);
-    
     if (!slots || slots.length === 0) {
-        alert("Error: Could not match this time range to the internal schedule grid. Please refresh the page.");
-        return;
+      alert("Time range mismatch. Refresh the page.");
+      return;
     }
 
     if (!window.scheduleAssignments[bunk])
@@ -219,13 +256,21 @@
     if (isClear) {
       slots.forEach((idx, i) => {
         window.scheduleAssignments[bunk][idx] = {
-          field: "Free", sport: null, continuation: i > 0, _fixed: true, _activity: "Free"
+          field: "Free",
+          sport: null,
+          continuation: i > 0,
+          _fixed: true,
+          _activity: "Free",
         };
       });
     } else {
       slots.forEach((idx, i) => {
         window.scheduleAssignments[bunk][idx] = {
-          field: value, sport: null, continuation: i > 0, _fixed: true, _activity: value
+          field: value,
+          sport: null,
+          continuation: i > 0,
+          _fixed: true,
+          _activity: value,
         };
       });
     }
@@ -234,39 +279,64 @@
     updateTable();
   }
 
+  // ==========================================================================
+  // ENTRY GETTER
+  // ==========================================================================
   function getEntry(bunk, slotIndex) {
     const a = window.scheduleAssignments || {};
     if (!a[bunk]) return null;
     return a[bunk][slotIndex] || null;
   }
 
+  // ==========================================================================
+  // **FIXED** ENTRY FORMATTER FOR LEAGUE MATCHUPS
+  // ==========================================================================
   function formatEntry(entry) {
     if (!entry) return "";
     if (entry._isDismissal) return "Dismissal";
     if (entry._isSnack) return "Snacks";
+
+    // ----- LEAGUE MATCHUPS -----
+    if (entry._h2h) {
+      const game = entry._gameLabel ? ` (${entry._gameLabel})` : "";
+      return `${entry.sport || "League Game"}${game}`;
+    }
+
     const label = entry._activity || entry.field || "";
-    if (entry._h2h) return entry.sport || "League Game";
     if (entry._fixed) return label;
+
     if (entry.sport) return `${entry.field} – ${entry.sport}`;
+
     return label;
   }
 
+  // ==========================================================================
+  // FIND BLOCK SLOT
+  // ==========================================================================
   function findFirstSlotForTime(startMin) {
     if (!window.unifiedTimes) return -1;
     for (let i = 0; i < window.unifiedTimes.length; i++) {
-      const slotStart = new Date(window.unifiedTimes[i].start).getHours() * 60 + new Date(window.unifiedTimes[i].start).getMinutes();
-      if (slotStart >= startMin && slotStart < startMin + INCREMENT_MINS) return i;
+      const slotStart =
+        new Date(window.unifiedTimes[i].start).getHours() * 60 +
+        new Date(window.unifiedTimes[i].start).getMinutes();
+      if (slotStart >= startMin && slotStart < startMin + INCREMENT_MINS)
+        return i;
     }
     return -1;
   }
 
+  // ==========================================================================
+  // TABLE UPDATE
+  // ==========================================================================
   function updateTable() {
     const container = document.getElementById("scheduleTable");
     if (!container) return;
     renderStaggeredView(container);
   }
 
-  // --- DYNAMIC GRID (UNTOUCHED) ---
+  // ==========================================================================
+  // **MAIN RENDERER — WITH FULL LEAGUE FIX**
+  // ==========================================================================
   function renderStaggeredView(container) {
     container.innerHTML = "";
     const divisions = window.divisions || {};
@@ -275,7 +345,7 @@
     const manualSkeleton = daily.manualSkeleton || [];
 
     if (!Array.isArray(manualSkeleton) || manualSkeleton.length === 0) {
-      container.innerHTML = `<p>No daily schedule generated for this date.</p>`;
+      container.innerHTML = `<p>No daily schedule generated.</p>`;
       return;
     }
 
@@ -290,7 +360,9 @@
       const table = document.createElement("table");
       table.className = "schedule-division-table";
 
+      // HEADER
       const thead = document.createElement("thead");
+
       const tr1 = document.createElement("tr");
       const th = document.createElement("th");
       th.colSpan = 1 + bunks.length;
@@ -316,6 +388,7 @@
 
       const tbody = document.createElement("tbody");
 
+      // EXPAND BLOCKS
       const blocks = manualSkeleton
         .filter((b) => b.division === div)
         .map((b) => ({
@@ -330,20 +403,45 @@
       blocks.forEach((b) => {
         if (b.type === "split") {
           const mid = b.startMin + (b.endMin - b.startMin) / 2;
-          expanded.push({ ...b, endMin: mid, label: `${minutesToTimeLabel(b.startMin)} - ${minutesToTimeLabel(mid)}` });
-          expanded.push({ ...b, startMin: mid, label: `${minutesToTimeLabel(mid)} - ${minutesToTimeLabel(b.endMin)}` });
+          expanded.push({
+            ...b,
+            endMin: mid,
+            label: `${minutesToTimeLabel(b.startMin)} - ${minutesToTimeLabel(
+              mid
+            )}`,
+          });
+          expanded.push({
+            ...b,
+            startMin: mid,
+            label: `${minutesToTimeLabel(mid)} - ${minutesToTimeLabel(
+              b.endMin
+            )}`,
+          });
         } else {
-          expanded.push({ ...b, label: `${minutesToTimeLabel(b.startMin)} - ${minutesToTimeLabel(b.endMin)}` });
+          expanded.push({
+            ...b,
+            label: `${minutesToTimeLabel(b.startMin)} - ${minutesToTimeLabel(
+              b.endMin
+            )}`,
+          });
         }
       });
 
+      // MAIN LOOP
       expanded.forEach((block) => {
         const tr = document.createElement("tr");
+
         const tdTime = document.createElement("td");
         tdTime.textContent = block.label;
         tr.appendChild(tdTime);
 
-        if (block.event.startsWith("League Game") || block.event.startsWith("Specialty League")) {
+        // =====================================================================
+        // LEAGUE BLOCK RENDER — **FIXED & FULL MATCHUPS**
+        // =====================================================================
+        if (
+          block.event.startsWith("League Game") ||
+          block.event.startsWith("Specialty League")
+        ) {
           const td = document.createElement("td");
           td.colSpan = bunks.length;
           td.style.background = "#eef7f8";
@@ -354,39 +452,47 @@
           let gameLabel = "";
 
           if (slotIdx >= 0) {
-            const first = getEntry(bunks[0], slotIdx);
-            if (first) {
-                if(first._allMatchups) allMatchups = first._allMatchups;
-                if(first._gameLabel) gameLabel = first._gameLabel;
+            const firstEntry = getEntry(bunks[0], slotIdx);
+            if (firstEntry) {
+              if (Array.isArray(firstEntry._allMatchups))
+                allMatchups = firstEntry._allMatchups;
+              if (firstEntry._gameLabel) gameLabel = firstEntry._gameLabel;
             }
           }
 
           let titleHtml = block.event;
           if (gameLabel) {
-              if (block.event.trim() === "League Game") {
-                  titleHtml = `${block.event} ${gameLabel.replace(/^Game\s+/i, '')}`;
-              } else {
-                  titleHtml = `${block.event} (${gameLabel})`;
-              }
+            titleHtml += ` ${gameLabel}`;
           }
 
           if (allMatchups.length === 0) {
             td.textContent = titleHtml;
           } else {
-            td.innerHTML = `<div>${titleHtml}</div><ul>${allMatchups.map((m) => `<li>${m}</li>`).join("")}</ul>`;
+            td.innerHTML = `
+              <div>${titleHtml}</div>
+              <ul>${allMatchups
+                .map((m) => `<li>${m}</li>`)
+                .join("")}</ul>
+            `;
           }
 
           td.style.cursor = "pointer";
-          td.onclick = () => editCell(bunks[0], block.startMin, block.endMin, block.event);
+          td.onclick = () =>
+            editCell(bunks[0], block.startMin, block.endMin, block.event);
 
           tr.appendChild(td);
           tbody.appendChild(tr);
           return;
         }
 
+        // =====================================================================
+        // NON-LEAGUE CELLS
+        // =====================================================================
         const isDismissal = block.event.toLowerCase().includes("dismiss");
         const isSnack = block.event.toLowerCase().includes("snack");
-        const isGeneratedSlot = uiIsGeneratedEventName(block.event) || block.event.includes("/");
+        const isGeneratedSlot =
+          uiIsGeneratedEventName(block.event) ||
+          block.event.includes("/");
 
         bunks.forEach((bunk) => {
           const td = document.createElement("td");
@@ -409,19 +515,31 @@
 
           td.textContent = label;
           td.style.cursor = "pointer";
-          td.onclick = () => editCell(bunk, block.startMin, block.endMin, label);
+          td.onclick = () =>
+            editCell(bunk, block.startMin, block.endMin, label);
           tr.appendChild(td);
         });
+
         tbody.appendChild(tr);
       });
+
       table.appendChild(tbody);
       wrapper.appendChild(table);
     });
   }
 
+  // ==========================================================================
+  // SAVE / LOAD
+  // ==========================================================================
   function saveSchedule() {
-    window.saveCurrentDailyData?.("scheduleAssignments", window.scheduleAssignments);
-    window.saveCurrentDailyData?.("leagueAssignments", window.leagueAssignments);
+    window.saveCurrentDailyData?.(
+      "scheduleAssignments",
+      window.scheduleAssignments
+    );
+    window.saveCurrentDailyData?.(
+      "leagueAssignments",
+      window.leagueAssignments
+    );
     window.saveCurrentDailyData?.("unifiedTimes", window.unifiedTimes);
   }
 
@@ -431,7 +549,11 @@
       window.scheduleAssignments = data.scheduleAssignments || {};
       window.leagueAssignments = data.leagueAssignments || {};
       const savedTimes = data.unifiedTimes || [];
-      window.unifiedTimes = savedTimes.map((slot) => ({ ...slot, start: new Date(slot.start), end: new Date(slot.end) }));
+      window.unifiedTimes = savedTimes.map((slot) => ({
+        ...slot,
+        start: new Date(slot.start),
+        end: new Date(slot.end),
+      }));
     } catch (e) {
       console.error("Schedule load error:", e);
       window.scheduleAssignments = {};
@@ -441,9 +563,13 @@
     updateTable();
   }
 
-  function initScheduleSystem() { reconcileOrRenderSaved(); }
+  function initScheduleSystem() {
+    reconcileOrRenderSaved();
+  }
 
+  // EXPORT
   window.updateTable = updateTable;
   window.initScheduleSystem = initScheduleSystem;
   window.saveSchedule = saveSchedule;
+
 })();
