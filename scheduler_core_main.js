@@ -4,11 +4,9 @@
 //
 // Role:
 // - Entry point (runSkeletonOptimizer)
-// - Custom Pickers (findBestSportActivity - NEW LOGIC)
-// - Context Parsing (Skeleton -> Blocks)
-// - Call Leagues (Pass 3)
-// - Main Loop (Pass 4)
-// - History Saving (Pass 5)
+// - Custom Pickers (Sports, General, Special)
+// - STRICT ISOLATION PREFERENCE (Empty First -> Then Share)
+// - Rescue Strategy
 // ============================================================================
 
 (function() {
@@ -26,15 +24,13 @@
     const INCREMENT_MINS = 30;
 
     // =================================================================
-    // LOCAL HELPERS (Specific to Main Execution)
+    // LOCAL HELPERS
     // =================================================================
     
-    // Wrapper for Utils
     function fieldLabel(f) {
         return window.SchedulerCoreUtils.fieldLabel(f);
     }
 
-    // Normalizers
     function normalizeGA(name) {
         if (!name) return null;
         const s = String(name).toLowerCase().replace(/\s+/g, '');
@@ -67,7 +63,6 @@
         return arr;
     }
 
-    // Helper: What did this bunk do today?
     function getGeneralActivitiesDoneToday(bunkName) {
         const done = new Set();
         const sched = window.scheduleAssignments[bunkName];
@@ -79,101 +74,107 @@
         return done;
     }
 
-    // Helper: Sort by Rotation History (Freshness)
-    function sortPicksByFreshness(picks, bunkHistory, divName, activityProperties) {
+    function sortPicksByFreshness(picks, bunkHistory) {
         return picks.sort((a, b) => {
-            // 1. Check History (Least recently used first)
             const timeA = bunkHistory[a._activity] || 0;
             const timeB = bunkHistory[b._activity] || 0;
             if (timeA !== timeB) return timeA - timeB;
-            
-            // 2. Random Tiebreaker
             return Math.random() - 0.5;
         });
     }
 
+    // === THE SORTER: Prioritizes EMPTY fields, then SHARED fields ===
+    function sortPicksByIsolation(picks, slotIndex, fieldUsageBySlot, activityProperties) {
+        return picks.sort((a, b) => {
+            const nameA = fieldLabel(a.field);
+            const nameB = fieldLabel(b.field);
+
+            const usageA = fieldUsageBySlot[slotIndex]?.[nameA] || { count: 0 };
+            const usageB = fieldUsageBySlot[slotIndex]?.[nameB] || { count: 0 };
+
+            // We want the LOWEST usage count first.
+            // 0 (Empty) < 1 (Semi-Full)
+            // This naturally forces "Everyone by themselves" first.
+            // If no 0s exist, it falls back to 1s (Sharing).
+            return usageA.count - usageB.count;
+        });
+    }
+
     // =================================================================
-    // CUSTOM PICKER LOGIC (Injected)
+    // CUSTOM PICKER LOGIC (Updated for Isolation)
     // =================================================================
 
-    window.findBestSportActivity = function (
-        block,
-        allActivities,
-        fieldUsageBySlot,
-        yesterdayHistory,
-        activityProperties,
-        rotationHistory,
-        divisions,
-        historicalCounts
-    ) {
+    // 1. SPORTS PICKER
+    window.findBestSportActivity = function (block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts) {
         const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
         const activitiesDoneToday = getGeneralActivitiesDoneToday(block.bunk);
 
-        // 1. Sports ONLY if a REAL FIELD exists for that sport
         const sports = allActivities
             .filter(a => a.type === 'field' && a.sport)
-            .map(a => ({
-                field: a.field,
-                sport: a.sport,
-                _activity: a.sport
-            }));
+            .map(a => ({ field: a.field, sport: a.sport, _activity: a.sport }));
 
-        // 2. Filter out sports with NO eligible fields
-        const validSportPicks = sports.filter(pick => {
-            const fieldName = fieldLabel(pick.field);
-
-            // The REAL validation – must fit the field with the actual activity
-            // This implicitly checks Capacity, Time, and DIVISION ISOLATION via Utils
-            const fits = window.SchedulerCoreUtils.canBlockFit(
-                block,
-                fieldName,
-                activityProperties,
-                fieldUsageBySlot,
-                pick._activity
-            );
-
-            // Also cannot repeat sport within the same day
+        let valid = sports.filter(pick => {
+            const fits = window.SchedulerCoreUtils.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, pick._activity);
             if (activitiesDoneToday.has(pick._activity)) return false;
-
             return fits;
         });
 
-        // === 🧠 NEW CRITICAL FIX ===
-        // 3. FORCE DOUBLING-UP FIELDS FIRST
-        validSportPicks.sort((a, b) => {
-            const slot = block.slots[0];
-            const usageA = fieldUsageBySlot[slot]?.[fieldLabel(a.field)] || { count: 0 };
-            const usageB = fieldUsageBySlot[slot]?.[fieldLabel(b.field)] || { count: 0 };
+        // 1. Sort by Freshness first (Global Preference)
+        valid = sortPicksByFreshness(valid, bunkHistory);
 
-            const propsA = activityProperties[fieldLabel(a.field)];
-            const propsB = activityProperties[fieldLabel(b.field)];
-
-            const capA = propsA?.sharableWith?.capacity ?? 1;
-            const capB = propsB?.sharableWith?.capacity ?? 1;
-
-            const semiA = usageA.count > 0 && usageA.count < capA;
-            const semiB = usageB.count > 0 && usageB.count < capB;
-
-            // Semi-full fields FIRST, empty fields second, full last
-            if (semiA && !semiB) return -1;
-            if (!semiA && semiB) return 1;
-
-            return 0;
-        });
-
-        if (validSportPicks.length === 0) {
-            return null; // Forces fallback → General Activity → Free (only if needed)
+        // 2. STABLE SORT: Apply Isolation Priority (Empty fields float to top)
+        if (block.slots.length > 0) {
+            valid = sortPicksByIsolation(valid, block.slots[0], fieldUsageBySlot, activityProperties);
         }
 
-        // 4. Apply freshness, preferences, fairness (unchanged)
-        const sorted = sortPicksByFreshness(
-            validSportPicks,
-            bunkHistory,
-            block.divName,
-            activityProperties
-        );
+        return valid[0] || null;
+    };
 
-        return sorted[0] || null;
+    // 2. SPECIALS PICKER
+    window.findBestSpecial = function (block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts) {
+        const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
+        const activitiesDoneToday = getGeneralActivitiesDoneToday(block.bunk);
+        
+        const specials = allActivities
+            .filter(a => a.type === 'special')
+            .map(a => ({ field: a.field, sport: null, _activity: a.field })); 
+
+        let valid = specials.filter(pick => {
+            const fits = window.SchedulerCoreUtils.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, pick._activity);
+            if (activitiesDoneToday.has(pick._activity)) return false;
+            return fits;
+        });
+
+        valid = sortPicksByFreshness(valid, bunkHistory);
+
+        if (block.slots.length > 0) {
+            valid = sortPicksByIsolation(valid, block.slots[0], fieldUsageBySlot, activityProperties);
+        }
+
+        return valid[0] || null;
+    };
+
+    // 3. GENERAL ACTIVITY PICKER
+    window.findBestGeneralActivity = function (block, allActivities, h2hActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts) {
+        const activitiesDoneToday = getGeneralActivitiesDoneToday(block.bunk);
+        const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
+
+        const candidates = allActivities
+            .filter(a => a.type === 'field' && a.sport)
+            .map(a => ({ field: a.field, sport: a.sport, _activity: a.sport }));
+
+        let valid = candidates.filter(pick => {
+            return window.SchedulerCoreUtils.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, pick._activity);
+        });
+
+        valid = shuffleArray(valid);
+        valid = sortPicksByFreshness(valid, bunkHistory);
+
+        if (block.slots.length > 0) {
+            valid = sortPicksByIsolation(valid, block.slots[0], fieldUsageBySlot, activityProperties);
+        }
+
+        return valid[0] || null;
     };
 
     // =================================================================
@@ -482,7 +483,7 @@
             }
         });
 
-        // 6. Pass 3 & 3.5 - Leagues (Delegated to Leagues Core)
+        // 6. Pass 3 & 3.5 - Leagues
         const leagueContext = {
             schedulableSlotBlocks,
             fieldUsageBySlot,
@@ -496,7 +497,7 @@
             divisions,
             fieldsBySport,
             dailyLeagueSportsUsage,
-            fillBlock // Pass the writer function
+            fillBlock
         };
 
         window.SchedulerCoreLeagues.processSpecialtyLeagues(leagueContext);
@@ -538,14 +539,13 @@
             if (block.event === 'League Game' || block.event === 'Specialty League') {
                 pick = { field: "Unassigned League", sport: null, _activity: "Free" };
             } else if (block.event === 'Special Activity' || block.event === 'Special Activity Slot') {
-                pick = window.findBestSpecial?.(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
+                pick = window.findBestSpecial(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
             } else if (block.event === 'Sports Slot' || block.event === 'Sports') {
-                // CALL OUR NEWLY INJECTED PICKER
                 pick = window.findBestSportActivity(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
             }
 
             if (!pick) {
-                pick = window.findBestGeneralActivity?.(block, allActivities, h2hActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
+                pick = window.findBestGeneralActivity(block, allActivities, h2hActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
             }
 
             // --- STRICT VALIDATION ---
@@ -554,9 +554,10 @@
             }
 
             // 1. Check if the "Best" pick actually fits (and is valid)
+            // Note: canBlockFit in Utils now has strict League Locking.
             let fits = pick && window.SchedulerCoreUtils.canBlockFit(block, window.SchedulerCoreUtils.fieldLabel(pick.field), activityProperties, fieldUsageBySlot, pick._activity);
 
-            // 2. RESCUE STRATEGY: If "Best" failed or was generic, try ALL combinations.
+            // 2. RESCUE STRATEGY: If "Best" failed, try ALL combinations.
             if (!fits) {
                 let candidates = [];
                 if (block.event === 'Sports Slot' || block.event === 'Sports') {
@@ -567,30 +568,12 @@
                     candidates = allActivities.slice();
                 }
 
-                // A) Randomize first for variety
                 candidates = shuffleArray(candidates);
 
-                // B) AGGRESSIVE SHARING (Doubling Up) - RESCUE LEVEL
-                candidates.sort((a, b) => {
-                    if (block.slots.length === 0) return 0;
-                    const slot = block.slots[0];
-                    
-                    const usageA = fieldUsageBySlot[slot]?.[a.field] || { count: 0 };
-                    const usageB = fieldUsageBySlot[slot]?.[b.field] || { count: 0 };
-                    
-                    const propsA = activityProperties[a.field];
-                    const propsB = activityProperties[b.field];
-
-                    const capA = propsA?.sharableWith?.capacity ?? (propsA?.sharable ? 2 : 1);
-                    const capB = propsB?.sharableWith?.capacity ?? (propsB?.sharable ? 2 : 1);
-
-                    const aIsSemi = (usageA.count > 0 && usageA.count < capA);
-                    const bIsSemi = (usageB.count > 0 && usageB.count < capB);
-
-                    if (aIsSemi && !bIsSemi) return -1; 
-                    if (!aIsSemi && bIsSemi) return 1;
-                    return 0; 
-                });
+                // Apply Isolation Sort to Rescue Candidates too (Empty First)
+                if (block.slots.length > 0) {
+                    candidates = sortPicksByIsolation(candidates, block.slots[0], fieldUsageBySlot, activityProperties);
+                }
 
                 for (const cand of candidates) {
                     const tempFieldName = cand.field;
