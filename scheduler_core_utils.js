@@ -109,17 +109,32 @@
     // 2. NEW TRANSITION/BUFFER LOGIC
     // =================================================================
     Utils.getTransitionRules = function(fieldName, activityProperties) {
-        const props = activityProperties[fieldName];
-        // Default safe structure
-        const defaultRules = { preMin: 0, postMin: 0, label: "Travel", zone: window.DEFAULT_ZONE_NAME, occupiesField: false, minDurationMin: 0 };
-        
-        // FIX: Ensure props exists before accessing transition property
-        if (!props || !props.transition) {
-            return defaultRules;
-        }
-        // Ensure all properties exist
-        return { ...defaultRules, ...props.transition };
+    // SAFETY: handle missing map or missing entry
+    const defaultRules = {
+        preMin: 0,
+        postMin: 0,
+        label: "Travel",
+        zone: window.DEFAULT_ZONE_NAME,
+        occupiesField: false,
+        minDurationMin: 0
     };
+
+    if (!activityProperties || typeof activityProperties !== "object") {
+        // No activityProperties map passed in at all
+        return defaultRules;
+    }
+
+    const props = activityProperties[fieldName];
+
+    // FIX: Ensure props exists before accessing transition property
+    if (!props || !props.transition) {
+        return defaultRules;
+    }
+
+    // Ensure all properties exist
+    return { ...defaultRules, ...props.transition };
+};
+
 
     // New helper to calculate the effective play window (Implements Anchor Time)
     Utils.getEffectiveTimeRange = function(block, transitionRules) {
