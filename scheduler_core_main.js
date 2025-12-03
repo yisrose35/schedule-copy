@@ -178,6 +178,7 @@
                 schedulableSlotBlocks.push({ ...item, slots: allSlots, startMin, endMin, bunks: allBunks });
             } 
             else if (item.type === 'smart') {
+                // Ensure bunks are attached for the adapter
                 schedulableSlotBlocks.push({ ...item, slots: allSlots, startMin, endMin, bunks: allBunks });
             }
             else {
@@ -206,14 +207,16 @@
         };
 
         // -- PHASE 2: LEAGUES & SPECIALTY LEAGUES (Full Buyouts) --
-        // Delegated to CoreLeagues, which calls fillBlock(..., isLeague=true)
         window.SchedulerCoreLeagues.processSpecialtyLeagues(context);
         window.SchedulerCoreLeagues.processRegularLeagues(context);
 
-        // -- PHASE 3: SMART TILES --
+        // -- PHASE 3: SMART TILES (FIXED: Validation Check Added) --
         const smartBlocks = schedulableSlotBlocks.filter(b => b.type === 'smart');
-        smartBlocks.forEach(sb => {
-            const jobs = window.SmartLogicAdapter.preprocessSmartTiles([sb], {}, masterSpecials);
+        
+        if (smartBlocks.length > 0 && window.SmartLogicAdapter) {
+            // Process ALL smart blocks at once
+            const jobs = window.SmartLogicAdapter.preprocessSmartTiles(smartBlocks, {}, masterSpecials);
+            
             jobs.forEach(job => {
                const divBunks = divisions[job.division]?.bunks || [];
                const res = window.SmartLogicAdapter.generateAssignments(
@@ -221,54 +224,84 @@
                    activityProperties, {}, dailyFieldAvailability, yesterdayHistory
                );
                
-               // Write A
-               const slotsA = window.SchedulerCoreUtils.findSlotsForRange(job.blockA.startMin, job.blockA.endMin);
-               Object.entries(res.block1Assignments).forEach(([bunk, act]) => {
-                   let finalPick = { field: act, _activity: act };
-                   if (act.includes("Sport")) {
-                       finalPick = window.findBestSportActivity({bunk, divName:job.division, startTime:job.blockA.startMin, endTime:job.blockA.endMin}, allActivities, {}, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
-                   }
-                   if (finalPick) {
-                       fillBlock({ slots: slotsA, bunk, startTime: job.blockA.startMin, endTime: job.blockA.endMin }, finalPick, {}, {}, false);
-                   }
-               });
-               
-               if (job.blockB && res.block2Assignments) {
-                   const slotsB = window.SchedulerCoreUtils.findSlotsForRange(job.blockB.startMin, job.blockB.endMin);
-                   Object.entries(res.block2Assignments).forEach(([bunk, act]) => {
+               // Helper to write assignments with validation
+               const writeAssignments = (assignments, blockInfo) => {
+                   if (!assignments || !blockInfo) return;
+                   const slots = window.SchedulerCoreUtils.findSlotsForRange(blockInfo.startMin, blockInfo.endMin);
+                   
+                   Object.entries(assignments).forEach(([bunk, act]) => {
                        let finalPick = { field: act, _activity: act };
+                       
+                       // If fallback was generic "Sports", find a specific one
                        if (act.includes("Sport")) {
-                           finalPick = window.findBestSportActivity({bunk, divName:job.division, startTime:job.blockB.startMin, endTime:job.blockB.endMin}, allActivities, {}, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
+                           finalPick = window.findBestSportActivity(
+                               {bunk, divName: job.division, startTime: blockInfo.startMin, endTime: blockInfo.endMin}, 
+                               allActivities, {}, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts
+                           );
+                       } else {
+                           // [FIX]: For Specific Activities (e.g. Woodworking), check Constraints!
+                           // We skip this check for generic "Sports" because findBestSportActivity handles it internally.
+                           const isValid = window.SchedulerCoreUtils.canBlockFit(
+                               { bunk, divName: job.division, startTime: blockInfo.startMin, endTime: blockInfo.endMin, slots }, 
+                               window.SchedulerCoreUtils.fieldLabel(act), 
+                               activityProperties, 
+                               act, 
+                               false // Not a league
+                           );
+                           
+                           if (!isValid) {
+                               // If specific assignment fails validation (e.g. Bunk not allowed), drop it.
+                               // In a smarter system, we might fallback to Sports here, but for now we safeguard against illegal placements.
+                               finalPick = null;
+                           }
                        }
+                       
                        if (finalPick) {
-                           fillBlock({ slots: slotsB, bunk, startTime: job.blockB.startMin, endTime: job.blockB.endMin }, finalPick, {}, {}, false);
+                           fillBlock({ slots: slots, bunk, startTime: blockInfo.startMin, endTime: blockInfo.endMin }, finalPick, {}, {}, false);
                        }
                    });
-               }
-            });
-        });
+               };
 
-        // -- PHASE 4: SPLIT ACTIVITIES --
+               writeAssignments(res.block1Assignments, job.blockA);
+               writeAssignments(res.block2Assignments, job.blockB);
+            });
+        }
+
+        // -- PHASE 4: SPLIT ACTIVITIES (FIXED: Halftime Switch) --
         const splitBlocks = schedulableSlotBlocks.filter(b => b.type === 'split');
         splitBlocks.forEach(sb => {
-            const mid = Math.ceil(sb.bunks.length / 2);
-            const bunks1 = sb.bunks.slice(0, mid);
-            const bunks2 = sb.bunks.slice(mid);
-            const e1 = sb.subEvents[0].event;
-            const e2 = sb.subEvents[1].event;
+            // Find Midpoint
+            const midTime = Math.floor(sb.startMin + (sb.endMin - sb.startMin) / 2);
             
-            const resolve = (bunk, evtName) => {
+            // Divide Bunks
+            const midIdx = Math.ceil(sb.bunks.length / 2);
+            const bunksGroup1 = sb.bunks.slice(0, midIdx);
+            const bunksGroup2 = sb.bunks.slice(midIdx);
+            
+            const eventA = sb.subEvents[0].event;
+            const eventB = sb.subEvents[1].event;
+            
+            // Helper to resolve specific activity
+            const resolve = (bunk, evtName, startTime, endTime) => {
                 const norm = normalizeGA(evtName);
                 if (evtName === 'Swim') return { field:'Swim', _activity:'Swim' };
-                // Use filler logic if generic
                 if (norm === "General Activity Slot" || evtName.includes("Sport")) {
-                    return window.findBestGeneralActivity({bunk, divName:sb.division, startTime:sb.startMin, endTime:sb.endMin}, allActivities, h2hActivities, {}, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
+                    return window.findBestGeneralActivity({bunk, divName:sb.division, startTime, endTime}, allActivities, h2hActivities, {}, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
                 }
                 return { field: evtName, _activity: evtName };
             };
 
-            bunks1.forEach(b => fillBlock({ slots: sb.slots, bunk: b, startTime: sb.startMin, endTime: sb.endMin }, resolve(b, e1), {}, {}, false));
-            bunks2.forEach(b => fillBlock({ slots: sb.slots, bunk: b, startTime: sb.startMin, endTime: sb.endMin }, resolve(b, e2), {}, {}, false));
+            // First Half (Start -> Mid)
+            // Group 1 gets Event A, Group 2 gets Event B
+            const slots1 = window.SchedulerCoreUtils.findSlotsForRange(sb.startMin, midTime);
+            bunksGroup1.forEach(b => fillBlock({ slots: slots1, bunk: b, startTime: sb.startMin, endTime: midTime }, resolve(b, eventA, sb.startMin, midTime), {}, {}, false));
+            bunksGroup2.forEach(b => fillBlock({ slots: slots1, bunk: b, startTime: sb.startMin, endTime: midTime }, resolve(b, eventB, sb.startMin, midTime), {}, {}, false));
+
+            // Second Half (Mid -> End) - SWITCH!
+            // Group 1 gets Event B, Group 2 gets Event A
+            const slots2 = window.SchedulerCoreUtils.findSlotsForRange(midTime, sb.endMin);
+            bunksGroup1.forEach(b => fillBlock({ slots: slots2, bunk: b, startTime: midTime, endTime: sb.endMin }, resolve(b, eventB, midTime, sb.endMin), {}, {}, false));
+            bunksGroup2.forEach(b => fillBlock({ slots: slots2, bunk: b, startTime: midTime, endTime: sb.endMin }, resolve(b, eventA, midTime, sb.endMin), {}, {}, false));
         });
 
         // -- PHASE 5: GENERAL ACTIVITIES (The Sand) --
@@ -293,6 +326,7 @@
 
             if (pick) {
                 fillBlock(block, pick, {}, yesterdayHistory, false);
+                // Update history counts...
                 if (pick._activity && block.bunk) {
                     if (!historicalCounts[block.bunk]) historicalCounts[block.bunk] = {};
                     historicalCounts[block.bunk][pick._activity] = (historicalCounts[block.bunk][pick._activity] || 0) + 1;
