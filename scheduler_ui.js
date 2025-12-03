@@ -1,17 +1,17 @@
-
 // ============================================================================
-// scheduler_ui.js (UPDATED: TIMELINE GATEKEEPER)
+// scheduler_ui.js (UPDATED: TRANSITION WRAPPER & DISPLAY)
 //
 // Updates:
-// 1. Validation now uses the global TIMELINE system for precise capacity checks.
-// 2. Maintains "Duplicate" and "Max Usage" checks for user feedback.
-// 3. Grid rendering logic remains untouched.
+// 1. Implements Wrapper Block display logic for transitions (Issue 6).
+// 2. Formats transition segments for clean schedule view.
+// 3. Updated editCell to use new fillBlock logic for buffer-aware manual edits (Issue 15).
 // ============================================================================
 
 (function () {
   "use strict";
 
   const INCREMENT_MINS = 30; // Fallback only
+  const TRANSITION_TYPE = window.TRANSITION_TYPE; // "Transition/Buffer"
 
   // ==========================================================================
   // TIME HELPERS
@@ -77,17 +77,12 @@
   // ==========================================================================
   function findSlotsForRange(startMin, endMin) {
     const slots = [];
-    const times = window.unifiedTimes;
-    if (!times) return slots;
+    const times = window.unifiedTimes || [];
+    if (!times.length) return slots;
 
     for (let i = 0; i < times.length; i++) {
       const slotStart = new Date(times[i].start).getHours() * 60 + new Date(times[i].start).getMinutes();
-      let slotEnd;
-      if (times[i].end) {
-         slotEnd = new Date(times[i].end).getHours() * 60 + new Date(times[i].end).getMinutes();
-      } else {
-         slotEnd = slotStart + INCREMENT_MINS;
-      }
+      let slotEnd = new Date(times[i].end).getHours() * 60 + new Date(times[i].end).getMinutes();
 
       if (startMin < slotEnd && endMin > slotStart) {
         slots.push(i);
@@ -97,7 +92,7 @@
   }
 
   // ==========================================================================
-  // EDIT CELL (TIMELINE UPDATED)
+  // EDIT CELL (BUFFER-AWARE MANUAL EDIT)
   // ==========================================================================
   function editCell(bunk, startMin, endMin, current) {
     if (!bunk) return;
@@ -110,29 +105,31 @@
     const isClear = (value === "" || value.toUpperCase() === "CLEAR" || value.toUpperCase() === "FREE");
     
     // --- VALIDATION GATE ---
+    let resolvedName = value;
+    
     if (!isClear && window.SchedulerCoreUtils && typeof window.SchedulerCoreUtils.loadAndFilterData === 'function') {
         const warnings = [];
         
         // Load fresh data (This REBUILDS the Timeline with current grid state)
         const config = window.SchedulerCoreUtils.loadAndFilterData();
-        const { activityProperties, historicalCounts, lastUsedDates, bunkMetaData, sportMetaData } = config;
+        const { activityProperties, historicalCounts, lastUsedDates, divisions } = config;
         
         const allKnown = Object.keys(activityProperties);
-        const resolvedName = resolveResourceName(value, allKnown) || value; 
+        resolvedName = resolveResourceName(value, allKnown) || value; 
         const props = activityProperties[resolvedName]; 
+        const targetSlots = findSlotsForRange(startMin, endMin);
         
         // -------------------------------------------------------------
         // A. SAME BUNK CHECK (Duplicate Warning)
         // -------------------------------------------------------------
         const currentSchedule = window.scheduleAssignments[bunk] || [];
-        const targetSlots = findSlotsForRange(startMin, endMin);
         
         currentSchedule.forEach((entry, idx) => {
             if (targetSlots.includes(idx)) return; // Skip self
             if (entry && !entry.continuation) {
                 const entryRaw = entry.field || entry._activity;
                 if (String(entryRaw).trim().toLowerCase() === String(value).trim().toLowerCase()) {
-                     const timeLabel = window.unifiedTimes[idx]?.label || minutesToTimeLabel(window.unifiedTimes[idx].start);
+                     const timeLabel = window.unifiedTimes[idx]?.label || minutesToTimeLabel(new Date(window.unifiedTimes[idx].start).getHours() * 60 + new Date(window.unifiedTimes[idx].start).getMinutes());
                      warnings.push(`⚠️ DUPLICATE: ${bunk} is already scheduled for "${entryRaw}" at ${timeLabel}.`);
                 }
             }
@@ -160,44 +157,43 @@
                     warnings.push(`⚠️ MAX USAGE: ${bunk} has used "${resolvedName}" ${historyCount + todayCount} times${dateInfo}. Limit is ${max}.`);
                 }
             }
+            
+            // -------------------------------------------------------------
+            // C. BUFFER DURATION CHECK (Issue 1)
+            // -------------------------------------------------------------
+            const transRules = window.SchedulerCoreUtils.getTransitionRules(resolvedName, activityProperties);
+            const { activityDuration } = window.SchedulerCoreUtils.getEffectiveTimeRange({startTime: startMin, endTime: endMin}, transRules);
+
+            if (activityDuration < transRules.minDurationMin) {
+                warnings.push(`⚠️ DURATION WARNING: Actual activity time is ${activityDuration} mins (Buffer: ${transRules.preMin + transRules.postMin} mins). Minimum required is ${transRules.minDurationMin} mins.`);
+            }
 
             // -------------------------------------------------------------
-            // C. TIMELINE CAPACITY CHECK (The Gatekeeper)
+            // D. TIMELINE CAPACITY CHECK (The Gatekeeper)
             // -------------------------------------------------------------
-            // Determine Capacity Limit
-            let capacityLimit = 1; // Default
-            if (props.sharableWith?.capacity) capacityLimit = parseInt(props.sharableWith.capacity);
-            else if (props.sharable || props.sharableWith?.type === 'all' || props.sharableWith?.type === 'custom') capacityLimit = 2;
-
-            // Determine My Weight (Manual edits are usually standard weight 1)
-            // Unless user typed "League Game", but usually they type the field name.
-            let myWeight = 1;
-
-            // Check availability via Timeline System
-            // We pass 'bunk' as excludeOwner so we don't count ourselves if we are just editing the name in place
-            const isAvailable = window.SchedulerCoreUtils.timeline.checkAvailability(
+            const tempBlock = { bunk, startTime: startMin, endTime: endMin, slots: targetSlots, divName: divisions[bunk]?.name };
+            const isAvailable = window.SchedulerCoreUtils.canBlockFit(
+                tempBlock, 
                 resolvedName, 
-                startMin, 
-                endMin, 
-                myWeight, 
-                capacityLimit,
-                bunk 
+                activityProperties, 
+                window.fieldUsageBySlot,
+                resolvedName 
             );
 
             if (!isAvailable) {
-                const currentPeak = window.SchedulerCoreUtils.timeline.getPeakUsage(resolvedName, startMin, endMin, bunk);
-                warnings.push(`⚠️ CAPACITY CONFLICT: "${resolvedName}" is full during this time.\n   Current Peak: ${currentPeak} bunks.\n   Limit: ${capacityLimit}.`);
+                warnings.push(`⚠️ CAPACITY CONFLICT: "${resolvedName}" is blocked or full during this time.`);
             }
             
             // -------------------------------------------------------------
-            // D. TIME RULES CHECK
+            // E. TIME RULES CHECK
             // -------------------------------------------------------------
-            if (!window.SchedulerCoreUtils.isTimeAvailable(startMin, endMin, props)) {
+            const isAvailableTime = targetSlots.every(slotIdx => window.SchedulerCoreUtils.isTimeAvailable(slotIdx, props));
+            if (!isAvailableTime) {
                  warnings.push(`⚠️ TIME RESTRICTION: "${resolvedName}" is closed/unavailable during this time block.`);
             }
         }
 
-        // E. BLOCKER PROMPT
+        // F. BLOCKER PROMPT
         if (warnings.length > 0) {
             const msg = warnings.join("\n\n") + "\n\nDo you want to OVERRIDE these rules and schedule anyway?";
             if (!confirm(msg)) {
@@ -206,7 +202,7 @@
         }
     } 
 
-    // --- APPLY EDIT ---
+    // --- APPLY EDIT (Use fillBlock for atomic buffer writing - Issue 15) ---
     const slots = findSlotsForRange(startMin, endMin);
     
     if (!slots || slots.length === 0) {
@@ -218,17 +214,33 @@
       window.scheduleAssignments[bunk] = new Array(window.unifiedTimes.length);
 
     if (isClear) {
+      // Manual clearance is always direct writes
       slots.forEach((idx, i) => {
         window.scheduleAssignments[bunk][idx] = {
           field: "Free", sport: null, continuation: i > 0, _fixed: true, _activity: "Free"
         };
       });
     } else {
-      slots.forEach((idx, i) => {
-        window.scheduleAssignments[bunk][idx] = {
-          field: value, sport: null, continuation: i > 0, _fixed: true, _activity: value
-        };
-      });
+      // Fetch data for fillBlock
+      const config = window.SchedulerCoreUtils.loadAndFilterData();
+      const divName = Object.keys(config.divisions).find(d => config.divisions[d].bunks.includes(bunk));
+
+      // 1. Clear old data from this range first (important for re-writing)
+      slots.forEach(idx => window.scheduleAssignments[bunk][idx] = null);
+      
+      // 2. Use the central fillBlock logic to ensure buffers are generated correctly
+      window.fillBlock({
+        divName, bunk,
+        startTime: startMin, 
+        endTime: endMin, 
+        slots,
+        _fixed: true 
+      }, {
+        field: resolvedName, 
+        sport: null, 
+        _fixed: true, 
+        _activity: resolvedName
+      }, window.fieldUsageBySlot, config.yesterdayHistory, false, config.activityProperties);
     }
 
     saveSchedule();
@@ -241,10 +253,19 @@
     return a[bunk][slotIndex] || null;
   }
 
+  // UPDATED: Format entry to check for transitions
   function formatEntry(entry) {
     if (!entry) return "";
     if (entry._isDismissal) return "Dismissal";
     if (entry._isSnack) return "Snacks";
+    
+    // Check if it's a Transition block
+    if (entry._isTransition) {
+        let label = entry.sport || entry.field;
+        // Use a clean label for the UI
+        return `🏃‍♂️ ${label}`;
+    }
+
     const label = entry._activity || entry.field || "";
     if (entry._h2h) return entry.sport || "League Game";
     if (entry._fixed) return label;
@@ -267,7 +288,7 @@
     renderStaggeredView(container);
   }
 
-  // --- DYNAMIC GRID (UNTOUCHED) ---
+  // --- DYNAMIC GRID (UPDATED for Wrapper Block) ---
   function renderStaggeredView(container) {
     container.innerHTML = "";
     const divisions = window.divisions || {};
@@ -334,7 +355,7 @@
           expanded.push({ ...b, endMin: mid, label: `${minutesToTimeLabel(b.startMin)} - ${minutesToTimeLabel(mid)}` });
           expanded.push({ ...b, startMin: mid, label: `${minutesToTimeLabel(mid)} - ${minutesToTimeLabel(b.endMin)}` });
         } else {
-          expanded.push({ ...b, label: `${minutesToTimeLabel(b.startMin)} - ${minutesToTimeLabel(b.endMin)}` });
+          expanded.push({ ...b, label: `${minutesToTimeLabel(b.startMin)} - ${minutesToLabel(b.endMin)}` });
         }
       });
 
@@ -344,7 +365,9 @@
         tdTime.textContent = block.label;
         tr.appendChild(tdTime);
 
-        if (block.event.startsWith("League Game") || block.event.startsWith("Specialty League")) {
+        const isLeague = block.event.startsWith("League Game") || block.event.startsWith("Specialty League");
+
+        if (isLeague) {
           const td = document.createElement("td");
           td.colSpan = bunks.length;
           td.style.background = "#eef7f8";
@@ -385,32 +408,146 @@
           return;
         }
 
-        const isDismissal = block.event.toLowerCase().includes("dismiss");
-        const isSnack = block.event.toLowerCase().includes("snack");
-        const isGeneratedSlot = uiIsGeneratedEventName(block.event) || block.event.includes("/");
-
+        // --- Standard & Generated Slots (New Wrapper Logic) ---
+        
         bunks.forEach((bunk) => {
           const td = document.createElement("td");
-          let label = block.event;
           const slotIdx = findFirstSlotForTime(block.startMin);
+          const entry = getEntry(bunk, slotIdx);
+
+          const isDismissal = block.event.toLowerCase().includes("dismiss");
+          const isSnack = block.event.toLowerCase().includes("snack");
+          const isGeneratedSlot = uiIsGeneratedEventName(block.event) || block.event.includes("/");
+
+          let cellContent = "";
+          let bg = "";
+          let finalActivity = "";
+          let transitionInfo = "";
+          let isWrapperBlock = false;
 
           if (isDismissal) {
-            label = "Dismissal";
-            td.style.background = "#ffdddd";
+            cellContent = "Dismissal";
+            bg = "#ffdddd";
           } else if (isSnack) {
-            label = "Snacks";
-            td.style.background = "#e7ffe7";
+            cellContent = "Snacks";
+            bg = "#e7ffe7";
           } else if (!isGeneratedSlot) {
-            td.style.background = "#fff7cc";
-            label = block.event;
+            // Pinned/Custom Event (No Buffer Logic unless manually overriden)
+            bg = "#fff7cc";
+            cellContent = block.event;
+          } else if (entry && entry.field !== "Free") {
+            // Generated Content
+            
+            let currentIdx = slotIdx;
+            let totalPreTime = 0;
+            let totalPostTime = 0;
+            let activePlayTime = 0;
+            let mainActivityFound = false;
+
+            // Scan through slots belonging to this visual block
+            while (currentIdx < window.unifiedTimes.length) {
+                const scanEntry = getEntry(bunk, currentIdx);
+                if (!scanEntry) break;
+                
+                const slotDuration = new Date(window.unifiedTimes[currentIdx].end).getTime() - new Date(window.unifiedTimes[currentIdx].start).getTime();
+                const durationMins = slotDuration / (1000 * 60);
+
+                if (scanEntry._activity === TRANSITION_TYPE) {
+                    if (!mainActivityFound) {
+                        totalPreTime += durationMins;
+                    } else {
+                        totalPostTime += durationMunkins;
+                    }
+                } else if (scanEntry._activity !== "Free") {
+                    finalActivity = scanEntry._activity;
+                    activePlayTime += durationMins;
+                    mainActivityFound = true;
+                } else {
+                    // Free block breaks the wrapper sequence
+                    break;
+                }
+                
+                // If the next slot is unrelated, break the sequence
+                const nextEntry = getEntry(bunk, currentIdx + 1);
+                if (!nextEntry || (nextEntry.field !== scanEntry.field && nextEntry._activity !== TRANSITION_TYPE && nextEntry._activity !== finalActivity)) break;
+                
+                currentIdx++;
+            }
+            
+            // Determine if the current slot is the START of the wrapper block
+            const isStartOfWrapper = (slotIdx === 0) || (getEntry(bunk, slotIdx - 1)?._activity !== entry._activity && getEntry(bunk, slotIdx - 1)?._activity !== TRANSITION_TYPE);
+            
+            if (isStartOfWrapper && mainActivityFound) {
+                 isWrapperBlock = (totalPreTime > 0 || totalPostTime > 0);
+            }
+            
+            if (isWrapperBlock) {
+                // If it's the start of a wrapper, display all info
+                cellContent = `<strong>${finalActivity}</strong>`;
+                bg = "#e0f7fa"; // Light blue for generated/wrapped block
+                transitionInfo = `<span style="font-size:0.8em; color:#059669;">(${totalPreTime}m To / ${Math.round(activePlayTime)}m Play / ${totalPostTime}m From)</span>`;
+                cellContent += `<br>${transitionInfo}`;
+
+            } else if (entry._activity === TRANSITION_TYPE) {
+                // This is a transition segment, suppress its content in the grid display
+                cellContent = "";
+                
+                // Also, check if this transition is followed by a non-transition block 
+                // within the same block time, if so, the main activity block draws over it.
+                // We leave the cell empty for the wrapper block to span.
+                
+            } else {
+                // Standard activity, not the start of a wrapper or a transition block
+                cellContent = formatEntry(entry);
+            }
+
           } else {
-            const entry = getEntry(bunk, slotIdx);
-            label = formatEntry(entry);
+            cellContent = formatEntry(entry);
           }
 
-          td.textContent = label;
+
+          td.textContent = cellContent;
           td.style.cursor = "pointer";
-          td.onclick = () => editCell(bunk, block.startMin, block.endMin, label);
+          td.onclick = () => editCell(bunk, block.startMin, block.endMin, finalActivity || cellContent);
+          
+          // --- Wrapper Span Logic ---
+          if (isWrapperBlock) {
+             let spanCount = 1;
+             let scanEndIndex = slotIdx;
+             
+             // Count how many vertical slots this wrapper block spans
+             while (scanEndIndex + 1 < window.unifiedTimes.length) {
+                const nextEntry = getEntry(bunk, scanEndIndex + 1);
+                // Span until the activity or transition changes or becomes 'Free'
+                if (nextEntry && nextEntry.field === entry.field && nextEntry._activity !== 'Free') {
+                     spanCount++;
+                     scanEndIndex++;
+                } else {
+                     break;
+                }
+             }
+             
+             if (spanCount > 1) {
+                 td.rowSpan = spanCount;
+                 // Mark all subsequent cells in the column to be skipped
+                 for(let k=slotIdx + 1; k < slotIdx + spanCount; k++) {
+                     // We mark this cell so the next iteration of the outer loop skips it
+                     // This is handled implicitly by checking slotIndex against blocks.startMin, 
+                     // but setting rowSpan > 1 visually merges it.
+                 }
+                 
+                 // Apply merger style
+                 td.style.verticalAlign = 'top';
+                 td.style.textAlign = 'center';
+                 td.style.background = '#e0f7fa';
+             }
+
+          } else if (getEntry(bunk, slotIdx - 1)?.field === entry.field && getEntry(bunk, slotIdx - 1)?._activity !== 'Free') {
+              // This is a continuation of a previously drawn merged block or an empty transition slot
+              td.style.display = 'none';
+              
+          }
+          
           tr.appendChild(td);
         });
         tbody.appendChild(tr);
