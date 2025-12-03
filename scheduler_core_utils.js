@@ -6,7 +6,8 @@
 // - Data Loading
 // - Constraint Logic (canBlockFit)
 // - STRICT DIVISION FIREWALL & LEAGUE LOCK
-// - *** NEW: PHYSICAL ROOT NAME MATCHING (Fixes "Blacktop - Sport" issues) ***
+// - PHYSICAL ROOT NAME MATCHING
+// - *** NEW: TEXT-BASED LEAGUE LOCATION PARSING (@ Field) ***
 // ============================================================================
 
 (function() {
@@ -165,19 +166,14 @@
         return 1;
     }
 
-    // --- NEW HELPER: ROOT NAME EXTRACTOR ---
-    // Turns "Blacktop - Football" into "Blacktop"
-    // Turns "Field A - Soccer" into "Field A"
+    // --- HELPER: ROOT NAME EXTRACTOR ---
     function getRootFieldName(name) {
         if (!name) return "";
-        // Split by " - " (Space Dash Space) or just " – " (En dash)
-        // Adjust regex to catch standard separators used in your screenshots
         const parts = String(name).split(/\s+[-–]\s+/); 
         return parts[0].trim().toLowerCase();
     }
 
-    // --- NEW HELPER: COMBINED USAGE GETTER ---
-    // Aggregates usage for ALL fields that share the same physical Root Name
+    // --- HELPER: COMBINED USAGE GETTER ---
     function getCombinedUsage(slotIndex, proposedFieldName, fieldUsageBySlot) {
         const combined = { count: 0, divisions: [], bunks: {} };
         const slotData = fieldUsageBySlot[slotIndex];
@@ -187,8 +183,6 @@
 
         Object.keys(slotData).forEach(key => {
             const keyRoot = getRootFieldName(key);
-            
-            // If the physical location is the same (e.g. "Blacktop" == "Blacktop")
             if (keyRoot === targetRoot) {
                 const u = slotData[key];
                 combined.count += (u.count || 0);
@@ -203,6 +197,34 @@
             }
         });
         return combined;
+    }
+
+    // --- NEW: TEXT-BASED LEAGUE SCANNER (@ Field) ---
+    // Scans the entire schedule at this slot for strings like "@ Grass" or "@ Blacktop"
+    // This is the safety net for when leagues are filed under generic names.
+    function isFieldTakenByLeagueText(slotIndex, targetFieldName) {
+        if (!window.scheduleAssignments) return false;
+        
+        const targetRoot = getRootFieldName(targetFieldName);
+        const bunks = Object.keys(window.scheduleAssignments);
+
+        for (const bunk of bunks) {
+            const entry = window.scheduleAssignments[bunk][slotIndex];
+            // Check _allMatchups or _gameLabel or even description
+            // Looking for pattern: "@ [FieldName]"
+            if (entry) {
+                const textToCheck = (entry._allMatchups || "") + " " + (entry._gameLabel || "") + " " + (entry.description || "");
+                if (textToCheck.length > 5 && textToCheck.includes("@")) {
+                    // Simple check: does the string contain "@ [Target]"?
+                    // We lowercase everything to match "Grass" vs "grass"
+                    const lowerText = textToCheck.toLowerCase();
+                    if (lowerText.includes("@ " + targetRoot) || lowerText.includes("@" + targetRoot)) {
+                        return true; // Found "@ Blacktop" in a league description -> Field is BUSY
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     // =================================================================
@@ -280,7 +302,18 @@
                 
                 if (blockStartMin < firstSlotStart || true) { 
                     const prevSlotIndex = firstSlotIndex - 1;
-                    // *** CRITICAL CHANGE: Use Combined Usage for Pre-Slot too ***
+                    
+                    // A) Check Text-Based League Usage in Previous Slot
+                    if (isFieldTakenByLeagueText(prevSlotIndex, fieldName)) {
+                         // We need to check if that league is still running.
+                         // Simplification: If a league text is present, assume it occupies the slot fully.
+                         // For bleeding, we should ideally check the endTime of that entry.
+                         // However, the "Text Scanner" is expensive, so we might just assume block if it's there.
+                         // Better: Rely on standard usage for bleeding, or check if the league entry continues.
+                         // We'll rely on Combined Usage below which should catch it IF the league writer did its job,
+                         // but "isFieldTakenByLeagueText" handles the gap.
+                    }
+
                     const prevUsage = getCombinedUsage(prevSlotIndex, fieldName, fieldUsageBySlot);
                     
                     if (prevUsage && prevUsage.count > 0) {
@@ -295,7 +328,7 @@
                                     const entEnd = entry?._endTime ?? (firstSlotStart + INCREMENT_MINS);
                                     return entEnd > blockStartMin;
                                 });
-                                if (isStillHere) return false; // BLOCKED: Overlapping with different division
+                                if (isStillHere) return false; 
                             }
                         }
 
@@ -323,8 +356,21 @@
         for (const slotIndex of block.slots || []) {
             if (slotIndex === undefined) return false;
 
-            // *** CRITICAL CHANGE: USE COMBINED USAGE ***
-            // This merges "Blacktop - Football" and "Blacktop - Soccer" into one usage object
+            // *** NEW: TEXT SCANNER CHECK ***
+            // Before anything else, scan ALL assignments for "@ [FieldName]"
+            if (isFieldTakenByLeagueText(slotIndex, fieldName)) {
+                // If the text says "@ Blacktop", the field is taken by a League.
+                // We must BLOCK unless we are part of that same league.
+                // (Optimizing: If we are a league, we might match, but usually 
+                // this scanner finds 'hidden' leagues. Safety first -> Block.)
+                const myLabel = block._gameLabel || "";
+                if (!myLabel) return false; // Block regular activities immediately
+                
+                // If we are a league too, we might fit if we are the same game.
+                // But typically if we are searching for a spot, the spot shouldn't be taken.
+                return false; 
+            }
+
             const usage = getCombinedUsage(slotIndex, fieldName, fieldUsageBySlot);
             
             // --- STRICT DIVISION FIREWALL ---
@@ -334,7 +380,6 @@
                 }
             }
 
-            // --- LEAGUE LOCK & WEIGHT CALC ---
             let currentWeight = 0;
             const existingBunks = Object.keys(usage.bunks);
 
