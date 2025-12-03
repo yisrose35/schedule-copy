@@ -6,7 +6,7 @@
 // - Entry point (runSkeletonOptimizer)
 // - Context Parsing (Skeleton -> Blocks)
 // - Call Leagues (Pass 3)
-// - Main Loop (Pass 4) WITH AGGRESSIVE SHARING RESCUE
+// - Main Loop (Pass 4) WITH STRICT LOCATION & AGGRESSIVE SHARING
 // - History Saving (Pass 5)
 // ============================================================================
 
@@ -434,15 +434,19 @@
                 pick = window.findBestGeneralActivity?.(block, allActivities, h2hActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
             }
 
-            // --- VALIDATION & RESCUE STRATEGY ---
-            
-            // 1. Check if the "Best" pick actually fits
+            // --- STRICT VALIDATION ---
+            // Issue: Sometimes "pick.field" is just "Soccer" (Generic) if no field was found.
+            // Fix: If pick.field is NOT in the master list of fields, we consider it invalid (failed).
+            if (pick && window.allSchedulableNames && !window.allSchedulableNames.includes(pick.field)) {
+                pick = null; // FORCE RESCUE
+            }
+
+            // 1. Check if the "Best" pick actually fits (and is valid)
             let fits = pick && window.SchedulerCoreUtils.canBlockFit(block, window.SchedulerCoreUtils.fieldLabel(pick.field), activityProperties, fieldUsageBySlot, pick._activity);
 
-            // 2. RESCUE STRATEGY: If "Best" failed, try ALL combinations to avoid Free
-            //    WITH AGGRESSIVE DOUBLING-UP PRIORITIZATION
+            // 2. RESCUE STRATEGY: If "Best" failed or was generic, try ALL combinations.
             if (!fits) {
-                // Determine valid pool based on event type
+                // Determine valid pool
                 let candidates = [];
                 if (block.event === 'Sports Slot' || block.event === 'Sports') {
                     candidates = allActivities.filter(a => a.type === 'field' && a.sport);
@@ -455,9 +459,8 @@
                 // A) Randomize first for variety
                 candidates = shuffleArray(candidates);
 
-                // B) PUSH THE SHARING RULE:
-                // Sort candidates to put "Partially Filled" (Occupied but Sharable) fields FIRST.
-                // This forces "Doubling Up" before grabbing empty fields.
+                // B) AGGRESSIVE SHARING (Doubling Up)
+                // Sort candidates to put "Partially Filled" fields FIRST.
                 candidates.sort((a, b) => {
                     if (block.slots.length === 0) return 0;
                     const slot = block.slots[0];
@@ -468,7 +471,6 @@
                     const propsA = activityProperties[a.field];
                     const propsB = activityProperties[b.field];
 
-                    // Capacity: 2 if sharable/all/custom, else 1
                     const capA = propsA?.sharableWith?.capacity ?? (propsA?.sharable ? 2 : 1);
                     const capB = propsB?.sharableWith?.capacity ?? (propsB?.sharable ? 2 : 1);
 
@@ -476,7 +478,8 @@
                     const aIsSemi = (usageA.count > 0 && usageA.count < capA);
                     const bIsSemi = (usageB.count > 0 && usageB.count < capB);
 
-                    if (aIsSemi && !bIsSemi) return -1; // A is "Sharing Opportunity", promote it
+                    // We want: Semi > Empty > Full
+                    if (aIsSemi && !bIsSemi) return -1; // A is "Sharing Opportunity", promote it!
                     if (!aIsSemi && bIsSemi) return 1;
                     return 0; 
                 });
@@ -488,7 +491,7 @@
                     
                     if (window.SchedulerCoreUtils.canBlockFit(block, tempFieldName, activityProperties, fieldUsageBySlot, tempActivity)) {
                         pick = {
-                            field: tempFieldName,
+                            field: tempFieldName, // GUARANTEED TO BE A REAL LOCATION NOW
                             sport: cand.sport || null,
                             _activity: tempActivity,
                             _h2h: (cand.type === 'field' && !!cand.sport)
