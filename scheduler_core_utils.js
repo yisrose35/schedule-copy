@@ -73,7 +73,8 @@
             const slotStart = d.getHours() * 60 + d.getMinutes();
             if (slotStart >= startMin && slotStart < endMin) {
                 slots.push(i);
-            }<br>        }
+            }
+        }
         return slots;
     };
 
@@ -286,12 +287,6 @@
                 if (currentHeadcount + mySize > maxHeadcount) return false;
             }
 
-            // 5. Standard Activity Compatibility (Optional strictness)
-            // The weight system handles the "League vs Regular" conflict automatically.
-            // But we still want to prevent mixing completely different regular sports unless allowed.
-            // (e.g., "Basketball" vs "Hockey" on same field).
-            // For now, if weights fit, we allow it, unless specific division rules block it.
-            
             if (!Utils.isTimeAvailable(slotIndex, props)) return false;
         }
         return true;
