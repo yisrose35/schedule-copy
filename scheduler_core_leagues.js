@@ -1,6 +1,6 @@
 // ============================================================================
 // scheduler_core_leagues.js
-// PART 2 of 3: THE SPECIALIST (TIMELINE EDITION)
+// PART 2 of 3: THE SPECIALIST (TIMELINE EDITION - ROBUST)
 //
 // Role:
 // - League Matchmaking Math (Round Robin, Shuffling)
@@ -74,7 +74,7 @@
         const {
             schedulableSlotBlocks, activityProperties,
             masterSpecialtyLeagues, disabledSpecialtyLeagues, rotationHistory,
-            yesterdayHistory, fillBlock
+            yesterdayHistory, fillBlock, fieldUsageBySlot // Ensure this is available if needed for specialty checks
         } = context;
 
         const specialtyLeagueBlocks = schedulableSlotBlocks.filter(
@@ -201,6 +201,7 @@
                 const pickToAssign = picksByTeam[bunk] || noGamePick;
                 pickToAssign._allMatchups = allMatchupLabels;
                 pickToAssign._gameLabel = gameLabel;
+                // PASS TRUE FOR IS_LEAGUE (Full Buyout)
                 fillBlock({ ...blockBase, bunk }, pickToAssign, {}, yesterdayHistory, true);
             });
         });
@@ -212,7 +213,7 @@
     Leagues.processRegularLeagues = function(context) {
         const {
             schedulableSlotBlocks, 
-            fieldUsageBySlot, // <--- THIS WAS MISSING BEFORE!
+            fieldUsageBySlot, // <--- CRITICAL FIX: Destructure this variable!
             activityProperties,
             masterLeagues, disabledLeagues, rotationHistory,
             yesterdayHistory, divisions, fieldsBySport, dailyLeagueSportsUsage,
@@ -255,6 +256,7 @@
             const allBunksInGroup = Array.from(group.bunks).sort();
             if (allBunksInGroup.length === 0) return;
 
+            // Find base division
             let baseDivName = null;
             const firstBunk = allBunksInGroup[0];
             baseDivName = Object.keys(divisions).find(div => (divisions[div].bunks || []).includes(firstBunk));
@@ -262,6 +264,8 @@
 
             const blockBase = { slots, divName: baseDivName, startTime: group.startTime, endTime: group.endTime };
             
+            // --- FIX: ALLOW "NO FIELD" MATCHUPS ---
+            // Don't filter by fieldsBySport strictly here. We try to find fields later.
             const sports = (league.sports || []);
             
             const usedToday = dailyLeagueSportsUsage[leagueName] || new Set();
@@ -304,7 +308,7 @@
 
                 nonBye.forEach((pair, idx) => {
                     const [teamA, teamB] = pair;
-                    const preferredSport = assignments[idx]?.sport || optimizerSports[idx % optimizerSports.length];
+                    const preferredSport = assignments[idx]?.sport || (optimizerSports.length ? optimizerSports[idx % optimizerSports.length] : "League Game");
                     const candidateSports = [
                         preferredSport,
                         ...sports.filter(s => s !== preferredSport && !usedToday.has(s)),
@@ -323,7 +327,7 @@
                         for (const f of possibleFields) {
                             if (!simUsedFields[slotIdx].has(f) &&
                                 (fieldUsageBySlot[slots[slotIdx]]?.[f]?.count || 0) === 0 &&
-                                window.SchedulerCoreUtils.canBlockFit(blockBase, f, activityProperties, s, true)) {
+                                window.SchedulerCoreUtils.canLeagueGameFit(blockBase, f, fieldUsageBySlot, activityProperties)) {
                                 found = f;
                                 break;
                             }
@@ -368,7 +372,7 @@
 
             winningMatchups.forEach((pair, idx) => {
                 const [teamA, teamB] = pair;
-                const preferredSport = finalOpt.assignments[idx]?.sport || optimizerSports[idx % optimizerSports.length];
+                const preferredSport = finalOpt.assignments[idx]?.sport || (optimizerSports.length ? optimizerSports[idx % optimizerSports.length] : "League Game");
                 const candidateSports = [
                     preferredSport,
                     ...sports.filter(s => s !== preferredSport && !usedToday.has(s)),
@@ -404,6 +408,7 @@
                     }
                 }
 
+                // If finalField is null, we STILL create a label, just mark it "No Field"
                 let label = finalField ? `${teamA} vs ${teamB} (${finalSport}) @ ${finalField}` : `${teamA} vs ${teamB} (No Field)`;
                 if (finalField) {
                     if (!dailyLeagueSportsUsage[leagueName]) dailyLeagueSportsUsage[leagueName] = new Set();
