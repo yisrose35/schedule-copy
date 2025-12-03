@@ -1108,24 +1108,35 @@ function renderResourceOverridesUI() {
   fields.forEach(item => {
     const isDisabled = currentOverrides.disabledFields.includes(item.name);
     const onToggle = (isEnabled) => {
-      if (isEnabled) currentOverrides.disabledFields = currentOverrides.disabledFields.filter(name => name !== item.name);
-      else if (!currentOverrides.disabledFields.includes(item.name)) currentOverrides.disabledFields.push(item.name);
+      if (isEnabled) {
+        currentOverrides.disabledFields = currentOverrides.disabledFields.filter(name => name !== item.name);
+      } else if (!currentOverrides.disabledFields.includes(item.name)) {
+        currentOverrides.disabledFields.push(item.name);
+      }
       saveOverrides();
     };
-    overrideFieldsListEl.appendChild(createOverrideMasterListItem('field', item.name, !isDisabled, onToggle));
+    overrideFieldsListEl.appendChild(
+      createOverrideMasterListItem('field', item.name, !isDisabled, onToggle)
+    );
   });
 
   const specials = masterSettings.app1.specialActivities || [];
   if (specials.length === 0) {
     overrideSpecialsListEl.innerHTML = `<p class="muted" style="font-size:0.9em;">No special activities found in Setup.</p>`;
-  }<br>  specials.forEach(item => {
+  }
+  specials.forEach(item => {
     const isDisabled = currentOverrides.disabledSpecials.includes(item.name);
     const onToggle = (isEnabled) => {
-      if (isEnabled) currentOverrides.disabledSpecials = currentOverrides.disabledSpecials.filter(name => name !== item.name);
-      else if (!currentOverrides.disabledSpecials.includes(item.name)) currentOverrides.disabledSpecials.push(item.name);
+      if (isEnabled) {
+        currentOverrides.disabledSpecials = currentOverrides.disabledSpecials.filter(name => name !== item.name);
+      } else if (!currentOverrides.disabledSpecials.includes(item.name)) {
+        currentOverrides.disabledSpecials.push(item.name);
+      }
       saveOverrides();
     };
-    overrideSpecialsListEl.appendChild(createOverrideMasterListItem('special', item.name, !isDisabled, onToggle));
+    overrideSpecialsListEl.appendChild(
+      createOverrideMasterListItem('special', item.name, !isDisabled, onToggle)
+    );
   });
 
   const leagues = masterSettings.leaguesByName || {};
@@ -1136,11 +1147,16 @@ function renderResourceOverridesUI() {
   leagueNames.forEach(name => {
     const isDisabled = currentOverrides.leagues.includes(name);
     const onToggle = (isEnabled) => {
-      if (isEnabled) currentOverrides.leagues = currentOverrides.leagues.filter(l => l !== name);
-      else if (!currentOverrides.leagues.includes(name)) currentOverrides.leagues.push(name);
+      if (isEnabled) {
+        currentOverrides.leagues = currentOverrides.leagues.filter(l => l !== name);
+      } else if (!currentOverrides.leagues.includes(name)) {
+        currentOverrides.leagues.push(name);
+      }
       saveOverrides();
     };
-    overrideLeaguesListEl.appendChild(createOverrideMasterListItem('league', name, !isDisabled, onToggle));
+    overrideLeaguesListEl.appendChild(
+      createOverrideMasterListItem('league', name, !isDisabled, onToggle)
+    );
   });
 
   const specialtyLeagues = masterSettings.specialtyLeagues || {};
@@ -1151,10 +1167,12 @@ function renderResourceOverridesUI() {
   specialtyLeagueNames.forEach(name => {
     const isDisabled = currentOverrides.disabledSpecialtyLeagues.includes(name);
     const onToggle = (isEnabled) => {
-      if (isEnabled) currentOverrides.disabledSpecialtyLeagues =
-        currentOverrides.disabledSpecialtyLeagues.filter(l => l !== name);
-      else if (!currentOverrides.disabledSpecialtyLeagues.includes(name))
+      if (isEnabled) {
+        currentOverrides.disabledSpecialtyLeagues =
+          currentOverrides.disabledSpecialtyLeagues.filter(l => l !== name);
+      } else if (!currentOverrides.disabledSpecialtyLeagues.includes(name)) {
         currentOverrides.disabledSpecialtyLeagues.push(name);
+      }
       window.saveCurrentDailyData("disabledSpecialtyLeagues", currentOverrides.disabledSpecialtyLeagues);
     };
     overrideSpecialtyLeaguesListEl.appendChild(
