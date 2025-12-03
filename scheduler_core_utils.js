@@ -4,7 +4,7 @@
 //
 // Role:
 // - Data Loading
-// - Constraint Logic (canBlockFit) WITH WEIGHTED SYSTEM
+// - Constraint Logic (canBlockFit) WITH STRICT DIVISION ISOLATION
 // - Helpers
 // ============================================================================
 
@@ -148,12 +148,20 @@
 
     // --- WEIGHT HELPER ---
     // Calculates how much "Space" an activity takes.
-    // Regular = 1
-    // League = MAX_CAPACITY (Hogs the whole field)
-    function getActivityWeight(activityName, maxCapacity) {
+    function calculateAssignmentWeight(activityName, assignmentObj, maxCapacity) {
+        // A) Deep Object Check
+        if (assignmentObj) {
+            if (assignmentObj._gameLabel || assignmentObj._allMatchups) {
+                return maxCapacity; 
+            }
+            if (assignmentObj._activity && String(assignmentObj._activity).toLowerCase().includes("league")) {
+                return maxCapacity;
+            }
+        }
+        // B) Simple String Check
         const s = String(activityName || "").toLowerCase();
         if (s.includes("league game") || s.includes("specialty league")) {
-            return maxCapacity; // Maxes out weight immediately
+            return maxCapacity;
         }
         return 1; // Regular activity
     }
@@ -220,7 +228,7 @@
             if (!props.available) return false;
         }
 
-        // PRE-SLOT LOOKBACK (Standard)
+        // PRE-SLOT LOOKBACK
         if (blockStartMin != null && block.slots && block.slots.length > 0) {
             const firstSlotIndex = block.slots[0];
             if (firstSlotIndex > 0) {
@@ -248,37 +256,58 @@
             }
         }
 
-        // --- MAIN SLOT LOOP (WEIGHTED LOGIC) ---
+        // --- MAIN SLOT LOOP ---
         for (const slotIndex of block.slots || []) {
             if (slotIndex === undefined) return false;
             const usage = fieldUsageBySlot[slotIndex]?.[fieldName] || { count: 0, divisions: [], bunks: {} };
             
+            // =========================================================
+            // *** CRITICAL FIX: INTER-DIVISION ISOLATION GUARD ***
+            // =========================================================
+            // If the field is currently used by ANY division that is NOT
+            // the same as the current block's division, we BLOCK IT.
+            // This prevents Division A and Division B from sharing a field.
+            if (usage.divisions && usage.divisions.length > 0) {
+                if (!usage.divisions.includes(block.divName)) {
+                    return false; // BLOCKED: Used by a different division
+                }
+            }
+            
             // 1. CALCULATE CURRENT WEIGHT
             let currentWeight = 0;
-            const existingActivities = Object.values(usage.bunks); // Array of activity names currently on field
+            const existingBunks = Object.keys(usage.bunks);
 
-            for (const act of existingActivities) {
-                const actStr = String(act).trim();
-                const propStr = String(proposedActivity || "").trim();
+            for (const existingBunk of existingBunks) {
+                const activityName = usage.bunks[existingBunk];
+                
+                // Deep Check Assignment
+                const actualAssignment = window.scheduleAssignments[existingBunk]?.[slotIndex];
 
-                // KEY LOGIC: If the activity matches EXACTLY (e.g. "League Game 1" == "League Game 1"),
-                // they are the SAME game, so they share the weight (don't add to it).
-                if (actStr.toLowerCase() === propStr.toLowerCase()) {
-                    continue; // Already accounted for by the proposed weight we will add next
+                if (existingBunk === block.bunk) continue;
+
+                // Check for Same League Game (Shared Weight)
+                const myLabel = block._gameLabel || (String(proposedActivity).includes("League") ? proposedActivity : null);
+                const theirLabel = actualAssignment?._gameLabel || actualAssignment?._activity;
+                
+                if (myLabel && theirLabel && String(myLabel) === String(theirLabel)) {
+                    continue; // Same game
                 }
 
-                currentWeight += getActivityWeight(actStr, maxCapacity);
+                currentWeight += calculateAssignmentWeight(activityName, actualAssignment, maxCapacity);
             }
 
             // 2. CALCULATE PROPOSED WEIGHT
-            const myWeight = getActivityWeight(proposedActivity, maxCapacity);
+            let myWeight = 1;
+            if (String(proposedActivity).toLowerCase().includes("league")) {
+                myWeight = maxCapacity;
+            }
 
             // 3. FINAL CHECK
             if (currentWeight + myWeight > maxCapacity) {
                 return false; // WEIGHT EXCEEDED
             }
             
-            // 4. HEADCOUNT (Secondary Check)
+            // 4. HEADCOUNT
             if (maxHeadcount !== Infinity) {
                 let currentHeadcount = 0;
                 Object.keys(usage.bunks).forEach(bName => {
@@ -292,10 +321,8 @@
         return true;
     };
 
-    // League Check (Uses same weight logic implicitly via strict 1-limit or empty check)
+    // League Check
     Utils.canLeagueGameFit = function(block, fieldName, fieldUsageBySlot, activityProperties) {
-        // This function is for the Leagues Core "Pass 3".
-        // It generally looks for empty fields.
         return Utils.canBlockFit(block, fieldName, activityProperties, fieldUsageBySlot, "League Game");
     };
 
