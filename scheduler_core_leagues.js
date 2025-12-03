@@ -155,7 +155,6 @@
 
                     let isFieldAvailable = true;
                     if (fieldName) {
-                        // TIMELINE CHECK: Pass isLeague=true for Full Buyout check
                         if (!window.SchedulerCoreUtils.canBlockFit(blockBase, fieldName, activityProperties, bestSport, true)) {
                             isFieldAvailable = false;
                         }
@@ -202,7 +201,6 @@
                 const pickToAssign = picksByTeam[bunk] || noGamePick;
                 pickToAssign._allMatchups = allMatchupLabels;
                 pickToAssign._gameLabel = gameLabel;
-                // PASS TRUE FOR IS_LEAGUE (Full Buyout)
                 fillBlock({ ...blockBase, bunk }, pickToAssign, {}, yesterdayHistory, true);
             });
         });
@@ -214,7 +212,7 @@
     Leagues.processRegularLeagues = function(context) {
         const {
             schedulableSlotBlocks, 
-            fieldUsageBySlot, // <--- ADDED THIS LINE (The Fix)
+            fieldUsageBySlot, // <--- THIS WAS MISSING BEFORE!
             activityProperties,
             masterLeagues, disabledLeagues, rotationHistory,
             yesterdayHistory, divisions, fieldsBySport, dailyLeagueSportsUsage,
@@ -257,7 +255,6 @@
             const allBunksInGroup = Array.from(group.bunks).sort();
             if (allBunksInGroup.length === 0) return;
 
-            // Find base division
             let baseDivName = null;
             const firstBunk = allBunksInGroup[0];
             baseDivName = Object.keys(divisions).find(div => (divisions[div].bunks || []).includes(firstBunk));
@@ -279,7 +276,6 @@
             const leagueTeamLastSport = rotationHistory.leagueTeamLastSport[leagueName] || {};
             rotationHistory.leagueTeamLastSport[leagueName] = leagueTeamLastSport;
 
-            // Generate Matchups
             let standardMatchups = [];
             if (typeof window.getLeagueMatchups === "function") {
                 standardMatchups = window.getLeagueMatchups(leagueName, leagueTeams) || [];
@@ -287,7 +283,6 @@
                 standardMatchups = Leagues.coreGetNextLeagueRound(leagueName, leagueTeams) || [];
             }
 
-            // Get Game Number
             let gameNumber = 1;
             if (typeof window.getLeagueCurrentRound === 'function') {
                  gameNumber = window.getLeagueCurrentRound(leagueName);
@@ -309,7 +304,7 @@
 
                 nonBye.forEach((pair, idx) => {
                     const [teamA, teamB] = pair;
-                    const preferredSport = assignments[idx]?.sport || (optimizerSports.length ? optimizerSports[idx % optimizerSports.length] : "League Game");
+                    const preferredSport = assignments[idx]?.sport || optimizerSports[idx % optimizerSports.length];
                     const candidateSports = [
                         preferredSport,
                         ...sports.filter(s => s !== preferredSport && !usedToday.has(s)),
@@ -326,10 +321,9 @@
                         const possibleFields = fieldsBySport[s] || [];
                         let found = null;
                         for (const f of possibleFields) {
-                            // HERE IS WHERE THE BUG WAS (fieldUsageBySlot was undefined)
                             if (!simUsedFields[slotIdx].has(f) &&
                                 (fieldUsageBySlot[slots[slotIdx]]?.[f]?.count || 0) === 0 &&
-                                window.SchedulerCoreUtils.canLeagueGameFit(blockBase, f, fieldUsageBySlot, activityProperties)) {
+                                window.SchedulerCoreUtils.canBlockFit(blockBase, f, activityProperties, s, true)) {
                                 found = f;
                                 break;
                             }
@@ -374,7 +368,7 @@
 
             winningMatchups.forEach((pair, idx) => {
                 const [teamA, teamB] = pair;
-                const preferredSport = finalOpt.assignments[idx]?.sport || (optimizerSports.length ? optimizerSports[idx % optimizerSports.length] : "League Game");
+                const preferredSport = finalOpt.assignments[idx]?.sport || optimizerSports[idx % optimizerSports.length];
                 const candidateSports = [
                     preferredSport,
                     ...sports.filter(s => s !== preferredSport && !usedToday.has(s)),
@@ -391,14 +385,14 @@
                     let found = null;
                     for (const f of possibleFields) {
                         if (!usedFieldsPerSlot[slotIdx].has(f) &&
-                            window.SchedulerCoreUtils.canLeagueGameFit(blockBase, f, fieldUsageBySlot, activityProperties)) {
+                            window.SchedulerCoreUtils.canBlockFit(blockBase, f, activityProperties, s, true)) {
                             found = f;
                             break;
                         }
                     }
                     if (!found && possibleFields.length > 0) {
                         const f = possibleFields[usedFieldsPerSlot[slotIdx].size % possibleFields.length];
-                        if (window.SchedulerCoreUtils.canLeagueGameFit(blockBase, f, fieldUsageBySlot, activityProperties)) {
+                        if (window.SchedulerCoreUtils.canBlockFit(blockBase, f, activityProperties, s, true)) {
                             found = f;
                         }
                     }
