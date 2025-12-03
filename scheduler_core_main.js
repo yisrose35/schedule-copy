@@ -181,6 +181,7 @@
                 schedulableSlotBlocks.push({ ...item, slots: allSlots, startMin, endMin, bunks: allBunks });
             } 
             else if (item.type === 'smart') {
+                // Ensure bunks are attached for the adapter
                 schedulableSlotBlocks.push({ ...item, slots: allSlots, startMin, endMin, bunks: allBunks });
             }
             else {
