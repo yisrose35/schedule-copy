@@ -7,6 +7,7 @@
 // - Specialty League Placement (Pass 2)
 // - Regular League Placement (Pass 2.5)
 // - UPDATED: Calls fillBlock with isLeague=true for Full Buyouts.
+// - FIX: Generates matchups even if no fields are defined (assigns "No Field").
 // ============================================================================
 
 (function() {
@@ -50,6 +51,10 @@
         matchups.forEach((pair, i) => {
             if (!pair || pair.includes("BYE")) {
                 assignments.push({ sport: null });
+                return;
+            }
+            if (!sports || sports.length === 0) {
+                assignments.push({ sport: "League Game" });
                 return;
             }
             const s = sports[i % sports.length];
@@ -97,6 +102,9 @@
                      !disabledSpecialtyLeagues.includes(l.name) &&
                      l.divisions.includes(group.divName)
             );
+            
+            // If no league config found, we can't schedule matchups.
+            // Consider logging this or handling graceful failure.
             if (!leagueEntry) return;
 
             const allBunksInGroup = Array.from(group.bunks);
@@ -107,10 +115,8 @@
                 endTime: group.endTime
             };
             const leagueName = leagueEntry.name;
-            const bestSport = leagueEntry.sport;
+            const bestSport = leagueEntry.sport || "Specialty League";
             
-            if (!bestSport) return;
-
             const leagueTeams = (leagueEntry.teams || []).map(t => String(t).trim()).filter(Boolean);
             let matchups = [];
             if (typeof window.getLeagueMatchups === 'function') {
@@ -131,8 +137,10 @@
             const picksByTeam = {};
 
             const leagueFields = leagueEntry.fields || [];
-            if (leagueFields.length !== 0 && leagueTeams.length >= 2) {
-                const gamesPerField = Math.ceil(matchups.length / leagueFields.length);
+            
+            // Generate matchups if we have teams, regardless of fields
+            if (leagueTeams.length >= 2) {
+                const gamesPerField = (leagueFields.length > 0) ? Math.ceil(matchups.length / leagueFields.length) : matchups.length;
                 const slotCount = group.slots.length || 1;
                 const usedFieldsInThisBlock = Array.from({ length: slotCount }, () => new Set());
 
@@ -140,17 +148,24 @@
                     const [teamA, teamB] = matchups[i];
                     if (teamA === "BYE" || teamB === "BYE") continue;
 
-                    const fieldIndex = Math.floor(i / gamesPerField);
-                    const fieldName = leagueFields[fieldIndex % leagueFields.length];
+                    let fieldName = null;
+                    if (leagueFields.length > 0) {
+                        const fieldIndex = Math.floor(i / gamesPerField);
+                        fieldName = leagueFields[fieldIndex % leagueFields.length];
+                    }
+                    
                     const baseLabel = `${teamA} vs ${teamB} (${bestSport})`;
 
                     let isFieldAvailable = true;
-                    
-                    // TIMELINE CHECK: Pass isLeague=true for Full Buyout check
-                    if (!window.SchedulerCoreUtils.canBlockFit(blockBase, fieldName, activityProperties, bestSport, true)) {
+                    if (fieldName) {
+                        // TIMELINE CHECK: Pass isLeague=true for Full Buyout check
+                        if (!window.SchedulerCoreUtils.canBlockFit(blockBase, fieldName, activityProperties, bestSport, true)) {
+                            isFieldAvailable = false;
+                        }
+                        if (usedFieldsInThisBlock[i % slotCount].has(fieldName)) isFieldAvailable = false;
+                    } else {
                         isFieldAvailable = false;
                     }
-                    if (usedFieldsInThisBlock[i % slotCount].has(fieldName)) isFieldAvailable = false;
 
                     let pick;
                     if (fieldName && isFieldAvailable) {
@@ -250,9 +265,10 @@
             if (!baseDivName) return;
 
             const blockBase = { slots, divName: baseDivName, startTime: group.startTime, endTime: group.endTime };
-            const sports = (league.sports || []).filter(s => fieldsBySport[s]);
-            if (sports.length === 0) return;
-
+            
+            // Allow processing even if no sports/fields are mapped yet
+            const sports = (league.sports || []);
+            
             const usedToday = dailyLeagueSportsUsage[leagueName] || new Set();
             let optimizerSports = sports.filter(s => !usedToday.has(s));
             if (optimizerSports.length === 0) optimizerSports = sports;
@@ -295,12 +311,15 @@
 
                 nonBye.forEach((pair, idx) => {
                     const [teamA, teamB] = pair;
-                    const preferredSport = assignments[idx]?.sport || optimizerSports[idx % optimizerSports.length];
+                    const preferredSport = assignments[idx]?.sport || (optimizerSports.length ? optimizerSports[idx % optimizerSports.length] : "League Game");
                     const candidateSports = [
                         preferredSport,
                         ...sports.filter(s => s !== preferredSport && !usedToday.has(s)),
                         ...sports.filter(s => s !== preferredSport && usedToday.has(s))
                     ];
+                    
+                    // Always try preferred sport if candidates are empty
+                    if (candidateSports.length === 0) candidateSports.push(preferredSport);
 
                     let foundField = null;
                     let foundSport = preferredSport;
@@ -357,12 +376,13 @@
 
             winningMatchups.forEach((pair, idx) => {
                 const [teamA, teamB] = pair;
-                const preferredSport = finalOpt.assignments[idx]?.sport || optimizerSports[idx % optimizerSports.length];
+                const preferredSport = finalOpt.assignments[idx]?.sport || (optimizerSports.length ? optimizerSports[idx % optimizerSports.length] : "League Game");
                 const candidateSports = [
                     preferredSport,
                     ...sports.filter(s => s !== preferredSport && !usedToday.has(s)),
                     ...sports.filter(s => s !== preferredSport && usedToday.has(s))
                 ];
+                if (candidateSports.length === 0) candidateSports.push(preferredSport);
 
                 let finalSport = preferredSport;
                 let finalField = null;
@@ -379,7 +399,7 @@
                         }
                     }
                     if (!found && possibleFields.length > 0) {
-                        // Fallback logic could go here, but with strict Timeline, we skip if full.
+                        // Fallback logic
                     }
                     if (found) {
                         finalSport = s;
@@ -424,7 +444,7 @@
                 const bunkADiv = Object.keys(divisions).find(div => (divisions[div].bunks || []).includes(bunkA)) || baseDivName;
                 const bunkBDiv = Object.keys(divisions).find(div => (divisions[div].bunks || []).includes(bunkB)) || baseDivName;
 
-                // PASS TRUE FOR IS_LEAGUE (Full Buyout)
+                // PASS TRUE FOR IS_LEAGUE
                 fillBlock({ slots, bunk: bunkA, divName: bunkADiv, startTime: group.startTime, endTime: group.endTime + INCREMENT_MINS * slots.length }, pick, {}, yesterdayHistory, true);
                 fillBlock({ slots, bunk: bunkB, divName: bunkBDiv, startTime: group.startTime, endTime: group.endTime + INCREMENT_MINS * slots.length }, pick, {}, yesterdayHistory, true);
             });
