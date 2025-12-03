@@ -1,6 +1,5 @@
 // ===================================================================
-// leagues.js  — THEMED VERSION
-// Matches style of fields.js (Cards, Gradients, Pills)
+// leagues.js  — THEMED VERSION (Emerald Jade Theme)
 // ===================================================================
 
 (function () {
@@ -78,7 +77,6 @@
             const input = document.createElement('input');
             input.type = 'text';
             input.value = oldText;
-            // Match the pill style for input
             Object.assign(input.style, {
                 fontSize: 'inherit',
                 fontWeight: 'inherit',
@@ -139,17 +137,14 @@
         return `${h12}:${m} ${ap}`;
     }
 
-    // Robust Slot Finder: Finds a slot that INTERSECTS the time
     function findSlotIndexForTime(targetMin) {
         const times = window.unifiedTimes || [];
-        // Default incremental check if unifiedTimes isn't perfectly granular
         const INCREMENT_MINS = window.INCREMENT_MINS || 30; 
 
         for (let i = 0; i < times.length; i++) {
             const d = new Date(times[i].start);
             const slotStart = d.getHours() * 60 + d.getMinutes();
             
-            // Calculate slot end (use data or fallback to increment)
             let slotEnd;
             if (times[i].end) {
                  const e = new Date(times[i].end);
@@ -158,7 +153,6 @@
                  slotEnd = slotStart + INCREMENT_MINS;
             }
 
-            // Check if targetMin falls inside this slot
             if (targetMin >= slotStart && targetMin < slotEnd) {
                 return i;
             }
@@ -177,7 +171,6 @@
         loadLeaguesData();
         loadRoundState();
 
-        // THEME-CONSISTENT LAYOUT (Matches Fields Tab)
         container.innerHTML = `
             <div class="setup-grid">
                 <section class="setup-card setup-card-wide">
@@ -199,7 +192,7 @@
 
                             <div class="setup-field-row" style="margin-top:10px;">
                                 <input id="new-league-input" placeholder="New League Name (e.g. Senior Basketball)">
-                                <button id="add-league-btn">Add League</button>
+                                <button id="add-league-btn" style="background: #00C896; color: white; border-color: #00C896; font-weight:600;">Add League</button>
                             </div>
 
                             <div id="league-master-list" class="master-list"
@@ -222,7 +215,6 @@
             </div>
 
             <style>
-                /* Reuse the "Pro" look from Fields tab */
                 .master-list {
                     border-radius: 18px;
                     border: 1px solid #E5E7EB;
@@ -248,10 +240,11 @@
                     box-shadow: 0 8px 18px rgba(15, 23, 42, 0.10);
                     transform: translateY(-1px);
                 }
+                /* EMERALD JADE SELECTION */
                 .master-list .list-item.selected {
-                    background: radial-gradient(circle at top left, #E1ECFF 0, #FFFFFF 70%);
-                    border-color: #2563EB;
-                    box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.45);
+                    background: radial-gradient(circle at top left, #ECFDF5 0, #FFFFFF 70%);
+                    border-color: #00C896;
+                    box-shadow: 0 0 0 1px rgba(0, 200, 150, 0.55);
                     font-weight: 600;
                 }
                 .master-list .list-item-name {
@@ -259,7 +252,6 @@
                     font-weight: 500;
                     color: #111827;
                 }
-
                 .detail-pane {
                     border-radius: 18px;
                     border: 1px solid #E5E7EB;
@@ -267,8 +259,6 @@
                     background: linear-gradient(135deg, #F7F9FA 0%, #FFFFFF 55%, #F7F9FA 100%);
                     box-shadow: 0 18px 40px rgba(15,23,42,0.06);
                 }
-
-                /* Inner Sections (Cards) */
                 .league-section-card {
                     border-radius: 16px;
                     border: 1px solid #E5E7EB;
@@ -288,8 +278,6 @@
                     color: #6B7280;
                 }
                 .league-section-title { font-weight: 600; }
-                
-                /* Chips */
                 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
                 .chip {
                     padding: 4px 10px;
@@ -300,24 +288,24 @@
                     background: #f8fafc;
                     transition: all 0.15s ease;
                 }
+                /* EMERALD JADE CHIPS */
                 .chip.active {
-                    background: #2563EB;
-                    border-color: #2563EB;
+                    background: #00C896;
+                    border-color: #00C896;
                     color: #fff;
-                    box-shadow: 0 3px 8px rgba(37, 99, 235, 0.3);
+                    box-shadow: 0 3px 8px rgba(0, 200, 150, 0.35);
                 }
-
-                /* Game Entry Styles */
+                /* EMERALD JADE HEADERS */
                 .group-header {
-                    background: #DBEAFE;
+                    background: #ECFDF5;
                     padding: 8px 12px;
                     font-weight: 700;
                     font-size: 0.85rem;
-                    color: #1E40AF;
+                    color: #064E3B;
                     border-radius: 8px;
                     margin-top: 15px;
                     margin-bottom: 8px;
-                    border-left: 4px solid #2563EB;
+                    border-left: 4px solid #00C896;
                 }
                 .match-row {
                     transition: background 0.15s ease, transform 0.12s ease;
@@ -461,24 +449,35 @@
         btnGroup.style.display = 'flex';
         btnGroup.style.gap = '8px';
 
+        // NEUTRAL BUTTON
         const editConfigBtn = document.createElement('button');
         editConfigBtn.textContent = 'Edit Setup';
         Object.assign(editConfigBtn.style, {
-            background: '#ffffff',
-            color: '#4B5563',
+            background: '#FFFFFF',
+            color: '#111827',
             border: '1px solid #D1D5DB',
-            fontWeight: '500'
+            borderRadius: '999px',
+            fontWeight: '500',
+            cursor: 'pointer',
+            padding: '6px 14px'
         });
 
+        // DELETE BUTTON
         const delBtn = document.createElement('button');
         delBtn.textContent = 'Delete';
         Object.assign(delBtn.style, {
-            background: '#ffffff',
+            background: '#FFFFFF',
             color: '#DC2626',
-            border: '1px solid #FECACA'
+            border: '1px solid #FECACA',
+            borderRadius: '999px',
+            cursor: 'pointer',
+            fontWeight: '600',
+            fontSize: '0.85rem',
+            padding: '6px 14px',
+            boxShadow: '0 4px 10px rgba(220,38,38,0.18)'
         });
-        delBtn.onmouseenter = () => delBtn.style.background = '#FEE2E2';
-        delBtn.onmouseleave = () => delBtn.style.background = '#ffffff';
+        delBtn.onmouseenter = () => { delBtn.style.background = '#FEE2E2'; };
+        delBtn.onmouseleave = () => { delBtn.style.background = '#FFFFFF'; };
 
         delBtn.onclick = () => {
             if (confirm(`Delete league "${selectedLeagueName}"?`)) {
@@ -659,10 +658,26 @@
         const btnStd = tabNav.querySelector('#tab-standings');
         const btnGms = tabNav.querySelector('#tab-games');
 
-        // Style helper
+        // Style helper: Jade / Emerald Theme
         const setTab = (activeBtn, inactiveBtn) => {
-            Object.assign(activeBtn.style, { background: '#2563EB', color: 'white', borderColor: '#2563EB' });
-            Object.assign(inactiveBtn.style, { background: '#ffffff', color: '#111827', borderColor: '#D1D5DB' });
+            // Active: Emerald Jade
+            Object.assign(activeBtn.style, { 
+                background: '#00C896', 
+                color: 'white', 
+                borderColor: '#00C896',
+                borderRadius: '999px',
+                padding: '8px 16px',
+                boxShadow: '0 3px 8px rgba(0, 200, 150, 0.35)'
+            });
+            // Inactive
+            Object.assign(inactiveBtn.style, { 
+                background: '#F3F4F6', 
+                color: '#111827', 
+                borderColor: '#D1D5DB',
+                borderRadius: '999px',
+                padding: '8px 16px',
+                boxShadow: 'none'
+            });
         };
         
         // Initial State
@@ -725,13 +740,12 @@
 
         sortedTeams.forEach((team, idx) => {
             const stats = league.standings[team] || { w: 0, l: 0, t: 0 };
-            // Subtle striping handled by CSS or manually here
             const borderBottom = idx < sortedTeams.length - 1 ? '1px solid #F3F4F6' : 'none';
             html += `
                 <tr>
                     <td style="padding:12px 16px; border-bottom:${borderBottom}; font-weight:600; color:#111827;">${idx + 1}${getPlaceSuffix(idx + 1)}</td>
                     <td style="padding:12px 16px; border-bottom:${borderBottom}; font-weight:500;">${team}</td>
-                    <td style="padding:12px; border-bottom:${borderBottom}; text-align:center; color:#16A34A; font-weight:600;">${stats.w}</td>
+                    <td style="padding:12px; border-bottom:${borderBottom}; text-align:center; color:#059669; font-weight:600;">${stats.w}</td>
                     <td style="padding:12px; border-bottom:${borderBottom}; text-align:center; color:#DC2626;">${stats.l}</td>
                     <td style="padding:12px; border-bottom:${borderBottom}; text-align:center; color:#6B7280;">${stats.t}</td>
                 </tr>
@@ -772,11 +786,13 @@
 
         const importBtn = document.createElement('button');
         importBtn.textContent = "Import Today's Schedule";
+        // EMERALD JADE BUTTON
         Object.assign(importBtn.style, {
-            background: '#2563EB',
+            background: '#00C896',
             color: 'white',
-            borderColor: '#2563EB',
-            boxShadow: '0 2px 4px rgba(37,99,235,0.2)'
+            borderColor: '#00C896',
+            boxShadow: '0 2px 4px rgba(0, 200, 150, 0.3)',
+            fontWeight: '600'
         });
 
         controls.appendChild(select);
@@ -785,21 +801,23 @@
         const matchContainer = document.createElement('div');
         matchContainer.style.maxHeight = '420px';
         matchContainer.style.overflowY = 'auto';
-        matchContainer.style.padding = '4px'; // Spacing for hover effects
+        matchContainer.style.padding = '4px';
 
         container.appendChild(controls);
         container.appendChild(matchContainer);
 
         const saveBtn = document.createElement('button');
         saveBtn.textContent = 'Save Game Results';
+        // EMERALD JADE BUTTON
         Object.assign(saveBtn.style, {
             marginTop: '15px',
             width: '100%',
-            background: '#16A34A',
+            background: '#00C896',
             color: 'white',
-            borderColor: '#16A34A',
-            display: 'none', // Hidden until matches exist
-            fontWeight: '600'
+            borderColor: '#00C896',
+            display: 'none',
+            fontWeight: '600',
+            boxShadow: '0 3px 8px rgba(0, 200, 150, 0.35)'
         });
         saveBtn.dataset.role = 'save-game-results';
         saveBtn.onclick = () => saveGameResults(league, select.value, matchContainer);
@@ -883,12 +901,11 @@
     }
 
     // =================================================================
-    // IMPORT FROM SCHEDULE (FIXED: Game # Extraction & 2nd Game)
+    // IMPORT FROM SCHEDULE
     // =================================================================
     function importGamesFromSchedule(league, target) {
         target.innerHTML = '';
         
-        // 1. Get Core Data
         const daily = window.loadCurrentDailyData?.() || {};
         const skeleton = daily.manualSkeleton || [];
         const assignments = daily.scheduleAssignments || {};
@@ -901,7 +918,6 @@
             return;
         }
         
-        // 2. Scan Skeleton: LEAGUE blocks in this DIVISION
         const relevantBlocks = skeleton.filter(block => {
             return league.divisions.includes(block.division) &&
                    block.event.toLowerCase().includes("league game");
@@ -914,7 +930,6 @@
 
         const gamesFound = {}; 
 
-        // 3. Process Each Block
         relevantBlocks.forEach(block => {
             const startMin = parseTimeToMinutes(block.startTime);
             const slotIdx = findSlotIndexForTime(startMin);
@@ -928,30 +943,21 @@
 
             if (!entry) return;
 
-            // --- HEADER LABEL EXTRACTION ---
-            let headerLabel = block.event; // Default "League Game"
-            
-            // Try to find "Game X" inside the TEXT first (Visual Priority)
+            let headerLabel = block.event; 
             const rawText = (typeof entry.field === 'string') ? entry.field : (entry.sport || "");
-            
-            // Regex: Look for "Game 5" or "Match 5" inside the text or the block name
             const textMatch = rawText.match(/(?:Game|Match)\s*(\d+)/i) || headerLabel.match(/(?:Game|Match)\s*(\d+)/i);
             const hiddenMatch = entry._gameLabel || entry.gameLabel;
 
             if (textMatch) {
-                // If text says "Game 5", force header to "League Game 5"
                 headerLabel = `League Game ${textMatch[1]}`;
             } else if (hiddenMatch) {
-                // If hidden data says "Game 5", use that
                 headerLabel = `League Game ${hiddenMatch.replace(/^\D+/g, '')}`; 
             } else {
-                // Fallback: If generic, append TIME to keep multiple games separate
                 if (headerLabel.trim().toLowerCase() === "league game") {
                     headerLabel = `${headerLabel} (${minutesToTimeLabel(startMin)})`;
                 }
             }
 
-            // --- TEXT PARSING ---
             let linesToScan = [];
             if (entry._allMatchups && Array.isArray(entry._allMatchups) && entry._allMatchups.length > 0) {
                 linesToScan = entry._allMatchups;
@@ -983,7 +989,6 @@
             });
         });
 
-        // 4. Render Results
         const groupNames = Object.keys(gamesFound).sort((a,b) => 
             a.localeCompare(b, undefined, {numeric: true})
         );
