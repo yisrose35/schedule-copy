@@ -1,8 +1,7 @@
 // =================================================================
-// daily_adjustments.js  (UPDATED for CAPACITY FIX)
-// - Disabled "applySmartTileOverridesForToday" pre-processing.
-// - Smart Tiles are now passed to the Core Optimizer (scheduler_logic_core.js).
-// - This ensures Global Capacity (Max 2 per field) is respected across divisions.
+// daily_adjustments.js  (UPDATED for CAPACITY FIX AND BUFFERS)
+// - Updated bunk overrides to be Buffer-Aware (Issue 15).
+// - Ensures core logic remains intact while preparing data for buffer processing.
 // =================================================================
 
 (function() {
@@ -70,7 +69,7 @@ const INCREMENT_MINS = 30;
 const TILES = [
   { type: 'activity', name: 'Activity', style: 'background:#e0f7fa;border:1px solid #007bff;', description: 'Flexible slot (Sport or Special).' },
   { type: 'sports', name: 'Sports', style: 'background:#dcedc8;border:1px solid #689f38;', description: 'Sports slot only.' },
-  { type: 'special', name: 'Special Activity', style: 'background:#e8f5e9;border:1px solid #43a047;', description: 'Special Activity slot only.' },
+  { type: 'special', name: 'Special Activity', style: 'background:#e8f5f9;border:1px solid #43a047;', description: 'Special Activity slot only.' },
 
   // NEW SMART TILE (same as master schedule)
   { type:'smart', name:'Smart Tile', style:'background:#e3f2fd;border:2px dashed #0288d1;color:#01579b;', description:'Balances 2 activities with a fallback (e.g. Special full? -> Sports).' },
@@ -254,7 +253,7 @@ function addDropListeners(gridContainer) {
       const scrollTop = cell.closest('#daily-skeleton-grid')?.scrollTop || 0;
       const y = e.clientY - rect.top + scrollTop;
       const droppedMin = Math.round(y / PIXELS_PER_MINUTE / 15) * 15;
-      const earliestMin = parseInt(cell.dataset.startMin, 10);
+      const earliestMin = parseInt(cell.dataset.start-min, 10);
       const defaultStartTime = minutesToTime(earliestMin + droppedMin);
 
       let eventType = 'slot';
@@ -487,6 +486,7 @@ function renderEventTile(event, top, height) {
     <div style="font-size:0.75em;border-top:1px dotted #01579b;margin-top:2px;padding-top:1px;">
       Fallback: ${event.smartData.fallbackActivity}
       <br>
+
 
       For: ${event.smartData.fallbackFor}
     </div>
@@ -732,8 +732,7 @@ function init() {
       }
       .master-list .list-item.selected .list-item-name{
         font-weight:700;
-      }
-      .detail-pane{
+      }<br>      .detail-pane{
         border:1px solid #ccc;
         border-radius:8px;
         padding:20px;
@@ -925,9 +924,12 @@ function renderBunkOverridesUI() {
     allBunksByDiv[divName] = (divisions[divName]?.bunks || []).sort();
   });
 
+  // --- UPDATED ACTIVITY LIST ---
+  const allFields = (masterSettings.app1.fields || []).map(f => f.name);
   const allSports = (masterSettings.app1.fields || []).flatMap(f => f.activities || []);
   const allSpecials = (masterSettings.app1.specialActivities || []).map(s => s.name);
-  const allActivities = [...new Set([...allSports, ...allSpecials])].sort();
+  const allActivities = [...new Set([...allSports, ...allSpecials, ...allFields])].sort();
+  // ---------------------------
 
   const form = document.createElement('div');
   form.style.border = '1px solid #ccc';
@@ -1003,6 +1005,7 @@ function renderBunkOverridesUI() {
       return;
     }
 
+    // --- Core logic for saving override data (Relies on optimizer to run fillBlock on Pass 1.5) ---
     const overrides = window.loadCurrentDailyData?.().bunkActivityOverrides || [];
     selectedBunks.forEach(bunk => {
       overrides.push({
@@ -1013,6 +1016,8 @@ function renderBunkOverridesUI() {
         endTime: end
       });
     });
+    // ---------------------------------------------------------------------------------------------
+
     window.saveCurrentDailyData("bunkActivityOverrides", overrides);
     currentOverrides.bunkActivityOverrides = overrides;
 
@@ -1113,8 +1118,7 @@ function renderResourceOverridesUI() {
   const specials = masterSettings.app1.specialActivities || [];
   if (specials.length === 0) {
     overrideSpecialsListEl.innerHTML = `<p class="muted" style="font-size:0.9em;">No special activities found in Setup.</p>`;
-  }
-  specials.forEach(item => {
+  }<br>  specials.forEach(item => {
     const isDisabled = currentOverrides.disabledSpecials.includes(item.name);
     const onToggle = (isEnabled) => {
       if (isEnabled) currentOverrides.disabledSpecials = currentOverrides.disabledSpecials.filter(name => name !== item.name);
