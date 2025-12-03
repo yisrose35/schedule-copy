@@ -1,12 +1,12 @@
 // ============================================================================
 // scheduler_core_leagues.js
-// PART 2 of 3: THE SPECIALIST
+// PART 2 of 3: THE SPECIALIST (TIMELINE EDITION)
 //
 // Role:
 // - League Matchmaking Math (Round Robin, Shuffling)
-// - Specialty League Placement (Pass 3)
-// - Regular League Placement (Pass 3.5)
-// - Game Number Calculation
+// - Specialty League Placement (Pass 2)
+// - Regular League Placement (Pass 2.5)
+// - UPDATED: Calls fillBlock with isLeague=true for Full Buyouts.
 // ============================================================================
 
 (function() {
@@ -40,7 +40,6 @@
     };
 
     Leagues.coreGetNextLeagueRound = function(leagueName, teams) {
-        // Randomize matchups per slot so we don't repeat same pairings immediately
         const shuffled = teams.slice();
         Leagues.shuffleArray(shuffled);
         return Leagues.pairRoundRobin(shuffled);
@@ -64,11 +63,11 @@
     };
 
     // =================================================================
-    // 2. PASS 3: SPECIALTY LEAGUES
+    // 2. PASS 2: SPECIALTY LEAGUES
     // =================================================================
     Leagues.processSpecialtyLeagues = function(context) {
         const {
-            schedulableSlotBlocks, fieldUsageBySlot, activityProperties,
+            schedulableSlotBlocks, activityProperties,
             masterSpecialtyLeagues, disabledSpecialtyLeagues, rotationHistory,
             yesterdayHistory, fillBlock
         } = context;
@@ -108,8 +107,6 @@
                 endTime: group.endTime
             };
             const leagueName = leagueEntry.name;
-            const leagueHistory = rotationHistory.leagues[leagueName] || {};
-            rotationHistory.leagues[leagueName] = leagueHistory;
             const bestSport = leagueEntry.sport;
             
             if (!bestSport) return;
@@ -148,15 +145,12 @@
                     const baseLabel = `${teamA} vs ${teamB} (${bestSport})`;
 
                     let isFieldAvailable = true;
-                    const slotIndex = group.slots[i % slotCount];
-
-                    // Core Check:
-                    if (fieldUsageBySlot[slotIndex]?.[fieldName]?.count >= 1) isFieldAvailable = false;
-                    if (usedFieldsInThisBlock[i % slotCount].has(fieldName)) isFieldAvailable = false;
                     
-                    if (activityProperties[fieldName]) {
-                        if (!window.SchedulerCoreUtils.isTimeAvailable(slotIndex, activityProperties[fieldName])) isFieldAvailable = false;
+                    // TIMELINE CHECK: Pass isLeague=true for Full Buyout check
+                    if (!window.SchedulerCoreUtils.canBlockFit(blockBase, fieldName, activityProperties, bestSport, true)) {
+                        isFieldAvailable = false;
                     }
+                    if (usedFieldsInThisBlock[i % slotCount].has(fieldName)) isFieldAvailable = false;
 
                     let pick;
                     if (fieldName && isFieldAvailable) {
@@ -167,12 +161,6 @@
                             vs: null,
                             _activity: bestSport
                         };
-                        // Mark usage directly or let fillBlock do it? 
-                        // We must mark it here to prevent re-use within the loop
-                        if (fieldName && window.allSchedulableNames.includes(fieldName)) {
-                             // This is a temporary mark to prevent collision in THIS loop
-                             // The actual mark happens in fillBlock usually
-                        }
                         usedFieldsInThisBlock[i % slotCount].add(fieldName);
                         allMatchupLabels.push(`${baseLabel} @ ${fieldName}`);
                     } else {
@@ -202,17 +190,18 @@
                 const pickToAssign = picksByTeam[bunk] || noGamePick;
                 pickToAssign._allMatchups = allMatchupLabels;
                 pickToAssign._gameLabel = gameLabel;
-                fillBlock({ ...blockBase, bunk }, pickToAssign, fieldUsageBySlot, yesterdayHistory, true);
+                // PASS TRUE FOR IS_LEAGUE (Full Buyout)
+                fillBlock({ ...blockBase, bunk }, pickToAssign, {}, yesterdayHistory, true);
             });
         });
     };
 
     // =================================================================
-    // 3. PASS 3.5: REGULAR LEAGUES
+    // 3. PASS 2.5: REGULAR LEAGUES
     // =================================================================
     Leagues.processRegularLeagues = function(context) {
         const {
-            schedulableSlotBlocks, fieldUsageBySlot, activityProperties,
+            schedulableSlotBlocks, activityProperties,
             masterLeagues, disabledLeagues, rotationHistory,
             yesterdayHistory, divisions, fieldsBySport, dailyLeagueSportsUsage,
             fillBlock
@@ -260,7 +249,7 @@
             baseDivName = Object.keys(divisions).find(div => (divisions[div].bunks || []).includes(firstBunk));
             if (!baseDivName) return;
 
-            const blockBase = { slots, divName: baseDivName, endTime: group.endTime };
+            const blockBase = { slots, divName: baseDivName, startTime: group.startTime, endTime: group.endTime };
             const sports = (league.sports || []).filter(s => fieldsBySport[s]);
             if (sports.length === 0) return;
 
@@ -321,9 +310,9 @@
                         const possibleFields = fieldsBySport[s] || [];
                         let found = null;
                         for (const f of possibleFields) {
+                            // Timeline Check via canBlockFit
                             if (!simUsedFields[slotIdx].has(f) &&
-                                (fieldUsageBySlot[slots[slotIdx]]?.[f]?.count || 0) === 0 &&
-                                window.SchedulerCoreUtils.canLeagueGameFit(blockBase, f, fieldUsageBySlot, activityProperties)) {
+                                window.SchedulerCoreUtils.canBlockFit(blockBase, f, activityProperties, s, true)) {
                                 found = f;
                                 break;
                             }
@@ -384,16 +373,13 @@
                     let found = null;
                     for (const f of possibleFields) {
                         if (!usedFieldsPerSlot[slotIdx].has(f) &&
-                            window.SchedulerCoreUtils.canLeagueGameFit(blockBase, f, fieldUsageBySlot, activityProperties)) {
+                            window.SchedulerCoreUtils.canBlockFit(blockBase, f, activityProperties, s, true)) {
                             found = f;
                             break;
                         }
                     }
                     if (!found && possibleFields.length > 0) {
-                        const f = possibleFields[usedFieldsPerSlot[slotIdx].size % possibleFields.length];
-                        if (window.SchedulerCoreUtils.canLeagueGameFit(blockBase, f, fieldUsageBySlot, activityProperties)) {
-                            found = f;
-                        }
+                        // Fallback logic could go here, but with strict Timeline, we skip if full.
                     }
                     if (found) {
                         finalSport = s;
@@ -405,8 +391,6 @@
 
                 let label = finalField ? `${teamA} vs ${teamB} (${finalSport}) @ ${finalField}` : `${teamA} vs ${teamB} (No Field)`;
                 if (finalField) {
-                    // Mark manually so it persists
-                    // (Logic normally handled in fillBlock, but we need to mark daily usage set)
                     if (!dailyLeagueSportsUsage[leagueName]) dailyLeagueSportsUsage[leagueName] = new Set();
                     dailyLeagueSportsUsage[leagueName].add(finalSport);
                 }
@@ -440,15 +424,16 @@
                 const bunkADiv = Object.keys(divisions).find(div => (divisions[div].bunks || []).includes(bunkA)) || baseDivName;
                 const bunkBDiv = Object.keys(divisions).find(div => (divisions[div].bunks || []).includes(bunkB)) || baseDivName;
 
-                fillBlock({ slots, bunk: bunkA, divName: bunkADiv, startTime: group.startTime, endTime: group.endTime + INCREMENT_MINS * slots.length }, pick, fieldUsageBySlot, yesterdayHistory, true);
-                fillBlock({ slots, bunk: bunkB, divName: bunkBDiv, startTime: group.startTime, endTime: group.endTime + INCREMENT_MINS * slots.length }, pick, fieldUsageBySlot, yesterdayHistory, true);
+                // PASS TRUE FOR IS_LEAGUE (Full Buyout)
+                fillBlock({ slots, bunk: bunkA, divName: bunkADiv, startTime: group.startTime, endTime: group.endTime + INCREMENT_MINS * slots.length }, pick, {}, yesterdayHistory, true);
+                fillBlock({ slots, bunk: bunkB, divName: bunkBDiv, startTime: group.startTime, endTime: group.endTime + INCREMENT_MINS * slots.length }, pick, {}, yesterdayHistory, true);
             });
 
             while (bunkPtr < allBunksInGroup.length) {
                 const leftoverBunk = allBunksInGroup[bunkPtr++];
                 const bunkDivName = Object.keys(divisions).find(div => (divisions[div].bunks || []).includes(leftoverBunk)) || baseDivName;
                 const leftoverPick = { ...noGamePick, _gameLabel: gameLabel };
-                fillBlock({ slots, bunk: leftoverBunk, divName: bunkDivName, startTime: group.startTime, endTime: group.endTime + INCREMENT_MINS * slots.length }, leftoverPick, fieldUsageBySlot, yesterdayHistory, true);
+                fillBlock({ slots, bunk: leftoverBunk, divName: bunkDivName, startTime: group.startTime, endTime: group.endTime + INCREMENT_MINS * slots.length }, leftoverPick, {}, yesterdayHistory, true);
             }
         });
     };
