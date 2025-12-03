@@ -924,7 +924,7 @@ function renderBunkOverridesUI() {
     allBunksByDiv[divName] = (divisions[divName]?.bunks || []).sort();
   });
 
-  // --- UPDATED ACTIVITY LIST ---
+  // --- UPDATED ACTIVITY LIST (Includes Field Names) ---
   const allFields = (masterSettings.app1.fields || []).map(f => f.name);
   const allSports = (masterSettings.app1.fields || []).flatMap(f => f.activities || []);
   const allSpecials = (masterSettings.app1.specialActivities || []).map(s => s.name);
@@ -943,7 +943,7 @@ function renderBunkOverridesUI() {
   });
 
   form.innerHTML = `
-    <label for="bunk-override-activity" style="display:block;margin-bottom:5px;font-weight:600;">Activity:</label>
+    <label for="bunk-override-activity" style="display:block;margin-bottom:5px;font-weight:600;">Activity / Field:</label>
     <select id="bunk-override-activity" style="width:250px;padding:5px;font-size:1em;">${activityOptions}</select>
 
     <label for="bunk-override-start" style="display:block;margin-top:10px;font-weight:600;">Start Time:</label>
