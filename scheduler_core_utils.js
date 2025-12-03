@@ -4,7 +4,7 @@
 //
 // Role:
 // - Data Loading
-// - Constraint Logic (canBlockFit) WITH STRICT DIVISION ISOLATION
+// - Constraint Logic (canBlockFit) WITH HARD LEAGUE LOCK
 // - Helpers
 // ============================================================================
 
@@ -146,22 +146,27 @@
         return isAvailable;
     };
 
-    // --- WEIGHT HELPER ---
-    // Calculates how much "Space" an activity takes.
-    function calculateAssignmentWeight(activityName, assignmentObj, maxCapacity) {
-        // A) Deep Object Check
+    // --- LEAGUE HELPER ---
+    // Detects if an assignment is a League Game (Deep Check)
+    function isLeagueAssignment(assignmentObj, activityName) {
+        // 1. Deep Object Check (Priority)
         if (assignmentObj) {
-            if (assignmentObj._gameLabel || assignmentObj._allMatchups) {
-                return maxCapacity; 
-            }
-            if (assignmentObj._activity && String(assignmentObj._activity).toLowerCase().includes("league")) {
-                return maxCapacity;
-            }
+            // It's a league if it has a Game Label or Matchups (populated by Leagues Core)
+            if (assignmentObj._gameLabel || assignmentObj._allMatchups) return true;
+            // Or if the internal activity string says so
+            if (assignmentObj._activity && String(assignmentObj._activity).toLowerCase().includes("league")) return true;
         }
-        // B) Simple String Check
+        // 2. Name Check (Fallback)
         const s = String(activityName || "").toLowerCase();
-        if (s.includes("league game") || s.includes("specialty league")) {
-            return maxCapacity;
+        if (s.includes("league game") || s.includes("specialty league")) return true;
+        
+        return false;
+    }
+
+    // --- WEIGHT HELPER ---
+    function calculateAssignmentWeight(activityName, assignmentObj, maxCapacity) {
+        if (isLeagueAssignment(assignmentObj, activityName)) {
+            return maxCapacity; // Maxes out weight immediately
         }
         return 1; // Regular activity
     }
@@ -172,7 +177,6 @@
         const props = activityProperties[fieldName];
         if (!props) return true;
 
-        // 1. Determine Max Capacity (The "Limit")
         let maxCapacity = 1;
         if (props.sharableWith) {
             if (props.sharableWith.capacity) maxCapacity = parseInt(props.sharableWith.capacity);
@@ -261,53 +265,61 @@
             if (slotIndex === undefined) return false;
             const usage = fieldUsageBySlot[slotIndex]?.[fieldName] || { count: 0, divisions: [], bunks: {} };
             
-            // =========================================================
-            // *** CRITICAL FIX: INTER-DIVISION ISOLATION GUARD ***
-            // =========================================================
-            // If the field is currently used by ANY division that is NOT
-            // the same as the current block's division, we BLOCK IT.
-            // This prevents Division A and Division B from sharing a field.
+            // 1. DIVISION ISOLATION GUARD
+            // If field is used by a DIFFERENT division, block it completely.
             if (usage.divisions && usage.divisions.length > 0) {
                 if (!usage.divisions.includes(block.divName)) {
-                    return false; // BLOCKED: Used by a different division
+                    return false; // BLOCKED: Inter-division sharing not allowed
                 }
             }
-            
-            // 1. CALCULATE CURRENT WEIGHT
+
             let currentWeight = 0;
             const existingBunks = Object.keys(usage.bunks);
+
+            // Determine if PROPOSED activity is a League
+            const myProposedObj = { _gameLabel: block._gameLabel, _activity: proposedActivity };
+            const proposedIsLeague = isLeagueAssignment(myProposedObj, proposedActivity);
 
             for (const existingBunk of existingBunks) {
                 const activityName = usage.bunks[existingBunk];
                 
-                // Deep Check Assignment
+                // Fetch the actual assignment object to check for League Flags (_gameLabel)
                 const actualAssignment = window.scheduleAssignments[existingBunk]?.[slotIndex];
 
                 if (existingBunk === block.bunk) continue;
 
-                // Check for Same League Game (Shared Weight)
+                // Check Identity (Same Game?)
                 const myLabel = block._gameLabel || (String(proposedActivity).includes("League") ? proposedActivity : null);
                 const theirLabel = actualAssignment?._gameLabel || actualAssignment?._activity;
-                
-                if (myLabel && theirLabel && String(myLabel) === String(theirLabel)) {
-                    continue; // Same game
+                const isSameGame = (myLabel && theirLabel && String(myLabel) === String(theirLabel));
+
+                const existingIsLeague = isLeagueAssignment(actualAssignment, activityName);
+
+                // --- HARD LOCK: LEAGUE EXCLUSIVITY ---
+                // A) If existing activity is a League (and we aren't part of it), LOCK THE FIELD.
+                if (existingIsLeague && !isSameGame) {
+                    return false; 
+                }
+                // B) If proposed activity is a League (and existing isn't part of it), WE NEED EMPTY FIELD.
+                if (proposedIsLeague && !isSameGame) {
+                    return false;
                 }
 
-                currentWeight += calculateAssignmentWeight(activityName, actualAssignment, maxCapacity);
+                // If not locked, accumulate weight
+                if (!isSameGame) {
+                    currentWeight += calculateAssignmentWeight(activityName, actualAssignment, maxCapacity);
+                }
             }
 
-            // 2. CALCULATE PROPOSED WEIGHT
+            // 2. Final Weight Check
             let myWeight = 1;
-            if (String(proposedActivity).toLowerCase().includes("league")) {
-                myWeight = maxCapacity;
-            }
+            if (proposedIsLeague) myWeight = maxCapacity;
 
-            // 3. FINAL CHECK
             if (currentWeight + myWeight > maxCapacity) {
                 return false; // WEIGHT EXCEEDED
             }
             
-            // 4. HEADCOUNT
+            // 3. Headcount Check
             if (maxHeadcount !== Infinity) {
                 let currentHeadcount = 0;
                 Object.keys(usage.bunks).forEach(bName => {
