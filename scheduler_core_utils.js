@@ -69,14 +69,10 @@
             });
 
             // 3. Sort Points
-            // If times equal, process 'end' before 'start' to prevent false overlap at boundaries?
-            // User requested: "Start right away no buffer". 
-            // If A ends at 10:00 and B starts at 10:00, count should drop then rise.
-            // So Sort: Time ASC, then End (-1) before Start (+1)
             points.sort((a, b) => {
                 if (a.time !== b.time) return a.time - b.time;
                 // If times match: END (-weight) comes before START (+weight)
-                // This allows back-to-back scheduling (10:00 end, 10:00 start)
+                // This allows back-to-back scheduling (10:00 end, 10:00 start) without buffer
                 if (a.type === 'end' && b.type === 'start') return -1;
                 if (a.type === 'start' && b.type === 'end') return 1;
                 return 0;
@@ -151,6 +147,21 @@
         return d;
     };
 
+    // Keep for legacy slot finding if needed, but not primary logic
+    Utils.findSlotsForRange = function(startMin, endMin) {
+        const slots = [];
+        if (!window.unifiedTimes || startMin == null || endMin == null) return slots;
+        for (let i = 0; i < window.unifiedTimes.length; i++) {
+            const slot = window.unifiedTimes[i];
+            const d = new Date(slot.start);
+            const slotStart = d.getHours() * 60 + d.getMinutes();
+            if (slotStart >= startMin && slotStart < endMin) {
+                slots.push(i);
+            }
+        }
+        return slots;
+    };
+
     Utils.getBlockTimeRange = function(block) {
         // Prefer explicit start/end
         if (block.startTime !== undefined && block.endTime !== undefined) {
@@ -186,11 +197,14 @@
         if (!fieldProps) return true;
         
         // Parse Rules
-        const rules = (fieldProps.timeRules || []).map(r => ({
-            type: r.type,
-            startMin: Utils.parseTimeToMinutes(r.start),
-            endMin: Utils.parseTimeToMinutes(r.end)
-        }));
+        const rules = (fieldProps.timeRules || []).map(r => {
+            if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
+            return {
+                type: r.type,
+                startMin: Utils.parseTimeToMinutes(r.start),
+                endMin: Utils.parseTimeToMinutes(r.end)
+            };
+        });
 
         if (rules.length === 0) return fieldProps.available;
         if (!fieldProps.available) return false;
@@ -257,11 +271,7 @@
         // 3. Check Base Time Availability (Setup Rules)
         if (!Utils.isTimeAvailable(blockStartMin, blockEndMin, props)) return false;
 
-        // 4. Check Activity Match (Don't mix Sports with Arts on same field if shared)
-        // Note: Timeline handles pure capacity. Mixing logic is handled by checking who is there.
-        // We can optionally peek at the owner metadata if needed, but pure capacity is usually enough.
-        
-        // 5. TIMELINE CHECK
+        // 4. TIMELINE CHECK
         // Check if adding 'myWeight' to the current peak load exceeds 'capacityLimit'
         return Utils.timeline.checkAvailability(
             fieldName, 
@@ -274,34 +284,264 @@
     };
 
     // =================================================================
-    // 4. DATA LOADER (Initialize Timeline from saved data)
+    // 4. DATA LOADER (With Timeline Rebuild)
     // =================================================================
+    function parseTimeRule(rule) {
+        if (!rule) return null;
+        if (typeof rule.startMin === "number" && typeof rule.endMin === "number") return rule;
+        return {
+            ...rule,
+            startMin: Utils.parseTimeToMinutes(rule.start),
+            endMin: Utils.parseTimeToMinutes(rule.end)
+        };
+    }
+
     Utils.loadAndFilterData = function() {
         const globalSettings = window.loadGlobalSettings?.() || {};
         const app1Data = globalSettings.app1 || {};
-        const dailyData = window.loadCurrentDailyData?.() || {};
-        
-        // ... (Standard Data Loading - Fields, Divs, etc - Same as original) ...
         const masterFields = app1Data.fields || [];
         const masterDivisions = app1Data.divisions || {};
         const masterSpecials = app1Data.specialActivities || [];
+        const masterLeagues = globalSettings.leaguesByName || {};
+        const masterSpecialtyLeagues = globalSettings.specialtyLeagues || {};
+        
         const bunkMetaData = app1Data.bunkMetaData || {};
         const sportMetaData = app1Data.sportMetaData || {};
+        Utils._bunkMetaData = bunkMetaData;
+        Utils._sportMetaData = sportMetaData;
+
+        const dailyData = window.loadCurrentDailyData?.() || {};
+        const dailyFieldAvailability = dailyData.dailyFieldAvailability || {};
+        const dailyOverrides = dailyData.overrides || {};
+        const disabledLeagues = dailyOverrides.leagues || [];
+        const disabledSpecialtyLeagues = dailyData.disabledSpecialtyLeagues || [];
+        const dailyDisabledSportsByField = dailyData.dailyDisabledSportsByField || {};
+        const disabledFields = dailyOverrides.disabledFields || [];
+        const disabledSpecials = dailyOverrides.disabledSpecials || [];
+
+        const rotationHistoryRaw = window.loadRotationHistory?.() || {};
+        const rotationHistory = {
+            bunks: rotationHistoryRaw.bunks || {},
+            leagues: rotationHistoryRaw.leagues || {},
+            leagueTeamSports: rotationHistoryRaw.leagueTeamSports || {},
+            leagueTeamLastSport: rotationHistoryRaw.leagueTeamLastSport || {}
+        };
+
+        const historicalCounts = {};
+        const lastUsedDates = {}; 
         
-        // ... (History calculation - Same as original) ...
-        // [Omitted for brevity, assume standard load logic exists here]
-        
+        const specialActivityNames = [];
+        const specialNamesSet = new Set();
+        const specialRules = {};
+
+        try {
+            masterSpecials.forEach(s => {
+                 specialActivityNames.push(s.name);
+                 specialNamesSet.add(s.name);
+                 specialRules[s.name] = { 
+                     frequencyWeeks: s.frequencyWeeks || 0,
+                     limit: s.maxUsage || 0 
+                 };
+            });
+
+            const rawHistory = {}; 
+            const allDaily = window.loadAllDailyData?.() || {};
+            const manualOffsets = globalSettings.manualUsageOffsets || {};
+
+            Object.entries(allDaily).forEach(([dateStr, dayData]) => {
+                const sched = dayData.scheduleAssignments || {};
+                Object.keys(sched).forEach(b => {
+                    if (!rawHistory[b]) rawHistory[b] = {};
+                    (sched[b] || []).forEach(e => {
+                        if (e && e._activity && !e.continuation) {
+                            if (!rawHistory[b][e._activity]) rawHistory[b][e._activity] = [];
+                            rawHistory[b][e._activity].push(dateStr);
+                        }
+                    });
+                });
+            });
+
+            const todayStr = window.currentScheduleDate; 
+            const todayDate = new Date(todayStr);
+
+            Object.keys(rawHistory).forEach(b => {
+                if (!historicalCounts[b]) historicalCounts[b] = {};
+                if (!lastUsedDates[b]) lastUsedDates[b] = {};
+                
+                Object.keys(rawHistory[b]).forEach(act => {
+                    const dates = rawHistory[b][act].sort(); 
+                    if (dates.length > 0) {
+                        lastUsedDates[b][act] = dates[dates.length - 1];
+                    }
+
+                    const rule = specialRules[act];
+                    if (!rule || !rule.frequencyWeeks || rule.frequencyWeeks === 0) {
+                        historicalCounts[b][act] = dates.length;
+                    } else {
+                        const windowDays = rule.frequencyWeeks * 7;
+                        let windowStart = null;
+                        let windowCount = 0;
+
+                        for (const dStr of dates) {
+                            const d = new Date(dStr);
+                            if (!windowStart) {
+                                windowStart = d;
+                                windowCount = 1;
+                            } else {
+                                const diffTime = Math.abs(d - windowStart);
+                                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+                                if (diffDays <= windowDays) {
+                                    windowCount++;
+                                } else {
+                                    windowStart = d;
+                                    windowCount = 1;
+                                }
+                            }
+                        }
+
+                        if (windowStart) {
+                            const diffTime = Math.abs(todayDate - windowStart);
+                            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                            if (diffDays <= windowDays) {
+                                historicalCounts[b][act] = windowCount;
+                            } else {
+                                historicalCounts[b][act] = 0;
+                            }
+                        } else {
+                            historicalCounts[b][act] = 0;
+                        }
+                    }
+                    if (specialNamesSet.has(act)) {
+                         historicalCounts[b]['_totalSpecials'] = 
+                             (historicalCounts[b]['_totalSpecials'] || 0) + 1;
+                    }
+                });
+            });
+
+            Object.keys(manualOffsets).forEach(b => {
+                if (!historicalCounts[b]) historicalCounts[b] = {};
+                Object.keys(manualOffsets[b]).forEach(act => {
+                    const offset = manualOffsets[b][act] || 0;
+                    const current = historicalCounts[b][act] || 0;
+                    historicalCounts[b][act] = Math.max(0, current + offset);
+                });
+            });
+
+        } catch (e) {
+            console.error("Error calculating historical counts:", e);
+        }
+
+        const overrides = {
+            bunks: dailyOverrides.bunks || [],
+            leagues: disabledLeagues
+        };
+
+        const availableDivisions = (app1Data.availableDivisions || []).filter(
+            divName => !overrides.bunks.includes(divName)
+        );
+
+        const divisions = {};
+        for (const divName of availableDivisions) {
+            if (!masterDivisions[divName]) continue;
+            divisions[divName] = JSON.parse(JSON.stringify(masterDivisions[divName]));
+            divisions[divName].bunks =
+                (divisions[divName].bunks || [])
+                    .filter(bunkName => !overrides.bunks.includes(bunkName));
+        }
+
         const activityProperties = {};
-        // Rebuild properties map
-        [...masterFields, ...masterSpecials].forEach(f => {
+        const allMasterActivities = [
+            ...masterFields.filter(f => !disabledFields.includes(f.name)),
+            ...masterSpecials.filter(s => !disabledSpecials.includes(s.name))
+        ];
+        const availableActivityNames = [];
+
+        allMasterActivities.forEach(f => {
+            let finalRules;
+            const dailyRules = dailyFieldAvailability[f.name];
+            if (dailyRules && dailyRules.length > 0) {
+                finalRules = dailyRules.map(parseTimeRule).filter(Boolean);
+            } else {
+                finalRules = (f.timeRules || []).map(parseTimeRule).filter(Boolean);
+            }
+
+            const isMasterAvailable = f.available !== false;
+
+            let allowedDivisions = null;
+            if (Array.isArray(f.allowedDivisions) && f.allowedDivisions.length > 0) {
+                allowedDivisions = f.allowedDivisions.slice();
+            } else if (f.divisionAvailability && f.divisionAvailability.mode === 'specific' && Array.isArray(f.divisionAvailability.divisions) && f.divisionAvailability.divisions.length > 0) {
+                allowedDivisions = f.divisionAvailability.divisions.slice();
+            } else if (Array.isArray(f.sharableWith?.divisions) && f.sharableWith.divisions.length > 0) {
+                allowedDivisions = f.sharableWith.divisions.slice();
+            }
+
+            const safeLimitUsage = (f.limitUsage && f.limitUsage.enabled) 
+                ? { enabled: true, divisions: f.limitUsage.divisions || {} }
+                : { enabled: false, divisions: {} };
+
+            let capacity = 1;
+            if (f.sharableWith) {
+                if (f.sharableWith.capacity) capacity = parseInt(f.sharableWith.capacity);
+                else if (f.sharableWith.type === 'all' || f.sharableWith.type === 'custom') capacity = 2;
+            } else if (f.sharable) {
+                capacity = 2;
+            }
+            if(!f.sharableWith) f.sharableWith = { capacity: capacity };
+            else f.sharableWith.capacity = capacity;
+
             activityProperties[f.name] = {
-                available: f.available !== false,
+                available: isMasterAvailable,
                 sharable: f.sharableWith?.type === 'all' || f.sharableWith?.type === 'custom',
                 sharableWith: f.sharableWith,
-                maxUsage: f.maxUsage || 0,
-                timeRules: f.timeRules || []
+                maxUsage: f.maxUsage || 0, 
+                allowedDivisions,
+                limitUsage: safeLimitUsage,
+                preferences: f.preferences || { enabled: false, exclusive: false, list: [] },
+                timeRules: finalRules
             };
+
+            if (isMasterAvailable) {
+                availableActivityNames.push(f.name);
+            }
         });
+
+        window.allSchedulableNames = availableActivityNames;
+
+        const availFields = masterFields.filter(f => availableActivityNames.includes(f.name));
+        const availSpecials = masterSpecials.filter(s => availableActivityNames.includes(s.name));
+
+        const fieldsBySport = {};
+        availFields.forEach(f => {
+            if (Array.isArray(f.activities)) {
+                f.activities.forEach(sport => {
+                    const isDisabledToday = dailyDisabledSportsByField[f.name]?.includes(sport);
+                    if (!isDisabledToday) {
+                        fieldsBySport[sport] = fieldsBySport[sport] || [];
+                        fieldsBySport[sport].push(f.name);
+                    }
+                });
+            }
+        });
+
+        const allActivities = [
+            ...availFields.flatMap(f => (f.activities || []).map(act => ({
+                type: "field", field: f.name, sport: act
+            }))).filter(a =>
+                !a.field || !a.sport || !dailyDisabledSportsByField[a.field]?.includes(a.sport)
+            ),
+            ...availSpecials.map(sa => ({
+                type: "special", field: sa.name, sport: null
+            }))
+        ];
+
+        const h2hActivities = allActivities.filter(a => a.type === "field" && a.sport);
+
+        const yesterdayData = window.loadPreviousDailyData?.() || {};
+        const yesterdayHistory = {
+            schedule: yesterdayData.scheduleAssignments || {},
+            leagues: yesterdayData.leagueAssignments || {}
+        };
 
         // -------------------------------------------------------------
         // REBUILD TIMELINE FROM SAVED SCHEDULE
@@ -309,7 +549,7 @@
         Utils.timeline = new TimelineSystem(); // Reset
         
         const assignments = dailyData.scheduleAssignments || {};
-        const unifiedTimes = window.unifiedTimes || []; // Needed to map slots to times if raw times aren't saved
+        const unifiedTimes = window.unifiedTimes || []; 
 
         Object.keys(assignments).forEach(bunk => {
             const schedule = assignments[bunk];
@@ -321,15 +561,12 @@
                 const fieldName = (typeof entry.field === 'string') ? entry.field : entry.field?.name;
                 if (!fieldName || fieldName === "Free" || fieldName === "No Field") return;
 
-                // Determine Time
                 let startMin, endMin;
                 
-                // If using unifiedTimes slots
                 if (unifiedTimes[slotIdx]) {
                     const sDate = new Date(unifiedTimes[slotIdx].start);
                     startMin = sDate.getHours() * 60 + sDate.getMinutes();
                     
-                    // Determine End: Look ahead for continuations
                     let durationSlots = 1;
                     for (let i = slotIdx + 1; i < schedule.length; i++) {
                         if (schedule[i] && schedule[i].continuation && 
@@ -339,10 +576,8 @@
                             break;
                         }
                     }
-                    // End time based on last slot
                     const lastSlotIdx = slotIdx + durationSlots - 1;
                     if (unifiedTimes[lastSlotIdx]) {
-                        // Use stored end time or default increment
                         if (unifiedTimes[lastSlotIdx].end) {
                             const eDate = new Date(unifiedTimes[lastSlotIdx].end);
                             endMin = eDate.getHours() * 60 + eDate.getMinutes();
@@ -354,37 +589,44 @@
                 }
 
                 if (startMin != null && endMin != null) {
-                    // Determine Weight
                     let weight = 1;
-                    // Leagues = Full Capacity
-                    if (entry._h2h || entry.sport?.includes("League")) {
+                    if (entry._h2h || (entry.sport && entry.sport.includes("League"))) {
                         const props = activityProperties[fieldName];
                         if (props) {
                             weight = props.sharableWith?.capacity || (props.sharable ? 2 : 1);
                         } else {
-                            weight = 2; // Default assume high for league
+                            weight = 2; 
                         }
                     }
-
                     Utils.timeline.addReservation(fieldName, startMin, endMin, weight, bunk);
                 }
             });
         });
 
-        // ... (Return standard config object) ...
         return {
-            divisions: {}, // (Populated in real run)
-            availableDivisions: app1Data.availableDivisions || [],
+            divisions,
+            availableDivisions,
             activityProperties,
-            masterFields,
+            allActivities,
+            h2hActivities,
+            fieldsBySport,
+            masterLeagues,
+            masterSpecialtyLeagues,
             masterSpecials,
-            bunkMetaData,
-            sportMetaData,
-            // ... other standard returns
-            fieldsBySport: {}, // (Populate based on masterFields)
-            historicalCounts: {}, // (Populate from history)
-            yesterdayHistory: {},
-            rotationHistory: {}
+            yesterdayHistory,
+            rotationHistory,
+            disabledLeagues,
+            disabledSpecialtyLeagues,
+            historicalCounts,
+            lastUsedDates, 
+            specialActivityNames,
+            disabledFields,
+            disabledSpecials,
+            dailyFieldAvailability,
+            dailyDisabledSportsByField,
+            masterFields,
+            bunkMetaData, 
+            sportMetaData
         };
     };
 
