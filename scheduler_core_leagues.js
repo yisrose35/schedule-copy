@@ -1,26 +1,13 @@
 // ============================================================================
-// scheduler_core_leagues.js — FULL REWRITE (FIXED FOR UI + SMART TILES)
+// scheduler_core_leagues.js — FULL REWRITE (FIXED FOR CONFLICTS)
 // ============================================================================
 //
-// This file fixes:
-//   ✔ League matchups not showing
-//   ✔ Smart Tiles disappearing
-//   ✔ Wrong endTime ranges breaking unifiedTimes mapping
-//   ✔ Incorrect, inconsistent league metadata (_activity, _h2h, _allMatchups, _gameLabel)
-//   ✔ Overwriting Smart Tile / general blocks due to incorrect fillBlock data
-//
-// Key guarantees:
-//   • Every league pick now ALWAYS has:
-//       _h2h: true
-//       _activity: "League Game"
-//       _allMatchups: [ full list of every matchup ]
-//       _gameLabel: "Game X"
-//       field: fieldName or "No Field"
-//       sport: "Team A vs Team B (Sport)"
-//
-//   • endTime range EXACTLY matches skeleton — no overflow
-//
-//   • fillBlock() is always called with isLeague = true
+// Updates in this version:
+//   ✔ INTERNAL FIELD CONFLICT FIX: Prevents multiple games in the same league
+//     from grabbing the same field in the same time slot.
+//   ✔ Smart Tiles preserved.
+//   ✔ Unified Time mapping preserved.
+//   ✔ Metadata (_h2h, _allMatchups) populated correctly.
 //
 // ============================================================================
 
@@ -28,7 +15,7 @@
     'use strict';
 
     const Leagues = {};
-    const INCREMENT_MINS = 30; // global match
+    const INCREMENT_MINS = 30; 
 
     // ============================================================================
     // 1. GENERIC HELPERS
@@ -222,7 +209,7 @@
             b => b.event === "League Game" && !b.processed
         );
 
-        // group by league + time
+        // Group by league + time
         const groups = {};
         leagueBlocks.forEach(block => {
             const leagueEntry = Object.entries(masterLeagues).find(
@@ -260,7 +247,7 @@
 
             const sports = league.sports || [];
 
-            // determine which division this belongs to
+            // Determine which division this belongs to
             const first = allBunks[0];
             const div = Object.keys(divisions).find(d => divisions[d].bunks.includes(first));
             if (!div) return;
@@ -281,15 +268,16 @@
             }
             const gameLabel = `Game ${gameNumber}`;
 
-            // get matchups
+            // Get matchups
             let matchups = (typeof window.getLeagueMatchups === "function")
                 ? (window.getLeagueMatchups(leagueName, leagueTeams) || [])
                 : Leagues.coreGetNextLeagueRound(leagueName, leagueTeams);
 
             const allMatchupLabels = [];
-
-            // Build final assignment list
             const finalAssignments = [];
+
+            // *** CRITICAL FIX: Track fields used in this specific league batch ***
+            const fieldsUsedInThisBatch = new Set();
 
             matchups.forEach((pair, i) => {
                 const [a, b] = pair;
@@ -308,9 +296,15 @@
                 let finalSport = preferredSport;
                 let finalField = null;
 
+                // Attempt to find a field that is physically available AND not taken by previous pair
                 for (const s of candidateSports) {
                     const possibleFields = fieldsBySport[s] || [];
                     for (const f of possibleFields) {
+                        
+                        // 1. Internal check: Did we already assign this field in this loop?
+                        if (fieldsUsedInThisBatch.has(f)) continue;
+
+                        // 2. Global check: Is the field free in the wider schedule?
                         if (window.SchedulerCoreUtils.canBlockFit(blockBase, f, activityProperties, s, true)) {
                             finalSport = s;
                             finalField = f;
@@ -318,6 +312,11 @@
                         }
                     }
                     if (finalField) break;
+                }
+
+                // If found, lock it for this batch
+                if (finalField) {
+                    fieldsUsedInThisBatch.add(finalField);
                 }
 
                 const label = finalField
@@ -337,8 +336,13 @@
 
             // Build the pick map per bunk
             const picksByTeam = {};
-            const bunkTeams = [...leagueTeams];
-
+            
+            // Map assignments back to bunks linearly (Campers list -> Teams list)
+            // Warning: This assumes the `allBunks` array aligns with the team logic. 
+            // If teams are abstract (e.g. "Red Team" contains bunks 1,2,3), this logic 
+            // assumes 1-to-1 mapping or linear distribution. 
+            // For simple "Bunk A vs Bunk B", this works perfectly.
+            
             let ptr = 0;
             finalAssignments.forEach(assignment => {
                 if (ptr + 1 >= allBunks.length) return;
@@ -360,7 +364,7 @@
                 picksByTeam[bunkB] = pick;
             });
 
-            // leftover bunks
+            // Leftover bunks
             const noGamePick = {
                 field: "No Game",
                 sport: null,
