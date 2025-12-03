@@ -4,9 +4,10 @@
 //
 // Role:
 // - Entry point (runSkeletonOptimizer)
+// - Custom Pickers (findBestSportActivity - NEW LOGIC)
 // - Context Parsing (Skeleton -> Blocks)
 // - Call Leagues (Pass 3)
-// - Main Loop (Pass 4) WITH STRICT LOCATION & AGGRESSIVE SHARING
+// - Main Loop (Pass 4)
 // - History Saving (Pass 5)
 // ============================================================================
 
@@ -28,6 +29,11 @@
     // LOCAL HELPERS (Specific to Main Execution)
     // =================================================================
     
+    // Wrapper for Utils
+    function fieldLabel(f) {
+        return window.SchedulerCoreUtils.fieldLabel(f);
+    }
+
     // Normalizers
     function normalizeGA(name) {
         if (!name) return null;
@@ -51,7 +57,6 @@
         return null;
     }
 
-    // Helper to randomize arrays (Fisher-Yates) for "Different Combinations"
     function shuffleArray(array) {
         if (!Array.isArray(array)) return [];
         const arr = array.slice();
@@ -61,6 +66,115 @@
         }
         return arr;
     }
+
+    // Helper: What did this bunk do today?
+    function getGeneralActivitiesDoneToday(bunkName) {
+        const done = new Set();
+        const sched = window.scheduleAssignments[bunkName];
+        if (Array.isArray(sched)) {
+            sched.forEach(s => {
+                if (s && s._activity) done.add(s._activity);
+            });
+        }
+        return done;
+    }
+
+    // Helper: Sort by Rotation History (Freshness)
+    function sortPicksByFreshness(picks, bunkHistory, divName, activityProperties) {
+        return picks.sort((a, b) => {
+            // 1. Check History (Least recently used first)
+            const timeA = bunkHistory[a._activity] || 0;
+            const timeB = bunkHistory[b._activity] || 0;
+            if (timeA !== timeB) return timeA - timeB;
+            
+            // 2. Random Tiebreaker
+            return Math.random() - 0.5;
+        });
+    }
+
+    // =================================================================
+    // CUSTOM PICKER LOGIC (Injected)
+    // =================================================================
+
+    window.findBestSportActivity = function (
+        block,
+        allActivities,
+        fieldUsageBySlot,
+        yesterdayHistory,
+        activityProperties,
+        rotationHistory,
+        divisions,
+        historicalCounts
+    ) {
+        const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
+        const activitiesDoneToday = getGeneralActivitiesDoneToday(block.bunk);
+
+        // 1. Sports ONLY if a REAL FIELD exists for that sport
+        const sports = allActivities
+            .filter(a => a.type === 'field' && a.sport)
+            .map(a => ({
+                field: a.field,
+                sport: a.sport,
+                _activity: a.sport
+            }));
+
+        // 2. Filter out sports with NO eligible fields
+        const validSportPicks = sports.filter(pick => {
+            const fieldName = fieldLabel(pick.field);
+
+            // The REAL validation – must fit the field with the actual activity
+            // This implicitly checks Capacity, Time, and DIVISION ISOLATION via Utils
+            const fits = window.SchedulerCoreUtils.canBlockFit(
+                block,
+                fieldName,
+                activityProperties,
+                fieldUsageBySlot,
+                pick._activity
+            );
+
+            // Also cannot repeat sport within the same day
+            if (activitiesDoneToday.has(pick._activity)) return false;
+
+            return fits;
+        });
+
+        // === 🧠 NEW CRITICAL FIX ===
+        // 3. FORCE DOUBLING-UP FIELDS FIRST
+        validSportPicks.sort((a, b) => {
+            const slot = block.slots[0];
+            const usageA = fieldUsageBySlot[slot]?.[fieldLabel(a.field)] || { count: 0 };
+            const usageB = fieldUsageBySlot[slot]?.[fieldLabel(b.field)] || { count: 0 };
+
+            const propsA = activityProperties[fieldLabel(a.field)];
+            const propsB = activityProperties[fieldLabel(b.field)];
+
+            const capA = propsA?.sharableWith?.capacity ?? 1;
+            const capB = propsB?.sharableWith?.capacity ?? 1;
+
+            const semiA = usageA.count > 0 && usageA.count < capA;
+            const semiB = usageB.count > 0 && usageB.count < capB;
+
+            // Semi-full fields FIRST, empty fields second, full last
+            if (semiA && !semiB) return -1;
+            if (!semiA && semiB) return 1;
+
+            return 0;
+        });
+
+        if (validSportPicks.length === 0) {
+            return null; // Forces fallback → General Activity → Free (only if needed)
+        }
+
+        // 4. Apply freshness, preferences, fairness (unchanged)
+        const sorted = sortPicksByFreshness(
+            validSportPicks,
+            bunkHistory,
+            block.divName,
+            activityProperties
+        );
+
+        return sorted[0] || null;
+    };
 
     // =================================================================
     // FILL BLOCK (The Writer)
@@ -100,7 +214,6 @@
         });
     }
 
-    // internal usage helper
     function registerSingleSlotUsage(slotIndex, fieldName, divName, bunkName, activityName, fieldUsageBySlot, activityProperties) {
         if (!fieldName || !window.allSchedulableNames || !window.allSchedulableNames.includes(fieldName)) return;
         
@@ -427,7 +540,8 @@
             } else if (block.event === 'Special Activity' || block.event === 'Special Activity Slot') {
                 pick = window.findBestSpecial?.(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
             } else if (block.event === 'Sports Slot' || block.event === 'Sports') {
-                pick = window.findBestSportActivity?.(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
+                // CALL OUR NEWLY INJECTED PICKER
+                pick = window.findBestSportActivity(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
             }
 
             if (!pick) {
@@ -435,10 +549,8 @@
             }
 
             // --- STRICT VALIDATION ---
-            // Issue: Sometimes "pick.field" is just "Soccer" (Generic) if no field was found.
-            // Fix: If pick.field is NOT in the master list of fields, we consider it invalid (failed).
             if (pick && window.allSchedulableNames && !window.allSchedulableNames.includes(pick.field)) {
-                pick = null; // FORCE RESCUE
+                pick = null; 
             }
 
             // 1. Check if the "Best" pick actually fits (and is valid)
@@ -446,7 +558,6 @@
 
             // 2. RESCUE STRATEGY: If "Best" failed or was generic, try ALL combinations.
             if (!fits) {
-                // Determine valid pool
                 let candidates = [];
                 if (block.event === 'Sports Slot' || block.event === 'Sports') {
                     candidates = allActivities.filter(a => a.type === 'field' && a.sport);
@@ -459,8 +570,7 @@
                 // A) Randomize first for variety
                 candidates = shuffleArray(candidates);
 
-                // B) AGGRESSIVE SHARING (Doubling Up)
-                // Sort candidates to put "Partially Filled" fields FIRST.
+                // B) AGGRESSIVE SHARING (Doubling Up) - RESCUE LEVEL
                 candidates.sort((a, b) => {
                     if (block.slots.length === 0) return 0;
                     const slot = block.slots[0];
@@ -474,30 +584,27 @@
                     const capA = propsA?.sharableWith?.capacity ?? (propsA?.sharable ? 2 : 1);
                     const capB = propsB?.sharableWith?.capacity ?? (propsB?.sharable ? 2 : 1);
 
-                    // "Semi-Full" = Has people, but less than max capacity
                     const aIsSemi = (usageA.count > 0 && usageA.count < capA);
                     const bIsSemi = (usageB.count > 0 && usageB.count < capB);
 
-                    // We want: Semi > Empty > Full
-                    if (aIsSemi && !bIsSemi) return -1; // A is "Sharing Opportunity", promote it!
+                    if (aIsSemi && !bIsSemi) return -1; 
                     if (!aIsSemi && bIsSemi) return 1;
                     return 0; 
                 });
 
-                // Brute-force check until one fits
                 for (const cand of candidates) {
                     const tempFieldName = cand.field;
                     const tempActivity = cand.type === 'special' ? cand.field : (cand.sport || cand.field);
                     
                     if (window.SchedulerCoreUtils.canBlockFit(block, tempFieldName, activityProperties, fieldUsageBySlot, tempActivity)) {
                         pick = {
-                            field: tempFieldName, // GUARANTEED TO BE A REAL LOCATION NOW
+                            field: tempFieldName, 
                             sport: cand.sport || null,
                             _activity: tempActivity,
                             _h2h: (cand.type === 'field' && !!cand.sport)
                         };
                         fits = true;
-                        break; // Found a rescue match!
+                        break;
                     }
                 }
             }
