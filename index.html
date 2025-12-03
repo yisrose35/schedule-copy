@@ -74,6 +74,10 @@
                         <span class="sidebar-dot"></span> Setup (Bunks / Divisions)
                     </button>
 
+                    <button class="sidebar-item" data-tab="locations">
+                        <span class="sidebar-dot"></span> 🗺️ Location Zones
+                    </button>
+
                     <button class="sidebar-item" data-tab="fields">
                         <span class="sidebar-dot"></span> Fields
                     </button>
@@ -298,6 +302,7 @@
                 <!-- ======================================================= -->
                 <!-- OTHER TABS -->
                 <!-- ======================================================= -->
+                <div id="locations" class="tab-content"></div>
                 <div id="fields" class="tab-content"></div>
                 <div id="special_activities" class="tab-content"></div>
                 <div id="leagues" class="tab-content"></div>
@@ -343,6 +348,7 @@
 <script src="calendar.js" defer></script>
 <script src="app1.js" defer></script>
 
+<script src="locations.js" defer></script>
 <script src="daily_adjustments.js" defer></script>
 <script src="special_activities.js" defer></script>
 <script src="fields.js" defer></script>
@@ -385,6 +391,7 @@ function showTab(id) {
     );
 
     if (id === 'setup') window.initApp1?.();
+    if (id === 'locations') window.initLocationsTab?.();
     if (id === 'fields') window.initFieldsTab?.();
     if (id === 'special_activities') window.initSpecialActivitiesTab?.();
     if (id === 'leagues') window.initLeagues?.();
