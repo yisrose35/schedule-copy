@@ -3,8 +3,7 @@
 //
 // Updates:
 // 1. Implements Wrapper Block display logic for transitions (Issue 6).
-// 2. Formats transition segments for clean schedule view.
-// 3. Updated editCell to use new fillBlock logic for buffer-aware manual edits (Issue 15).
+// 2. Updated editCell to use new fillBlock logic for buffer-aware manual edits (Issue 15).
 // ============================================================================
 
 (function () {
@@ -355,7 +354,7 @@
           expanded.push({ ...b, endMin: mid, label: `${minutesToTimeLabel(b.startMin)} - ${minutesToTimeLabel(mid)}` });
           expanded.push({ ...b, startMin: mid, label: `${minutesToTimeLabel(mid)} - ${minutesToTimeLabel(b.endMin)}` });
         } else {
-          expanded.push({ ...b, label: `${minutesToTimeLabel(b.startMin)} - ${minutesToLabel(b.endMin)}` });
+          expanded.push({ ...b, label: `${minutesToTimeLabel(b.startMin)} - ${minutesToTimeLabel(b.endMin)}` });
         }
       });
 
@@ -420,133 +419,129 @@
           const isGeneratedSlot = uiIsGeneratedEventName(block.event) || block.event.includes("/");
 
           let cellContent = "";
-          let bg = "";
           let finalActivity = "";
-          let transitionInfo = "";
           let isWrapperBlock = false;
+          let entryToDisplay = entry;
 
-          if (isDismissal) {
-            cellContent = "Dismissal";
-            bg = "#ffdddd";
-          } else if (isSnack) {
-            cellContent = "Snacks";
-            bg = "#e7ffe7";
-          } else if (!isGeneratedSlot) {
-            // Pinned/Custom Event (No Buffer Logic unless manually overriden)
-            bg = "#fff7cc";
-            cellContent = block.event;
-          } else if (entry && entry.field !== "Free") {
-            // Generated Content
-            
-            let currentIdx = slotIdx;
-            let totalPreTime = 0;
-            let totalPostTime = 0;
-            let activePlayTime = 0;
-            let mainActivityFound = false;
+          if (entry && entry._activity !== TRANSITION_TYPE) {
+              // This is the primary activity block (may be preceded/followed by transitions)
+              finalActivity = entry._activity;
+              
+              // Check if we are at the start of a wrapper sequence
+              const prevEntry = getEntry(bunk, slotIdx - 1);
+              const nextEntry = getEntry(bunk, slotIdx + 1);
+              
+              isWrapperBlock = (prevEntry?._activity === TRANSITION_TYPE || nextEntry?._activity === TRANSITION_TYPE);
 
-            // Scan through slots belonging to this visual block
-            while (currentIdx < window.unifiedTimes.length) {
-                const scanEntry = getEntry(bunk, currentIdx);
-                if (!scanEntry) break;
-                
-                const slotDuration = new Date(window.unifiedTimes[currentIdx].end).getTime() - new Date(window.unifiedTimes[currentIdx].start).getTime();
-                const durationMins = slotDuration / (1000 * 60);
+              if (isWrapperBlock) {
+                 // Calculate the full wrapper time range
+                 let totalPreTime = 0;
+                 let totalPostTime = 0;
+                 let activePlayTime = 0;
+                 let startSlot = slotIdx;
+                 let endSlot = slotIdx;
 
-                if (scanEntry._activity === TRANSITION_TYPE) {
-                    if (!mainActivityFound) {
-                        totalPreTime += durationMins;
-                    } else {
-                        totalPostTime += durationMunkins;
+                 // Scan backward for Pre-Transition
+                 let scanIdx = slotIdx - 1;
+                 while(scanIdx >= 0 && getEntry(bunk, scanIdx)?._activity === TRANSITION_TYPE) {
+                    totalPreTime += (new Date(window.unifiedTimes[scanIdx].end).getTime() - new Date(window.unifiedTimes[scanIdx].start).getTime()) / (1000 * 60);
+                    startSlot = scanIdx;
+                    scanIdx--;
+                 }
+                 
+                 // Scan forward to find the end of the Activity + Post-Transition
+                 scanIdx = slotIdx;
+                 while(scanIdx < window.unifiedTimes.length) {
+                    const currentScan = getEntry(bunk, scanIdx);
+                    if (!currentScan || (currentScan._activity !== finalActivity && currentScan._activity !== TRANSITION_TYPE)) break;
+                    
+                    const slotDuration = (new Date(window.unifiedTimes[scanIdx].end).getTime() - new Date(window.unifiedTimes[scanIdx].start).getTime()) / (1000 * 60);
+
+                    if (currentScan._activity === finalActivity) {
+                        activePlayTime += slotDuration;
+                    } else if (currentScan._activity === TRANSITION_TYPE) {
+                        totalPostTime += slotDuration;
                     }
-                } else if (scanEntry._activity !== "Free") {
-                    finalActivity = scanEntry._activity;
-                    activePlayTime += durationMins;
-                    mainActivityFound = true;
-                } else {
-                    // Free block breaks the wrapper sequence
-                    break;
-                }
-                
-                // If the next slot is unrelated, break the sequence
-                const nextEntry = getEntry(bunk, currentIdx + 1);
-                if (!nextEntry || (nextEntry.field !== scanEntry.field && nextEntry._activity !== TRANSITION_TYPE && nextEntry._activity !== finalActivity)) break;
-                
-                currentIdx++;
-            }
-            
-            // Determine if the current slot is the START of the wrapper block
-            const isStartOfWrapper = (slotIdx === 0) || (getEntry(bunk, slotIdx - 1)?._activity !== entry._activity && getEntry(bunk, slotIdx - 1)?._activity !== TRANSITION_TYPE);
-            
-            if (isStartOfWrapper && mainActivityFound) {
-                 isWrapperBlock = (totalPreTime > 0 || totalPostTime > 0);
-            }
-            
-            if (isWrapperBlock) {
-                // If it's the start of a wrapper, display all info
-                cellContent = `<strong>${finalActivity}</strong>`;
-                bg = "#e0f7fa"; // Light blue for generated/wrapped block
-                transitionInfo = `<span style="font-size:0.8em; color:#059669;">(${totalPreTime}m To / ${Math.round(activePlayTime)}m Play / ${totalPostTime}m From)</span>`;
-                cellContent += `<br>${transitionInfo}`;
+                    endSlot = scanIdx;
+                    scanIdx++;
+                 }
+                 
+                 // Only display content on the first slot of the entire merged block
+                 if (slotIdx === startSlot) {
+                     cellContent = `<strong>${finalActivity}</strong>`;
+                     cellContent += `<br><span style="font-size:0.8em; color:#059669;">(${Math.round(totalPreTime)}m To / ${Math.round(activePlayTime)}m Play / ${Math.round(totalPostTime)}m From)</span>`;
+                     td.rowSpan = endSlot - startSlot + 1;
+                     td.style.verticalAlign = 'top';
+                     td.style.textAlign = 'center';
+                     td.style.background = '#e0f7fa';
+                     
+                     // Mark this cell as having content drawn
+                     td.dataset.drawn = 'true';
+                     td.dataset.endSlot = endSlot;
 
-            } else if (entry._activity === TRANSITION_TYPE) {
-                // This is a transition segment, suppress its content in the grid display
-                cellContent = "";
-                
-                // Also, check if this transition is followed by a non-transition block 
-                // within the same block time, if so, the main activity block draws over it.
-                // We leave the cell empty for the wrapper block to span.
-                
-            } else {
-                // Standard activity, not the start of a wrapper or a transition block
-                cellContent = formatEntry(entry);
-            }
+                 } else {
+                     // This is a continuation of a wrapper block, suppress it
+                     td.style.display = 'none';
+                 }
 
+              } else {
+                  // Standard entry (not part of a wrapper)
+                  cellContent = formatEntry(entry);
+              }
+
+
+          } else if (entry && entry._activity === TRANSITION_TYPE) {
+              // If this is a transition block, suppress content if it's part of a larger sequence.
+              // We rely on the activity block (above) to draw the merged span.
+              
+              // Check if the content was drawn by a previous cell in the same block time
+              let scanIdx = slotIdx;
+              let isContinuation = false;
+              while(scanIdx >= 0) {
+                  const prevScan = getEntry(bunk, scanIdx);
+                  if (prevScan && prevScan._activity !== TRANSITION_TYPE && (prevScan._activity === getEntry(bunk, slotIdx+1)?._activity)) {
+                      isContinuation = true;
+                      break;
+                  }
+                  scanIdx--;
+              }
+
+              if (getEntry(bunk, slotIdx - 1)?.field === getEntry(bunk, slotIdx)?.field || isContinuation) {
+                   td.style.display = 'none';
+              } else {
+                   // Fallback for isolated transition blocks (rare, but possible)
+                   cellContent = formatEntry(entry);
+              }
+              
           } else {
-            cellContent = formatEntry(entry);
+              // Dismissal/Snack/Free/Unassigned
+              if (isDismissal) {
+                cellContent = "Dismissal";
+                bg = "#ffdddd";
+              } else if (isSnack) {
+                cellContent = "Snacks";
+                bg = "#e7ffe7";
+              } else if (!isGeneratedSlot) {
+                bg = "#fff7cc";
+                cellContent = block.event;
+              } else {
+                  cellContent = formatEntry(entry);
+              }
+          }
+          
+          // Fallback content if wrapper logic failed to provide it
+          if (cellContent === "" && td.style.display !== 'none') {
+               // Check if the previous cell created a span that covers this one
+               const prevTd = tr.previousElementSibling?.querySelector(`[data-bunk="${bunk}"][data-end-slot]`);
+               if (prevTd && parseInt(prevTd.dataset.endSlot) >= slotIdx) {
+                    td.style.display = 'none';
+               }
           }
 
 
           td.textContent = cellContent;
           td.style.cursor = "pointer";
           td.onclick = () => editCell(bunk, block.startMin, block.endMin, finalActivity || cellContent);
-          
-          // --- Wrapper Span Logic ---
-          if (isWrapperBlock) {
-             let spanCount = 1;
-             let scanEndIndex = slotIdx;
-             
-             // Count how many vertical slots this wrapper block spans
-             while (scanEndIndex + 1 < window.unifiedTimes.length) {
-                const nextEntry = getEntry(bunk, scanEndIndex + 1);
-                // Span until the activity or transition changes or becomes 'Free'
-                if (nextEntry && nextEntry.field === entry.field && nextEntry._activity !== 'Free') {
-                     spanCount++;
-                     scanEndIndex++;
-                } else {
-                     break;
-                }
-             }
-             
-             if (spanCount > 1) {
-                 td.rowSpan = spanCount;
-                 // Mark all subsequent cells in the column to be skipped
-                 for(let k=slotIdx + 1; k < slotIdx + spanCount; k++) {
-                     // We mark this cell so the next iteration of the outer loop skips it
-                     // This is handled implicitly by checking slotIndex against blocks.startMin, 
-                     // but setting rowSpan > 1 visually merges it.
-                 }
-                 
-                 // Apply merger style
-                 td.style.verticalAlign = 'top';
-                 td.style.textAlign = 'center';
-                 td.style.background = '#e0f7fa';
-             }
-
-          } else if (getEntry(bunk, slotIdx - 1)?.field === entry.field && getEntry(bunk, slotIdx - 1)?._activity !== 'Free') {
-              // This is a continuation of a previously drawn merged block or an empty transition slot
-              td.style.display = 'none';
-              
-          }
           
           tr.appendChild(td);
         });
