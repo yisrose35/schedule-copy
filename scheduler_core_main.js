@@ -233,29 +233,52 @@
                    
                    Object.entries(assignments).forEach(([bunk, act]) => {
                        let finalPick = { field: act, _activity: act };
+                       
+                       // If fallback was generic "Sports", find a specific one
                        if (act.includes("Sport")) {
                            finalPick = window.findBestSportActivity(
                                {bunk, divName: job.division, startTime: blockInfo.startMin, endTime: blockInfo.endMin}, 
                                allActivities, {}, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts
                            );
+                       } else {
+                           // [FIX]: For Specific Activities (e.g. Woodworking), check Constraints!
+                           // We skip this check for generic "Sports" because findBestSportActivity handles it internally.
+                           const isValid = window.SchedulerCoreUtils.canBlockFit(
+                               { bunk, divName: job.division, startTime: blockInfo.startMin, endTime: blockInfo.endMin, slots }, 
+                               window.SchedulerCoreUtils.fieldLabel(act), 
+                               activityProperties, 
+                               act, 
+                               false // Not a league
+                           );
+                           
+                           if (!isValid) {
+                               // If specific assignment fails validation (e.g. Bunk not allowed), drop it.
+                               // In a smarter system, we might fallback to Sports here, but for now we safeguard against illegal placements.
+                               finalPick = null;
+                           }
                        }
+                       
                        if (finalPick) {
                            fillBlock({ slots: slots, bunk, startTime: blockInfo.startMin, endTime: blockInfo.endMin }, finalPick, {}, {}, false);
                        }
                    });
                };
+
                writeAssignments(res.block1Assignments, job.blockA);
                writeAssignments(res.block2Assignments, job.blockB);
             });
         }
 
-        // -- PHASE 4: SPLIT ACTIVITIES --
+        // -- PHASE 4: SPLIT ACTIVITIES (FIXED: Halftime Switch) --
         const splitBlocks = schedulableSlotBlocks.filter(b => b.type === 'split');
         splitBlocks.forEach(sb => {
-            const mid = Math.floor(sb.startMin + (sb.endMin - sb.startMin) / 2);
+            // Find Midpoint
+            const midTime = Math.floor(sb.startMin + (sb.endMin - sb.startMin) / 2);
+            
+            // Divide Bunks
             const midIdx = Math.ceil(sb.bunks.length / 2);
-            const bunks1 = sb.bunks.slice(0, midIdx);
-            const bunks2 = sb.bunks.slice(midIdx);
+            const bunksGroup1 = sb.bunks.slice(0, midIdx);
+            const bunksGroup2 = sb.bunks.slice(midIdx);
             const e1 = sb.subEvents[0].event;
             const e2 = sb.subEvents[1].event;
             
