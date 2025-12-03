@@ -1,5 +1,5 @@
 // ===================================================================
-// leagues.js  — THEMED VERSION (FIXED IMPORT LOGIC)
+// leagues.js  — THEMED VERSION (FIXED: Game # Extraction & 2nd Game)
 // ===================================================================
 
 (function () {
@@ -121,15 +121,38 @@
 
         return hh * 60 + mm;
     }
-    
-    // Find slot index for a given time
-    function findSlotIndexForTime(minutes) {
+
+    function minutesToTimeLabel(min) {
+        const h24 = Math.floor(min / 60);
+        const m = String(min % 60).padStart(2, "0");
+        const ap = h24 >= 12 ? "PM" : "AM";
+        const h12 = h24 % 12 || 12;
+        return `${h12}:${m} ${ap}`;
+    }
+
+    // Robust Slot Finder: Finds a slot that INTERSECTS the time
+    function findSlotIndexForTime(targetMin) {
         const times = window.unifiedTimes || [];
+        // Default incremental check if unifiedTimes isn't perfectly granular
+        const INCREMENT_MINS = window.INCREMENT_MINS || 30; 
+
         for (let i = 0; i < times.length; i++) {
             const d = new Date(times[i].start);
-            const startMin = d.getHours() * 60 + d.getMinutes();
-            // Assuming 30 min slots or checking generic overlap
-            if (minutes >= startMin && minutes < startMin + 30) return i;
+            const slotStart = d.getHours() * 60 + d.getMinutes();
+            
+            // Calculate slot end (use data or fallback to increment)
+            let slotEnd;
+            if (times[i].end) {
+                 const e = new Date(times[i].end);
+                 slotEnd = e.getHours() * 60 + e.getMinutes();
+            } else {
+                 slotEnd = slotStart + INCREMENT_MINS;
+            }
+
+            // Check if targetMin falls inside this slot
+            if (targetMin >= slotStart && targetMin < slotEnd) {
+                return i;
+            }
         }
         return -1;
     }
@@ -779,7 +802,6 @@
             });
 
             const labels = Object.keys(groupedMatches).sort((a, b) => {
-                // Natural sort logic if needed
                 return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
             });
 
@@ -829,7 +851,7 @@
     }
 
     // =================================================================
-    // IMPORT FROM SCHEDULE (FIXED: STRICT DIVISION & LABEL MATCH)
+    // IMPORT FROM SCHEDULE (FIXED: Game # Extraction & 2nd Game)
     // =================================================================
     function importGamesFromSchedule(league, target) {
         target.innerHTML = '';
@@ -838,7 +860,7 @@
         const daily = window.loadCurrentDailyData?.() || {};
         const skeleton = daily.manualSkeleton || [];
         const assignments = daily.scheduleAssignments || {};
-        const divisions = window.divisions || {}; // Needed to find bunks inside a division
+        const divisions = window.divisions || {};
         
         const saveButton = target.parentElement.querySelector('[data-role="save-game-results"]');
 
@@ -847,7 +869,7 @@
             return;
         }
         
-        // 2. Scan Skeleton: Only look at blocks in THIS LEAGUE'S DIVISIONS that are labeled "League Game"
+        // 2. Scan Skeleton: LEAGUE blocks in this DIVISION
         const relevantBlocks = skeleton.filter(block => {
             return league.divisions.includes(block.division) &&
                    block.event.toLowerCase().includes("league game");
@@ -858,84 +880,95 @@
              return;
         }
 
-        const gamesFound = {}; // { "League Game 5": [ {teamA, teamB}, ... ] }
+        const gamesFound = {}; 
 
-        // 3. Process Each Found Block
+        // 3. Process Each Block
         relevantBlocks.forEach(block => {
-            const blockName = block.event; // This is the GROUP Header (e.g. "League Game 5")
-            
             const startMin = parseTimeToMinutes(block.startTime);
             const slotIdx = findSlotIndexForTime(startMin);
 
             if (slotIdx === -1) return;
 
-            // Get the list of bunks in this division so we can access their schedule data
-            // Since it is a merged cell, we only need to look at the FIRST bunk in the division
             const divBunks = divisions[block.division]?.bunks || [];
             if (divBunks.length === 0) return;
-
             const representativeBunk = divBunks[0];
             const entry = assignments[representativeBunk]?.[slotIdx];
 
             if (!entry) return;
 
-            // 4. Extract Text Content (Look in _allMatchups first, then raw field text)
-            let linesToScan = [];
+            // --- HEADER LABEL EXTRACTION (FIXED) ---
+            let headerLabel = block.event; // Default "League Game"
             
+            // Try to find "Game X" inside the TEXT first (Visual Priority)
+            const rawText = (typeof entry.field === 'string') ? entry.field : (entry.sport || "");
+            
+            // Regex: Look for "Game 5" or "Match 5" inside the text or the block name
+            const textMatch = rawText.match(/(?:Game|Match)\s*(\d+)/i) || headerLabel.match(/(?:Game|Match)\s*(\d+)/i);
+            const hiddenMatch = entry._gameLabel || entry.gameLabel;
+
+            if (textMatch) {
+                // If text says "Game 5", force header to "League Game 5"
+                headerLabel = `League Game ${textMatch[1]}`;
+            } else if (hiddenMatch) {
+                // If hidden data says "Game 5", use that
+                headerLabel = `League Game ${hiddenMatch.replace(/^\D+/g, '')}`; 
+            } else {
+                // Fallback: If generic, append TIME to keep multiple games separate
+                if (headerLabel.trim().toLowerCase() === "league game") {
+                    headerLabel = `${headerLabel} (${minutesToTimeLabel(startMin)})`;
+                }
+            }
+
+            // --- TEXT PARSING ---
+            let linesToScan = [];
             if (entry._allMatchups && Array.isArray(entry._allMatchups) && entry._allMatchups.length > 0) {
                 linesToScan = entry._allMatchups;
             } else if (typeof entry.field === 'string') {
                 linesToScan = entry.field.split('\n');
             } else if (entry.sport) {
-                // Sometimes formatted as "Field - Sport (Team vs Team)"
                 linesToScan = [entry.sport];
             }
 
-            // 5. Parse Text for "Team A vs Team B"
             linesToScan.forEach(line => {
-                // Regex looks for:  Start... TeamA ... vs ... TeamB ... (optional extra info)
                 const m = line.match(/^(.*?)\s+vs\.?\s+(.*?)(?:\s*[@\(]|$)/i); 
-                
                 if (m) {
                     const tA = m[1].trim();
                     const tB = m[2].trim();
 
-                    // STRICT CHECK: Teams must exist in the current league roster
                     if (league.teams.includes(tA) && league.teams.includes(tB)) {
-                        if (!gamesFound[blockName]) gamesFound[blockName] = [];
+                        if (!gamesFound[headerLabel]) gamesFound[headerLabel] = [];
                         
-                        // Prevent duplicates (in case multiple bunks had the same text)
-                        const exists = gamesFound[blockName].some(g => 
+                        const exists = gamesFound[headerLabel].some(g => 
                             (g.teamA === tA && g.teamB === tB) || 
                             (g.teamA === tB && g.teamB === tA)
                         );
                         
                         if (!exists) {
-                            gamesFound[blockName].push({ teamA: tA, teamB: tB });
+                            gamesFound[headerLabel].push({ teamA: tA, teamB: tB });
                         }
                     }
                 }
             });
         });
 
-        // 6. Render Results
+        // 4. Render Results
         const groupNames = Object.keys(gamesFound).sort((a,b) => 
             a.localeCompare(b, undefined, {numeric: true})
         );
 
         if (groupNames.length === 0) {
-            target.innerHTML = `<p class="muted">Found League blocks, but no valid team matchups (e.g. "Team A vs Team B") inside them matching your roster.</p>`;
+            target.innerHTML = `<p class="muted">Found League blocks, but no valid matchups (Team A vs Team B) matching your roster.</p>`;
             return;
         }
 
-        groupNames.forEach(headerLabel => {
+        groupNames.forEach(label => {
             const header = document.createElement('div');
             header.className = 'group-header';
-            header.textContent = headerLabel; // e.g. "League Game 5"
+            header.textContent = label;
             target.appendChild(header);
 
-            gamesFound[headerLabel].forEach(m => {
-                addMatchRow(target, m.teamA, m.teamB, '', '', saveButton, headerLabel);
+            gamesFound[label].forEach(m => {
+                addMatchRow(target, m.teamA, m.teamB, '', '', saveButton, label);
             });
         });
 
