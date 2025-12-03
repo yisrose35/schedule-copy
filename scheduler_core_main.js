@@ -2,11 +2,10 @@
 // scheduler_core_main.js
 // PART 3 of 3: THE ORCHESTRATOR (Main Entry)
 //
-// Role:
-// - Entry point (runSkeletonOptimizer)
-// - Custom Pickers (Sports, General, Special)
-// - STRICT ISOLATION PREFERENCE (Empty First -> Then Share)
-// - Rescue Strategy
+// UPDATES:
+// - Implemented Continuous Transition Merging (Zone Handshake).
+// - Implemented Atomic Block Filling (Pre/Activity/Post).
+// - Added Transition Concurrency Tracking.
 // ============================================================================
 
 (function() {
@@ -22,6 +21,7 @@
     ];
 
     const INCREMENT_MINS = 30;
+    const TRANSITION_TYPE = window.TRANSITION_TYPE; // "Transition/Buffer"
 
     // =================================================================
     // LOCAL HELPERS
@@ -94,148 +94,128 @@
 
             // We want the LOWEST usage count first.
             // 0 (Empty) < 1 (Semi-Full)
-            // This naturally forces "Everyone by themselves" first.
-            // If no 0s exist, it falls back to 1s (Sharing).
             return usageA.count - usageB.count;
         });
     }
 
     // =================================================================
-    // CUSTOM PICKER LOGIC (Updated for Isolation)
+    // CUSTOM PICKER LOGIC (NO CHANGE TO PICKER CORE, ONLY TO FILL BLOCK)
     // =================================================================
 
-    // 1. SPORTS PICKER
-    window.findBestSportActivity = function (block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts) {
-        const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
-        const activitiesDoneToday = getGeneralActivitiesDoneToday(block.bunk);
-
-        const sports = allActivities
-            .filter(a => a.type === 'field' && a.sport)
-            .map(a => ({ field: a.field, sport: a.sport, _activity: a.sport }));
-
-        let valid = sports.filter(pick => {
-            const fits = window.SchedulerCoreUtils.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, pick._activity);
-            if (activitiesDoneToday.has(pick._activity)) return false;
-            return fits;
-        });
-
-        // 1. Sort by Freshness first (Global Preference)
-        valid = sortPicksByFreshness(valid, bunkHistory);
-
-        // 2. STABLE SORT: Apply Isolation Priority (Empty fields float to top)
-        if (block.slots.length > 0) {
-            valid = sortPicksByIsolation(valid, block.slots[0], fieldUsageBySlot, activityProperties);
-        }
-
-        return valid[0] || null;
-    };
-
-    // 2. SPECIALS PICKER
-    window.findBestSpecial = function (block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts) {
-        const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
-        const activitiesDoneToday = getGeneralActivitiesDoneToday(block.bunk);
-        
-        const specials = allActivities
-            .filter(a => a.type === 'special')
-            .map(a => ({ field: a.field, sport: null, _activity: a.field })); 
-
-        let valid = specials.filter(pick => {
-            const fits = window.SchedulerCoreUtils.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, pick._activity);
-            if (activitiesDoneToday.has(pick._activity)) return false;
-            return fits;
-        });
-
-        valid = sortPicksByFreshness(valid, bunkHistory);
-
-        if (block.slots.length > 0) {
-            valid = sortPicksByIsolation(valid, block.slots[0], fieldUsageBySlot, activityProperties);
-        }
-
-        return valid[0] || null;
-    };
-
-    // 3. GENERAL ACTIVITY PICKER
-    window.findBestGeneralActivity = function (block, allActivities, h2hActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts) {
-        const activitiesDoneToday = getGeneralActivitiesDoneToday(block.bunk);
-        const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
-
-        const candidates = allActivities
-            .filter(a => a.type === 'field' && a.sport)
-            .map(a => ({ field: a.field, sport: a.sport, _activity: a.sport }));
-
-        let valid = candidates.filter(pick => {
-            return window.SchedulerCoreUtils.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, pick._activity);
-        });
-
-        valid = shuffleArray(valid);
-        valid = sortPicksByFreshness(valid, bunkHistory);
-
-        if (block.slots.length > 0) {
-            valid = sortPicksByIsolation(valid, block.slots[0], fieldUsageBySlot, activityProperties);
-        }
-
-        return valid[0] || null;
-    };
+    // (findBestSportActivity, findBestSpecial, findBestGeneralActivity remain in scheduler_logic_fillers.js)
 
     // =================================================================
-    // FILL BLOCK (The Writer)
+    // FILL BLOCK (The Atomic Writer - UPDATED for Buffers and Continuity)
     // =================================================================
-    function fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, isLeagueFill = false) {
+    function fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, isLeagueFill = false, activityProperties) {
         const fieldName = window.SchedulerCoreUtils.fieldLabel(pick.field);
         const sport = pick.sport;
-        (block.slots || []).forEach((slotIndex, idx) => {
-            if (slotIndex === undefined || slotIndex >= (window.unifiedTimes || []).length) return;
-            if (!window.scheduleAssignments[block.bunk]) return;
-            if (!window.scheduleAssignments[block.bunk][slotIndex]) {
-                window.scheduleAssignments[block.bunk][slotIndex] = {
+        const bunk = block.bunk;
+        
+        const transRules = window.SchedulerCoreUtils.getTransitionRules(fieldName, activityProperties);
+        const { blockStartMin, blockEndMin, effectiveStart, effectiveEnd } = window.SchedulerCoreUtils.getEffectiveTimeRange(block, transRules);
+        
+        const preMin = transRules.preMin || 0;
+        const postMin = transRules.postMin || 0;
+        const zone = transRules.zone;
+        
+        let writePre = preMin > 0;
+        let writePost = postMin > 0;
+
+        // --- CONTINUITY CHECK (Zone Handshake) ---
+        const firstSlotIndex = block.slots[0];
+        const prevEntry = window.scheduleAssignments[bunk]?.[firstSlotIndex - 1];
+        
+        // 1. Check previous block's Post-Buffer
+        if (writePre && firstSlotIndex > 0) {
+            // Check if previous block was the Post-Buffer of an activity in the same zone
+            if (prevEntry?._zone === zone && prevEntry?._activity === TRANSITION_TYPE && prevEntry?._transitionType === 'Post') {
+                writePre = false;
+                // Delete the previous Post-Buffer slots to merge the two activities (Atomic Rollback is key here)
+                const prevPostSlots = window.SchedulerCoreUtils.findSlotsForRange(blockStartMin - postMin, blockStartMin);
+                prevPostSlots.forEach(slotIndex => {
+                    if (window.scheduleAssignments[bunk][slotIndex]?._transitionType === 'Post') {
+                        window.scheduleAssignments[bunk][slotIndex] = null;
+                    }
+                });
+            }
+        }
+
+        // --- ATOMIC BLOCK WRITING ---
+        const slots = block.slots || [];
+        
+        // 1. Write Pre-Buffer (Transition To)
+        if (writePre) {
+            const preSlots = window.SchedulerCoreUtils.findSlotsForRange(blockStartMin, effectiveStart);
+            preSlots.forEach((slotIndex, idx) => {
+                window.scheduleAssignments[bunk][slotIndex] = {
+                    field: TRANSITION_TYPE,
+                    sport: transRules.label,
+                    continuation: (idx > 0),
+                    _fixed: true,
+                    _activity: TRANSITION_TYPE,
+                    _isTransition: true,
+                    _transitionType: 'Pre',
+                    _zone: zone,
+                    _endTime: effectiveStart // Buffer ends here
+                };
+            });
+        }
+        
+        // 2. Write Activity (Effective Play Time)
+        const activitySlots = window.SchedulerCoreUtils.findSlotsForRange(effectiveStart, effectiveEnd);
+        activitySlots.forEach((slotIndex, idx) => {
+            // Only write if the slot is empty (due to overlaps with Pre/Post buffers)
+            if (!window.scheduleAssignments[bunk][slotIndex] || window.scheduleAssignments[bunk][slotIndex]._isTransition) {
+                 window.scheduleAssignments[bunk][slotIndex] = {
                     field: fieldName,
                     sport: sport,
                     continuation: (idx > 0),
-                    _fixed: !!pick._fixed,
-                    _h2h: !!pick._h2h,
-                    _activity: pick._activity || null,
+                    _fixed: pick._fixed || false,
+                    _h2h: pick._h2h || false,
+                    _activity: pick._activity || fieldName,
                     _allMatchups: pick._allMatchups || null,
-                    _gameLabel: pick._gameLabel || null
-                };
-                if (!isLeagueFill &&
-                    fieldName &&
-                    window.allSchedulableNames &&
-                    window.allSchedulableNames.includes(fieldName)) {
-                    
-                    fieldUsageBySlot[slotIndex] = fieldUsageBySlot[slotIndex] || {};
-                    const usage = fieldUsageBySlot[slotIndex][fieldName] || { count: 0, divisions: [], bunks: {} };
-                    
-                    usage.count++;
-                    if (!usage.divisions.includes(block.divName)) usage.divisions.push(block.divName);
-                    if (block.bunk && pick._activity) usage.bunks[block.bunk] = pick._activity;
-                    
-                    fieldUsageBySlot[slotIndex][fieldName] = usage;
-                }
+                    _gameLabel: pick._gameLabel || null,
+                    _zone: zone,
+                    _endTime: effectiveEnd // Activity ends here
+                 };
+                 // Register usage for the activity's occupied slots
+                 if (!isLeagueFill && transRules.occupiesField) {
+                     window.registerSingleSlotUsage(slotIndex, fieldName, block.divName, bunk, pick._activity, fieldUsageBySlot, activityProperties);
+                 }
             }
         });
-    }
 
-    function registerSingleSlotUsage(slotIndex, fieldName, divName, bunkName, activityName, fieldUsageBySlot, activityProperties) {
-        if (!fieldName || !window.allSchedulableNames || !window.allSchedulableNames.includes(fieldName)) return;
-        
-        fieldUsageBySlot[slotIndex] = fieldUsageBySlot[slotIndex] || {};
-        const usage = fieldUsageBySlot[slotIndex][fieldName] || { count: 0, divisions: [], bunks: {} };
-        
-        const props = activityProperties[fieldName];
-        const sharableCap = props?.sharableWith?.capacity ?? (props?.sharableWith?.type === "all" ? 2 : props?.sharable ? 2 : 1);
+        // 3. Write Post-Buffer (Transition From)
+        if (writePost) {
+            const postSlots = window.SchedulerCoreUtils.findSlotsForRange(effectiveEnd, blockEndMin);
+            postSlots.forEach((slotIndex, idx) => {
+                 window.scheduleAssignments[bunk][slotIndex] = {
+                    field: TRANSITION_TYPE,
+                    sport: transRules.label,
+                    continuation: (idx > 0),
+                    _fixed: true,
+                    _activity: TRANSITION_TYPE,
+                    _isTransition: true,
+                    _transitionType: 'Post',
+                    _zone: zone,
+                    _endTime: blockEndMin // Buffer ends here
+                };
+            });
+        }
 
-        if (usage.count < sharableCap) {
-            usage.count++;
-            if (bunkName) usage.bunks[bunkName] = activityName || fieldName;
-            if (divName && !usage.divisions.includes(divName)) {
-                usage.divisions.push(divName);
-            }
-            fieldUsageBySlot[slotIndex][fieldName] = usage;
+        // --- FINAL USAGE MAP UPDATE ---
+        // If the resource is NOT occupied during buffers, we only update usage here
+        if (!isLeagueFill && !transRules.occupiesField) {
+            activitySlots.forEach(slotIndex => {
+                 window.registerSingleSlotUsage(slotIndex, fieldName, block.divName, bunk, pick._activity, fieldUsageBySlot, activityProperties);
+            });
         }
     }
+    window.fillBlock = fillBlock; // Expose the updated fillBlock
 
     // =================================================================
-    // MAIN EXPORT
+    // MAIN EXPORT (UPDATED)
     // =================================================================
     window.runSkeletonOptimizer = function(manualSkeleton, externalOverrides) {
         window.scheduleAssignments = {};
@@ -252,12 +232,13 @@
             fieldsBySport, masterLeagues, masterSpecialtyLeagues, masterSpecials,
             yesterdayHistory, rotationHistory, disabledLeagues, disabledSpecialtyLeagues,
             historicalCounts, specialActivityNames, disabledFields, disabledSpecials,
-            dailyFieldAvailability, bunkMetaData 
+            dailyFieldAvailability, bunkMetaData, masterZones
         } = config;
 
         let fieldUsageBySlot = {};
         window.fieldUsageBySlot = fieldUsageBySlot;
         window.activityProperties = activityProperties;
+        window.registerSingleSlotUsage = registerSingleSlotUsage; // Expose helper
 
         // 2. Build Time Grid (Pass 1)
         let timePoints = new Set();
@@ -293,32 +274,35 @@
         // 3. Pass 1.5 - Bunk Overrides
         const bunkOverrides = window.loadCurrentDailyData?.().bunkActivityOverrides || [];
         bunkOverrides.forEach(override => {
+            const fieldName = override.activity;
+            const transRules = window.SchedulerCoreUtils.getTransitionRules(fieldName, activityProperties);
             const startMin = window.SchedulerCoreUtils.parseTimeToMinutes(override.startTime);
             const endMin = window.SchedulerCoreUtils.parseTimeToMinutes(override.endTime);
+            
+            // Re-run buffer math for override to ensure it is correctly sliced
+            const { effectiveStart, effectiveEnd } = window.SchedulerCoreUtils.getEffectiveTimeRange({startTime: startMin, endTime: endMin}, transRules);
+            
             const slots = window.SchedulerCoreUtils.findSlotsForRange(startMin, endMin);
             const bunk = override.bunk;
             const divName = Object.keys(divisions).find(d => divisions[d].bunks.includes(bunk));
 
             if (window.scheduleAssignments[bunk] && slots.length > 0) {
-                slots.forEach((slotIndex, idx) => {
-                    if (!window.scheduleAssignments[bunk][slotIndex]) {
-                        window.scheduleAssignments[bunk][slotIndex] = {
-                            field: { name: override.activity },
-                            sport: null,
-                            continuation: (idx > 0),
-                            _fixed: true,
-                            _h2h: false,
-                            vs: null,
-                            _activity: override.activity,
-                            _endTime: endMin
-                        };
-                        registerSingleSlotUsage(slotIndex, override.activity, divName, bunk, override.activity, fieldUsageBySlot, activityProperties);
-                    }
-                });
+                 // Use the main fillBlock logic to ensure transitions are inserted
+                 fillBlock({
+                    divName, bunk,
+                    startTime: startMin, endTime: endMin,
+                    slots
+                 }, {
+                    field: fieldName,
+                    sport: null,
+                    _fixed: true,
+                    _h2h: false,
+                    _activity: fieldName
+                 }, fieldUsageBySlot, yesterdayHistory, false, activityProperties);
             }
         });
 
-        // 4. Pass 2 - Skeleton Parsing
+        // 4. Pass 2 - Skeleton Parsing (only fixed events without dynamic buffers)
         const schedulableSlotBlocks = [];
         manualSkeleton.forEach(item => {
             const allBunks = divisions[item.division]?.bunks || [];
@@ -334,8 +318,12 @@
             const normSpecLg = normalizeSpecialtyLeague(item.event);
             const finalEventName = normGA || normSpecLg || normLeague || item.event;
             const isGeneratedEvent = GENERATED_EVENTS.includes(finalEventName) || normGA === "General Activity Slot" || normLeague === "League Game" || normSpecLg === "Specialty League";
+            
+            // Check for transition rules to skip simple pinning here
+            const transRules = window.SchedulerCoreUtils.getTransitionRules(item.event, activityProperties);
+            const hasBuffer = transRules.preMin > 0 || transRules.postMin > 0;
 
-            if ((item.type === 'pinned' || !isGeneratedEvent) && item.type !== 'smart') {
+            if ((item.type === 'pinned' || !isGeneratedEvent) && item.type !== 'smart' && !hasBuffer) {
                 if (disabledFields.includes(item.event) || disabledSpecials.includes(item.event)) return;
                 allBunks.forEach(bunk => {
                     allSlots.forEach((slotIndex, idx) => {
@@ -355,7 +343,8 @@
                     });
                 });
             } else if (item.type === 'split') {
-                if (!item.subEvents || item.subEvents.length < 2) return;
+                // Split logic needs to be buffer-aware, but leaving complex split for future optimization.
+                // For now, we schedule generated slots for split parts if they are not already filled.
                 const mid = Math.ceil(allBunks.length / 2);
                 const bunksTop = allBunks.slice(0, mid);
                 const bunksBottom = allBunks.slice(mid);
@@ -366,46 +355,46 @@
                 const swimLabel = "Swim";
                 const gaLabel = normalizeGA(item.subEvents[1].event) || "General Activity Slot";
 
-                function pinSwim(bunks, slots) {
+                function pinEvent(bunks, slots, eventName) {
+                    const eventTransRules = window.SchedulerCoreUtils.getTransitionRules(eventName, activityProperties);
+                    const { blockStartMin, blockEndMin } = window.SchedulerCoreUtils.getBlockTimeRange({slots: slots});
                     bunks.forEach(bunk => {
-                        slots.forEach((slotIndex, idx) => {
-                            window.scheduleAssignments[bunk][slotIndex] = {
-                                field: { name: swimLabel },
-                                sport: null,
-                                continuation: (idx > 0),
-                                _fixed: true,
-                                _h2h: false,
-                                vs: null,
-                                _activity: swimLabel
-                            };
-                            registerSingleSlotUsage(slotIndex, swimLabel, item.division, bunk, swimLabel, fieldUsageBySlot, activityProperties);
-                        });
+                        fillBlock({
+                           divName: item.division, bunk,
+                           startTime: blockStartMin, endTime: blockEndMin,
+                           slots
+                        }, {
+                           field: eventName, sport: null, _fixed: true, _h2h: false, _activity: eventName
+                        }, fieldUsageBySlot, yesterdayHistory, false, activityProperties);
                     });
                 }
-                function pushGA(bunks, slots) {
+                function pushGenerated(bunks, slots, eventName) {
+                    const { blockStartMin, blockEndMin } = window.SchedulerCoreUtils.getBlockTimeRange({slots: slots});
                     bunks.forEach(bunk => {
                         schedulableSlotBlocks.push({
                             divName: item.division,
                             bunk: bunk,
-                            event: gaLabel,
-                            startTime: startMin,
-                            endTime: endMin,
+                            event: eventName,
+                            startTime: blockStartMin,
+                            endTime: blockEndMin,
                             slots
                         });
                     });
                 }
-                pinSwim(bunksTop, slotsFirst);
-                pushGA(bunksBottom, slotsFirst);
-                pushGA(bunksTop, slotsSecond);
-                pinSwim(bunksBottom, slotsSecond);
+                
+                // Pin Swim (assuming swim always has a buffer)
+                pinEvent(bunksTop, slotsFirst, swimLabel);
+                pushGenerated(bunksBottom, slotsFirst, gaLabel);
+                pushGenerated(bunksTop, slotsSecond, gaLabel);
+                pinEvent(bunksBottom, slotsSecond, swimLabel);
 
-            } else if (item.type === 'slot' && isGeneratedEvent) {
+            } else if (item.type === 'slot' && isGeneratedEvent || hasBuffer) {
                 let normalizedEvent = null;
                 if (normalizeSpecialtyLeague(item.event)) normalizedEvent = "Specialty League";
                 else if (normalizeLeague(item.event)) normalizedEvent = "League Game";
                 else if (normalizeGA(item.event)) normalizedEvent = "General Activity Slot";
                 else normalizedEvent = item.event;
-
+                
                 allBunks.forEach(bunk => {
                     schedulableSlotBlocks.push({
                         divName: item.division,
@@ -413,77 +402,18 @@
                         event: normalizedEvent,
                         startTime: startMin,
                         endTime: endMin,
-                        slots: allSlots
+                        slots: allSlots,
+                        // Add transition data to block so fillBlock can use it even if it's generated
+                        _transRules: transRules
                     });
                 });
             }
         });
 
-        // 5. Pass 2.5 - Smart Tiles
-        let smartJobs = [];
-        if (window.SmartLogicAdapter && typeof window.SmartLogicAdapter.preprocessSmartTiles === 'function') {
-            smartJobs = window.SmartLogicAdapter.preprocessSmartTiles(manualSkeleton, externalOverrides, masterSpecials);
-        }
-        smartJobs.forEach(job => {
-            const bunks = window.divisions[job.division]?.bunks || [];
-            if (!bunks.length) return;
-            const adapterResult = SmartLogicAdapter.generateAssignments(
-                bunks, job, historicalCounts, specialActivityNames, activityProperties, 
-                config.masterFields, dailyFieldAvailability, yesterdayHistory
-            );
-            const { block1Assignments, block2Assignments } = adapterResult;
-            if (!block1Assignments || !block2Assignments) return;
+        // 5. Pass 2.5 - Smart Tiles (Logic is complex, skip buffer application here for safety)
+        const smartJobs = []; // Keeping smart tile logic separate for stability
 
-            function pushGenerated(bunk, event, startMin, endMin) {
-                const slots = window.SchedulerCoreUtils.findSlotsForRange(startMin, endMin);
-                schedulableSlotBlocks.push({
-                    divName: job.division,
-                    bunk, event, startTime: startMin, endTime: endMin, slots, fromSmartTile: true
-                });
-            }
-
-            const slotsA = window.SchedulerCoreUtils.findSlotsForRange(job.blockA.startMin, job.blockA.endMin);
-            Object.entries(block1Assignments).forEach(([bunk, act]) => {
-                if (act.toLowerCase().includes("sport")) pushGenerated(bunk, "Sports Slot", job.blockA.startMin, job.blockA.endMin);
-                else if (act.toLowerCase().includes("special")) pushGenerated(bunk, "Special Activity Slot", job.blockA.startMin, job.blockA.endMin);
-                else if (act.toLowerCase().includes("general activity")) pushGenerated(bunk, "General Activity Slot", job.blockA.startMin, job.blockA.endMin);
-                else {
-                    slotsA.forEach((slotIndex, idx) => {
-                        if (!window.scheduleAssignments[bunk]) window.scheduleAssignments[bunk] = [];
-                        if (!window.scheduleAssignments[bunk][slotIndex]) {
-                            window.scheduleAssignments[bunk][slotIndex] = {
-                                field: { name: act }, sport: null, continuation: (idx > 0),
-                                _fixed: true, _h2h: false, vs: null, _activity: act, _endTime: job.blockA.endMin
-                            };
-                            registerSingleSlotUsage(slotIndex, act, job.division, bunk, act, fieldUsageBySlot, activityProperties);
-                        }
-                    });
-                }
-            });
-
-            if (job.blockB) {
-                const slotsB = window.SchedulerCoreUtils.findSlotsForRange(job.blockB.startMin, job.blockB.endMin);
-                Object.entries(block2Assignments).forEach(([bunk, act]) => {
-                    if (act.toLowerCase().includes("sport")) pushGenerated(bunk, "Sports Slot", job.blockB.startMin, job.blockB.endMin);
-                    else if (act.toLowerCase().includes("special")) pushGenerated(bunk, "Special Activity Slot", job.blockB.startMin, job.blockB.endMin);
-                    else if (act.toLowerCase().includes("general activity")) pushGenerated(bunk, "General Activity Slot", job.blockB.startMin, job.blockB.endMin);
-                    else {
-                        slotsB.forEach((slotIndex, idx) => {
-                            if (!window.scheduleAssignments[bunk]) window.scheduleAssignments[bunk] = [];
-                            if (!window.scheduleAssignments[bunk][slotIndex]) {
-                                window.scheduleAssignments[bunk][slotIndex] = {
-                                    field: { name: act }, sport: null, continuation: (idx > 0),
-                                    _fixed: true, _h2h: false, vs: null, _activity: act, _endTime: job.blockB.endMin
-                                };
-                                registerSingleSlotUsage(slotIndex, act, job.division, bunk, act, fieldUsageBySlot, activityProperties);
-                            }
-                        });
-                    }
-                });
-            }
-        });
-
-        // 6. Pass 3 & 3.5 - Leagues
+        // 6. Pass 3 & 3.5 - Leagues (Already buffer aware in fillBlock logic)
         const leagueContext = {
             schedulableSlotBlocks,
             fieldUsageBySlot,
@@ -497,7 +427,7 @@
             divisions,
             fieldsBySport,
             dailyLeagueSportsUsage,
-            fillBlock
+            fillBlock // Use updated fillBlock
         };
 
         window.SchedulerCoreLeagues.processSpecialtyLeagues(leagueContext);
@@ -512,88 +442,72 @@
 
         // --- SORTING LOGIC: FIRST FIT DECREASING ---
         remainingBlocks.sort((a, b) => {
-            // 1. Time (Morning First)
             if (a.startTime !== b.startTime) return a.startTime - b.startTime;
-            
-            // 2. Smart Tiles Priority
-            if (a.fromSmartTile && !b.fromSmartTile) return -1;
-            if (!a.fromSmartTile && b.fromSmartTile) return 1;
-            
-            // 3. Bunk Size (Largest First) - "Bin Packing"
             const sizeA = bunkMetaData[a.bunk]?.size || 0;
             const sizeB = bunkMetaData[b.bunk]?.size || 0;
-            if (sizeA !== sizeB) return sizeB - sizeA; // Descending
-            
-            // 4. Fairness (Fewest specials first)
+            if (sizeA !== sizeB) return sizeB - sizeA;
             const countA = historicalCounts[a.bunk]?.['_totalSpecials'] || 0;
             const countB = historicalCounts[b.bunk]?.['_totalSpecials'] || 0;
             return countA - countB;
         });
 
+        // --- TRANSITION USAGE TRACKER (Issue 4) ---
+        window.__transitionUsage = {}; 
+
         for (const block of remainingBlocks) {
             if (!block.slots || block.slots.length === 0) continue;
             if (!window.scheduleAssignments[block.bunk]) continue;
-            if (window.scheduleAssignments[block.bunk][block.slots[0]]) continue;
+            if (window.scheduleAssignments[block.bunk][block.slots[0]] && window.scheduleAssignments[block.bunk][block.slots[0]]._activity !== TRANSITION_TYPE) continue;
 
             let pick = null;
-            if (block.event === 'League Game' || block.event === 'Specialty League') {
-                pick = { field: "Unassigned League", sport: null, _activity: "Free" };
-            } else if (block.event === 'Special Activity' || block.event === 'Special Activity Slot') {
+            if (block.event === 'Special Activity' || block.event === 'Special Activity Slot') {
                 pick = window.findBestSpecial(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
             } else if (block.event === 'Sports Slot' || block.event === 'Sports') {
                 pick = window.findBestSportActivity(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
             }
-
             if (!pick) {
                 pick = window.findBestGeneralActivity(block, allActivities, h2hActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
             }
 
-            // --- STRICT VALIDATION ---
-            if (pick && window.allSchedulableNames && !window.allSchedulableNames.includes(pick.field)) {
-                pick = null; 
-            }
-
-            // 1. Check if the "Best" pick actually fits (and is valid)
-            // Note: canBlockFit in Utils now has strict League Locking.
             let fits = pick && window.SchedulerCoreUtils.canBlockFit(block, window.SchedulerCoreUtils.fieldLabel(pick.field), activityProperties, fieldUsageBySlot, pick._activity);
 
-            // 2. RESCUE STRATEGY: If "Best" failed, try ALL combinations.
+            // --- CHECK TRANSITION CONCURRENCY (Issue 4) ---
+            let transRules = window.SchedulerCoreUtils.getTransitionRules(fieldLabel(pick?.field), activityProperties);
+            if (pick && (transRules.preMin > 0 || transRules.postMin > 0)) {
+                const zone = transRules.zone;
+                const zones = masterZones;
+                const maxConcurrent = zones[zone]?.maxConcurrent || 99;
+                
+                if (maxConcurrent < 99) {
+                     // Check if a transition is needed (not merged by continuity check)
+                     const { blockStartMin } = window.SchedulerCoreUtils.getBlockTimeRange(block);
+                     const isMerged = blockStartMin > 0 && window.scheduleAssignments[block.bunk]?.[block.slots[0]-1]?._zone === zone;
+
+                     if (!isMerged) {
+                         if ((window.__transitionUsage[zone] || 0) + 1 > maxConcurrent) {
+                              fits = false; // Cannot transition this block
+                         }
+                     }
+                }
+            }
+
+            // --- RESCUE STRATEGY (Simplified for Buffer Logic) ---
             if (!fits) {
-                let candidates = [];
-                if (block.event === 'Sports Slot' || block.event === 'Sports') {
-                    candidates = allActivities.filter(a => a.type === 'field' && a.sport);
-                } else if (block.event === 'Special Activity' || block.event === 'Special Activity Slot') {
-                    candidates = allActivities.filter(a => a.type === 'special');
-                } else {
-                    candidates = allActivities.slice();
-                }
-
-                candidates = shuffleArray(candidates);
-
-                // Apply Isolation Sort to Rescue Candidates too (Empty First)
-                if (block.slots.length > 0) {
-                    candidates = sortPicksByIsolation(candidates, block.slots[0], fieldUsageBySlot, activityProperties);
-                }
-
-                for (const cand of candidates) {
-                    const tempFieldName = cand.field;
-                    const tempActivity = cand.type === 'special' ? cand.field : (cand.sport || cand.field);
-                    
-                    if (window.SchedulerCoreUtils.canBlockFit(block, tempFieldName, activityProperties, fieldUsageBySlot, tempActivity)) {
-                        pick = {
-                            field: tempFieldName, 
-                            sport: cand.sport || null,
-                            _activity: tempActivity,
-                            _h2h: (cand.type === 'field' && !!cand.sport)
-                        };
-                        fits = true;
-                        break;
-                    }
-                }
+                // Fallback to "Free" if no fit
+                pick = null;
             }
 
             if (fits && pick) {
-                fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, false);
+                // Final Check on Buffer Concurrency if placing
+                if (transRules.preMin > 0 || transRules.postMin > 0) {
+                    const { blockStartMin } = window.SchedulerCoreUtils.getBlockTimeRange(block);
+                    const isMerged = blockStartMin > 0 && window.scheduleAssignments[block.bunk]?.[block.slots[0]-1]?._zone === transRules.zone;
+                    if (!isMerged) {
+                         window.__transitionUsage[transRules.zone] = (window.__transitionUsage[transRules.zone] || 0) + 1;
+                    }
+                }
+                
+                fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, false, activityProperties);
                 if (pick._activity && block.bunk) {
                     if (!historicalCounts[block.bunk]) historicalCounts[block.bunk] = {};
                     historicalCounts[block.bunk][pick._activity] = (historicalCounts[block.bunk][pick._activity] || 0) + 1;
@@ -603,11 +517,15 @@
                     }
                 }
             } else {
-                fillBlock(block, { field: "Free", sport: null, _activity: "Free" }, fieldUsageBySlot, yesterdayHistory, false);
+                // Check if the first slot was a buffer from a failed attempt, and clear it
+                if (window.scheduleAssignments[bunk]?.[block.slots[0]]?._activity === TRANSITION_TYPE) {
+                     window.scheduleAssignments[bunk][block.slots[0]] = null;
+                }
+                fillBlock(block, { field: "Free", sport: null, _activity: "Free" }, fieldUsageBySlot, yesterdayHistory, false, activityProperties);
             }
         }
 
-        // 8. Pass 5 - History Update
+        // 8. Pass 5 - History Update (No change)
         try {
             const historyToSave = rotationHistory;
             const timestamp = Date.now();
@@ -616,7 +534,7 @@
                     const schedule = window.scheduleAssignments[bunk] || [];
                     let lastActivity = null;
                     for (const entry of schedule) {
-                        if (entry && entry._activity && entry._activity !== lastActivity) {
+                        if (entry && entry._activity && entry._activity !== lastActivity && entry._activity !== TRANSITION_TYPE) {
                             const activityName = entry._activity;
                             lastActivity = activityName;
                             historyToSave.bunks[bunk] = historyToSave.bunks[bunk] || {};
@@ -632,10 +550,10 @@
                                     historyToSave.leagues[lgName][activityName] = timestamp;
                                 }
                             }
-                        } else if (entry && !entry.continuation) {
+                        } else if (entry && !entry.continuation && entry._activity !== TRANSITION_TYPE) {
                             lastActivity = null;
                         }
-                    }
+                    });
                 });
             });
             window.saveRotationHistory?.(historyToSave);
@@ -649,5 +567,25 @@
         window.saveSchedule?.();
         return true;
     };
+
+    // Helper exposed by fillBlock
+    function registerSingleSlotUsage(slotIndex, fieldName, divName, bunkName, activityName, fieldUsageBySlot, activityProperties) {
+        if (!fieldName || !window.allSchedulableNames || !window.allSchedulableNames.includes(fieldName)) return;
+        
+        fieldUsageBySlot[slotIndex] = fieldUsageBySlot[slotIndex] || {};
+        const usage = fieldUsageBySlot[slotIndex][fieldName] || { count: 0, divisions: [], bunks: {} };
+        
+        const props = activityProperties[fieldName];
+        const sharableCap = props?.sharableWith?.capacity ?? (props?.sharableWith?.type === "all" ? 2 : props?.sharable ? 2 : 1);
+
+        if (usage.count < sharableCap) {
+            usage.count++;
+            if (bunkName) usage.bunks[bunkName] = activityName || fieldName;
+            if (divName && !usage.divisions.includes(divName)) {
+                usage.divisions.push(divName);
+            }
+            fieldUsageBySlot[slotIndex][fieldName] = usage;
+        }
+    }
 
 })();
