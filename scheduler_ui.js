@@ -510,7 +510,14 @@
             label = block.event;
           } else {
             const entry = getEntry(bunk, slotIdx);
-            label = formatEntry(entry);
+            if (entry) {
+                label = formatEntry(entry);
+            } else {
+                // FALLBACK: If assignment is missing (e.g. data wipe), show the block event name
+                // so the cell isn't blank white
+                label = block.event; 
+                if (block.type === 'smart') label += ' (Smart)';
+            }
           }
 
           td.textContent = label;
@@ -528,48 +535,4 @@
     });
   }
 
-  // ==========================================================================
-  // SAVE / LOAD
-  // ==========================================================================
-  function saveSchedule() {
-    window.saveCurrentDailyData?.(
-      "scheduleAssignments",
-      window.scheduleAssignments
-    );
-    window.saveCurrentDailyData?.(
-      "leagueAssignments",
-      window.leagueAssignments
-    );
-    window.saveCurrentDailyData?.("unifiedTimes", window.unifiedTimes);
-  }
-
-  function reconcileOrRenderSaved() {
-    try {
-      const data = window.loadCurrentDailyData?.() || {};
-      window.scheduleAssignments = data.scheduleAssignments || {};
-      window.leagueAssignments = data.leagueAssignments || {};
-      const savedTimes = data.unifiedTimes || [];
-      window.unifiedTimes = savedTimes.map((slot) => ({
-        ...slot,
-        start: new Date(slot.start),
-        end: new Date(slot.end),
-      }));
-    } catch (e) {
-      console.error("Schedule load error:", e);
-      window.scheduleAssignments = {};
-      window.leagueAssignments = {};
-      window.unifiedTimes = [];
-    }
-    updateTable();
-  }
-
-  function initScheduleSystem() {
-    reconcileOrRenderSaved();
-  }
-
-  // EXPORT
-  window.updateTable = updateTable;
-  window.initScheduleSystem = initScheduleSystem;
-  window.saveSchedule = saveSchedule;
-
-})();
+  // ==========================================================================<br>  // SAVE / LOAD<br>  // ==========================================================================<br>  function saveSchedule() {<br>    window.saveCurrentDailyData?.(<br>      "scheduleAssignments",<br>      window.scheduleAssignments<br>    );<br>    window.saveCurrentDailyData?.(<br>      "leagueAssignments",<br>      window.leagueAssignments<br>    );<br>    window.saveCurrentDailyData?.("unifiedTimes", window.unifiedTimes);<br>  }<br><br>  function reconcileOrRenderSaved() {<br>    try {<br>      const data = window.loadCurrentDailyData?.() || {};<br>      window.scheduleAssignments = data.scheduleAssignments || {};<br>      window.leagueAssignments = data.leagueAssignments || {};<br>      const savedTimes = data.unifiedTimes || [];<br>      window.unifiedTimes = savedTimes.map((slot) => ({<br>        ...slot,<br>        start: new Date(slot.start),<br>        end: new Date(slot.end),<br>      }));<br>    } catch (e) {<br>      console.error("Schedule load error:", e);<br>      window.scheduleAssignments = {};<br>      window.leagueAssignments = {};<br>      window.unifiedTimes = [];<br>    }<br>    updateTable();<br>  }<br><br>  function initScheduleSystem() {<br>    reconcileOrRenderSaved();<br>  }<br><br>  // EXPORT<br>  window.updateTable = updateTable;<br>  window.initScheduleSystem = initScheduleSystem;<br>  window.saveSchedule = saveSchedule;<br><br>})();
