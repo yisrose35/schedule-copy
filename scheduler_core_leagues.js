@@ -103,8 +103,6 @@
                      l.divisions.includes(group.divName)
             );
             
-            // If no league config found, we can't schedule matchups.
-            // Consider logging this or handling graceful failure.
             if (!leagueEntry) return;
 
             const allBunksInGroup = Array.from(group.bunks);
@@ -138,7 +136,6 @@
 
             const leagueFields = leagueEntry.fields || [];
             
-            // Generate matchups if we have teams, regardless of fields
             if (leagueTeams.length >= 2) {
                 const gamesPerField = (leagueFields.length > 0) ? Math.ceil(matchups.length / leagueFields.length) : matchups.length;
                 const slotCount = group.slots.length || 1;
@@ -216,7 +213,9 @@
     // =================================================================
     Leagues.processRegularLeagues = function(context) {
         const {
-            schedulableSlotBlocks, activityProperties,
+            schedulableSlotBlocks, 
+            fieldUsageBySlot, // <--- ADDED THIS LINE (The Fix)
+            activityProperties,
             masterLeagues, disabledLeagues, rotationHistory,
             yesterdayHistory, divisions, fieldsBySport, dailyLeagueSportsUsage,
             fillBlock
@@ -266,7 +265,6 @@
 
             const blockBase = { slots, divName: baseDivName, startTime: group.startTime, endTime: group.endTime };
             
-            // Allow processing even if no sports/fields are mapped yet
             const sports = (league.sports || []);
             
             const usedToday = dailyLeagueSportsUsage[leagueName] || new Set();
@@ -318,7 +316,6 @@
                         ...sports.filter(s => s !== preferredSport && usedToday.has(s))
                     ];
                     
-                    // Always try preferred sport if candidates are empty
                     if (candidateSports.length === 0) candidateSports.push(preferredSport);
 
                     let foundField = null;
@@ -329,9 +326,10 @@
                         const possibleFields = fieldsBySport[s] || [];
                         let found = null;
                         for (const f of possibleFields) {
-                            // Timeline Check via canBlockFit
+                            // HERE IS WHERE THE BUG WAS (fieldUsageBySlot was undefined)
                             if (!simUsedFields[slotIdx].has(f) &&
-                                window.SchedulerCoreUtils.canBlockFit(blockBase, f, activityProperties, s, true)) {
+                                (fieldUsageBySlot[slots[slotIdx]]?.[f]?.count || 0) === 0 &&
+                                window.SchedulerCoreUtils.canLeagueGameFit(blockBase, f, fieldUsageBySlot, activityProperties)) {
                                 found = f;
                                 break;
                             }
@@ -393,13 +391,16 @@
                     let found = null;
                     for (const f of possibleFields) {
                         if (!usedFieldsPerSlot[slotIdx].has(f) &&
-                            window.SchedulerCoreUtils.canBlockFit(blockBase, f, activityProperties, s, true)) {
+                            window.SchedulerCoreUtils.canLeagueGameFit(blockBase, f, fieldUsageBySlot, activityProperties)) {
                             found = f;
                             break;
                         }
                     }
                     if (!found && possibleFields.length > 0) {
-                        // Fallback logic
+                        const f = possibleFields[usedFieldsPerSlot[slotIdx].size % possibleFields.length];
+                        if (window.SchedulerCoreUtils.canLeagueGameFit(blockBase, f, fieldUsageBySlot, activityProperties)) {
+                            found = f;
+                        }
                     }
                     if (found) {
                         finalSport = s;
