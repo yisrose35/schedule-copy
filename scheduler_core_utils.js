@@ -2,12 +2,10 @@
 // scheduler_core_utils.js
 // PART 1 of 3: THE FOUNDATION
 //
-// Role:
-// - Data Loading
-// - Constraint Logic (canBlockFit)
-// - STRICT DIVISION FIREWALL & LEAGUE LOCK
-// - PHYSICAL ROOT NAME MATCHING
-// - *** NEW: TEXT-BASED LEAGUE LOCATION PARSING (@ Field) ***
+// UPDATES:
+// - Added Transition Logic, Zone Handshake, Buffer Occupancy, Concurrency Check
+// - Implemented Minimum Duration Check (Issue 1)
+// - Implemented Anchor Time Logic (User Requirement)
 // ============================================================================
 
 (function() {
@@ -16,6 +14,10 @@
     // ===== CONFIG =====
     const INCREMENT_MINS = 30;
     window.INCREMENT_MINS = INCREMENT_MINS;
+    
+    // --- New Constants for Transition Blocks ---
+    const TRANSITION_TYPE = "Transition/Buffer";
+    window.TRANSITION_TYPE = TRANSITION_TYPE;
 
     const Utils = {};
 
@@ -73,6 +75,7 @@
             const slot = window.unifiedTimes[i];
             const d = new Date(slot.start);
             const slotStart = d.getHours() * 60 + d.getMinutes();
+            // Check if the slot *overlaps* the range [startMin, endMin)
             if (slotStart >= startMin && slotStart < endMin) {
                 slots.push(i);
             }
@@ -95,23 +98,60 @@
                 const firstStart = new Date(firstSlot.start);
                 const lastStart = new Date(lastSlot.start);
                 blockStartMin = firstStart.getHours() * 60 + firstStart.getMinutes();
-                blockEndMin = lastStart.getHours() * 60 +
-                              lastStart.getMinutes() +
-                              INCREMENT_MINS;
+                blockEndMin = new Date(lastSlot.end).getHours() * 60 + new Date(lastSlot.end).getMinutes();
             }
         }
         return { blockStartMin, blockEndMin };
     };
 
     // =================================================================
-    // 2. CONSTRAINT LOGIC
+    // 2. NEW TRANSITION/BUFFER LOGIC
+    // =================================================================
+    Utils.getTransitionRules = function(fieldName, activityProperties) {
+        const props = activityProperties[fieldName];
+        // Default safe structure
+        const defaultRules = { preMin: 0, postMin: 0, label: "Travel", zone: window.DEFAULT_ZONE_NAME, occupiesField: false, minDurationMin: 0 };
+        
+        if (!props || !props.transition) {
+            return defaultRules;
+        }
+        // Ensure all properties exist
+        return { ...defaultRules, ...props.transition };
+    };
+
+    // New helper to calculate the effective play window (Implements Anchor Time)
+    Utils.getEffectiveTimeRange = function(block, transitionRules) {
+        const { blockStartMin, blockEndMin } = Utils.getBlockTimeRange(block);
+        if (blockStartMin === null || blockEndMin === null) {
+             // Fallback to original block time if we can't parse minutes
+             return { effectiveStart: blockStartMin, effectiveEnd: blockEndMin };
+        }
+
+        const preMin = transitionRules.preMin || 0;
+        const postMin = transitionRules.postMin || 0;
+        const totalDuration = blockEndMin - blockStartMin;
+        const totalBuffer = preMin + postMin;
+
+        // **USER REQUIREMENT: Anchor Time Logic**
+        // blockStartMin is the start of Pre-Buffer
+        const effectiveStart = blockStartMin + preMin;
+        const effectiveEnd = blockEndMin - postMin;
+        
+        const activityDuration = effectiveEnd - effectiveStart;
+
+        return { blockStartMin, blockEndMin, effectiveStart, effectiveEnd, activityDuration, totalDuration, totalBuffer };
+    };
+    
+    // =================================================================
+    // 3. CONSTRAINT LOGIC
     // =================================================================
     Utils.isTimeAvailable = function(slotIndex, fieldProps) {
         if (!window.unifiedTimes || !window.unifiedTimes[slotIndex]) return false;
         const slot = window.unifiedTimes[slotIndex];
         const slotStartMin = new Date(slot.start).getHours() * 60 +
                              new Date(slot.start).getMinutes();
-        const slotEndMin = slotStartMin + INCREMENT_MINS;
+        const slotEndMin = new Date(slot.end).getHours() * 60 + new Date(slot.end).getMinutes();
+
         const rules = (fieldProps.timeRules || []).map(r => {
             if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
             return {
@@ -200,8 +240,6 @@
     }
 
     // --- NEW: TEXT-BASED LEAGUE SCANNER (@ Field) ---
-    // Scans the entire schedule at this slot for strings like "@ Grass" or "@ Blacktop"
-    // This is the safety net for when leagues are filed under generic names.
     function isFieldTakenByLeagueText(slotIndex, targetFieldName) {
         if (!window.scheduleAssignments) return false;
         
@@ -210,16 +248,12 @@
 
         for (const bunk of bunks) {
             const entry = window.scheduleAssignments[bunk][slotIndex];
-            // Check _allMatchups or _gameLabel or even description
-            // Looking for pattern: "@ [FieldName]"
             if (entry) {
                 const textToCheck = (entry._allMatchups || "") + " " + (entry._gameLabel || "") + " " + (entry.description || "");
                 if (textToCheck.length > 5 && textToCheck.includes("@")) {
-                    // Simple check: does the string contain "@ [Target]"?
-                    // We lowercase everything to match "Grass" vs "grass"
                     const lowerText = textToCheck.toLowerCase();
                     if (lowerText.includes("@ " + targetRoot) || lowerText.includes("@" + targetRoot)) {
-                        return true; // Found "@ Blacktop" in a league description -> Field is BUSY
+                        return true; 
                     }
                 }
             }
@@ -234,6 +268,37 @@
         if (!fieldName) return false;
         const props = activityProperties[fieldName];
         if (!props) return true;
+
+        const transRules = Utils.getTransitionRules(fieldName, activityProperties);
+        const { blockStartMin, blockEndMin, effectiveStart, effectiveEnd, activityDuration } = Utils.getEffectiveTimeRange(block, transRules);
+
+        // --- 0. PRE-CHECK: MINIMUM DURATION (Issue 1) ---
+        if (activityDuration < transRules.minDurationMin) {
+             return false;
+        }
+        
+        if (activityDuration <= 0) {
+             return false;
+        }
+
+        // --- 0.5. PRE-CHECK: TRANSPORT CONCURRENCY (Issue 4) ---
+        if (transRules.preMin > 0 || transRules.postMin > 0) {
+            const zones = window.getZones?.() || {};
+            const zone = zones[transRules.zone];
+            const maxConcurrent = zone?.maxConcurrent || 99;
+
+            if (maxConcurrent < 99) {
+                // Check if a transition is needed (not merged by continuity check)
+                const isMerged = blockStartMin > 0 && window.scheduleAssignments[block.bunk]?.[block.slots[0]-1]?._zone === transRules.zone;
+                
+                if (!isMerged) {
+                    const currentTransitionCount = window.__transitionUsage?.[transRules.zone] || 0;
+                    if (currentTransitionCount >= maxConcurrent) {
+                        return false;
+                    }
+                }
+            }
+        }
 
         let maxCapacity = 1;
         if (props.sharableWith) {
@@ -259,9 +324,7 @@
             if (allowedBunks.length > 0 && block.bunk && !allowedBunks.includes(block.bunk)) return false;
         }
 
-        const { blockStartMin, blockEndMin } = Utils.getBlockTimeRange(block);
-        
-        // Time Availability Check
+        // Time Availability Check (Checks full block time against resource rules)
         const rules = (props.timeRules || []).map(r => {
             if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
             return { ...r, startMin: Utils.parseTimeToMinutes(r.start), endMin: Utils.parseTimeToMinutes(r.end) };
@@ -269,10 +332,11 @@
 
         if (rules.length > 0) {
             if (!props.available) return false;
-            const hasAvailableRules = rules.some(r => r.type === 'Available');
             if (blockStartMin != null && blockEndMin != null) {
+                const hasAvailableRules = rules.some(r => r.type === 'Available');
+                let insideAvailable = !hasAvailableRules;
+
                 if (hasAvailableRules) {
-                    let insideAvailable = false;
                     for (const rule of rules) {
                         if (rule.type !== 'Available' || rule.startMin == null || rule.endMin == null) continue;
                         if (blockStartMin >= rule.startMin && blockEndMin <= rule.endMin) {
@@ -292,84 +356,25 @@
         }
 
         // =========================================================
-        // 1. PRE-SLOT LOOKBACK (The "Bleed" Check)
+        // 1. DYNAMIC SLOT ITERATION (Check only the OCCUPIED slots)
         // =========================================================
-        if (blockStartMin != null && block.slots && block.slots.length > 0) {
-            const firstSlotIndex = block.slots[0];
-            if (firstSlotIndex > 0) {
-                const firstSlotStart = new Date(window.unifiedTimes[firstSlotIndex].start).getHours() * 60 + 
-                                       new Date(window.unifiedTimes[firstSlotIndex].start).getMinutes();
-                
-                if (blockStartMin < firstSlotStart || true) { 
-                    const prevSlotIndex = firstSlotIndex - 1;
-                    
-                    // A) Check Text-Based League Usage in Previous Slot
-                    if (isFieldTakenByLeagueText(prevSlotIndex, fieldName)) {
-                         // We need to check if that league is still running.
-                         // Simplification: If a league text is present, assume it occupies the slot fully.
-                         // For bleeding, we should ideally check the endTime of that entry.
-                         // However, the "Text Scanner" is expensive, so we might just assume block if it's there.
-                         // Better: Rely on standard usage for bleeding, or check if the league entry continues.
-                         // We'll rely on Combined Usage below which should catch it IF the league writer did its job,
-                         // but "isFieldTakenByLeagueText" handles the gap.
-                    }
-
-                    const prevUsage = getCombinedUsage(prevSlotIndex, fieldName, fieldUsageBySlot);
-                    
-                    if (prevUsage && prevUsage.count > 0) {
-                        const assignments = window.scheduleAssignments || {};
-                        let overlappingWeight = 0;
-
-                        // FIREWALL: Check Division of previous occupants
-                        if (prevUsage.divisions && prevUsage.divisions.length > 0) {
-                            if (!prevUsage.divisions.includes(block.divName)) {
-                                const isStillHere = Object.keys(prevUsage.bunks).some(bunkName => {
-                                    const entry = assignments[bunkName]?.[prevSlotIndex];
-                                    const entEnd = entry?._endTime ?? (firstSlotStart + INCREMENT_MINS);
-                                    return entEnd > blockStartMin;
-                                });
-                                if (isStillHere) return false; 
-                            }
-                        }
-
-                        // Cap Check
-                        Object.keys(prevUsage.bunks).forEach(bunkName => {
-                            const entry = assignments[bunkName]?.[prevSlotIndex];
-                            if (entry) {
-                                const entEnd = entry._endTime ?? firstSlotStart; 
-                                if (entEnd > blockStartMin) {
-                                    overlappingWeight += calculateAssignmentWeight(prevUsage.bunks[bunkName], entry, maxCapacity);
-                                }
-                            }
-                        });
-                        
-                        let myWeight = (String(proposedActivity).toLowerCase().includes("league")) ? maxCapacity : 1;
-                        if (overlappingWeight + myWeight > maxCapacity) return false; 
-                    }
-                }
-            }
+        const slotsToScan = [];
+        if (transRules.occupiesField) {
+            // Buffer Occupies Field (Scan ALL slots in block range, including buffers)
+            slotsToScan.push(...Utils.findSlotsForRange(blockStartMin, blockEndMin));
+        } else {
+            // Buffer Occupies Camper Only (Scan only slots within EFFECTIVE play time)
+            slotsToScan.push(...Utils.findSlotsForRange(effectiveStart, effectiveEnd));
         }
-
-        // =========================================================
-        // 2. MAIN SLOT LOOP
-        // =========================================================
-        for (const slotIndex of block.slots || []) {
+        
+        // Remove duplicates and sort
+        const uniqueSlotsToScan = [...new Set(slotsToScan)].sort((a,b) => a-b);
+        
+        for (const slotIndex of uniqueSlotsToScan) {
             if (slotIndex === undefined) return false;
 
-            // *** NEW: TEXT SCANNER CHECK ***
-            // Before anything else, scan ALL assignments for "@ [FieldName]"
-            if (isFieldTakenByLeagueText(slotIndex, fieldName)) {
-                // If the text says "@ Blacktop", the field is taken by a League.
-                // We must BLOCK unless we are part of that same league.
-                // (Optimizing: If we are a league, we might match, but usually 
-                // this scanner finds 'hidden' leagues. Safety first -> Block.)
-                const myLabel = block._gameLabel || "";
-                if (!myLabel) return false; // Block regular activities immediately
-                
-                // If we are a league too, we might fit if we are the same game.
-                // But typically if we are searching for a spot, the spot shouldn't be taken.
-                return false; 
-            }
+            // *** NEW: TEXT SCANNER CHECK (Buffer doesn't hide leagues) ***
+            if (isFieldTakenByLeagueText(slotIndex, fieldName)) return false;
 
             const usage = getCombinedUsage(slotIndex, fieldName, fieldUsageBySlot);
             
@@ -431,7 +436,7 @@
     };
 
     // =================================================================
-    // 3. DATA LOADER
+    // 4. DATA LOADER
     // =================================================================
     function parseTimeRule(rule) {
         if (!rule) return null;
@@ -553,9 +558,11 @@
                                 historicalCounts[b][act] = windowCount;
                             } else {
                                 historicalCounts[b][act] = 0;
+                                
                             }
                         } else {
                             historicalCounts[b][act] = 0;
+                            
                         }
                     }
                     if (specialNamesSet.has(act)) {
@@ -636,6 +643,12 @@
             }
             if(!f.sharableWith) f.sharableWith = { capacity: capacity };
             else f.sharableWith.capacity = capacity;
+            
+            // NEW: Transition rules
+            const transition = f.transition || {
+                preMin: 0, postMin: 0, label: "Travel", zone: window.DEFAULT_ZONE_NAME, occupiesField: false, minDurationMin: 0
+            };
+
 
             activityProperties[f.name] = {
                 available: isMasterAvailable,
@@ -645,7 +658,8 @@
                 allowedDivisions,
                 limitUsage: safeLimitUsage,
                 preferences: f.preferences || { enabled: false, exclusive: false, list: [] },
-                timeRules: finalRules
+                timeRules: finalRules,
+                transition // NEW
             };
 
             if (isMasterAvailable) {
@@ -689,6 +703,8 @@
             schedule: yesterdayData.scheduleAssignments || {},
             leagues: yesterdayData.leagueAssignments || {}
         };
+        
+        const masterZones = window.getZones?.() || {}; // NEW
 
         return {
             divisions,
@@ -713,7 +729,8 @@
             dailyDisabledSportsByField,
             masterFields,
             bunkMetaData, 
-            sportMetaData
+            sportMetaData,
+            masterZones // NEW
         };
     };
 
