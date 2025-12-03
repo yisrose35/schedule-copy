@@ -77,9 +77,11 @@
                 const props = window.activityProperties[fieldName];
                 
                 if (isLeague) {
-                    // Full Buyout
+                    // Full Buyout: Weight equals the max capacity of the resource
                     if (props) {
                         weight = props.sharableWith?.capacity || (props.sharable ? 2 : 1);
+                        // Force at least 2 if it's a league, to block sharable fields
+                        if (weight < 2) weight = 2; 
                     } else {
                         weight = 2; // Default safe max
                     }
@@ -166,7 +168,8 @@
             const isGeneratedEvent = GENERATED_EVENTS.includes(finalEventName) || normGA === "General Activity Slot" || normLeague === "League Game" || normSpecLg === "Specialty League";
 
             // -- PHASE 1: PINNED ITEMS (Immediate Write) --
-            if ((item.type === 'pinned' || !isGeneratedEvent) && item.type !== 'smart' && item.type !== 'split') {
+            // Note: Leagues are NOT pinned items here, they are generated in Phase 2
+            if ((item.type === 'pinned' || !isGeneratedEvent) && item.type !== 'smart' && item.type !== 'split' && !item.event.toLowerCase().includes("league")) {
                 allBunks.forEach(bunk => {
                     const pick = { field: item.event, sport: null, _activity: item.event, _fixed: true };
                     // Write directly to timeline/assignments
@@ -178,7 +181,6 @@
                 schedulableSlotBlocks.push({ ...item, slots: allSlots, startMin, endMin, bunks: allBunks });
             } 
             else if (item.type === 'smart') {
-                // Ensure bunks are attached for the adapter
                 schedulableSlotBlocks.push({ ...item, slots: allSlots, startMin, endMin, bunks: allBunks });
             }
             else {
@@ -202,21 +204,21 @@
             activityProperties,
             masterLeagues, masterSpecialtyLeagues,
             rotationHistory, yesterdayHistory, divisions, fieldsBySport,
-            fillBlock,
+            fillBlock, // Pass the writer function
             dailyLeagueSportsUsage: {}
         };
 
         // -- PHASE 2: LEAGUES & SPECIALTY LEAGUES (Full Buyouts) --
-        window.SchedulerCoreLeagues.processSpecialtyLeagues(context);
-        window.SchedulerCoreLeagues.processRegularLeagues(context);
+        // This relies on SchedulerCoreLeagues to use fillBlock with isLeague=true
+        if (window.SchedulerCoreLeagues) {
+            window.SchedulerCoreLeagues.processSpecialtyLeagues(context);
+            window.SchedulerCoreLeagues.processRegularLeagues(context);
+        }
 
-        // -- PHASE 3: SMART TILES (FIXED: Validation Check Added) --
+        // -- PHASE 3: SMART TILES --
         const smartBlocks = schedulableSlotBlocks.filter(b => b.type === 'smart');
-        
         if (smartBlocks.length > 0 && window.SmartLogicAdapter) {
-            // Process ALL smart blocks at once
             const jobs = window.SmartLogicAdapter.preprocessSmartTiles(smartBlocks, {}, masterSpecials);
-            
             jobs.forEach(job => {
                const divBunks = divisions[job.division]?.bunks || [];
                const res = window.SmartLogicAdapter.generateAssignments(
@@ -224,64 +226,38 @@
                    activityProperties, {}, dailyFieldAvailability, yesterdayHistory
                );
                
-               // Helper to write assignments with validation
                const writeAssignments = (assignments, blockInfo) => {
                    if (!assignments || !blockInfo) return;
                    const slots = window.SchedulerCoreUtils.findSlotsForRange(blockInfo.startMin, blockInfo.endMin);
                    
                    Object.entries(assignments).forEach(([bunk, act]) => {
                        let finalPick = { field: act, _activity: act };
-                       
-                       // If fallback was generic "Sports", find a specific one
                        if (act.includes("Sport")) {
                            finalPick = window.findBestSportActivity(
                                {bunk, divName: job.division, startTime: blockInfo.startMin, endTime: blockInfo.endMin}, 
                                allActivities, {}, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts
                            );
-                       } else {
-                           // [FIX]: For Specific Activities (e.g. Woodworking), check Constraints!
-                           // We skip this check for generic "Sports" because findBestSportActivity handles it internally.
-                           const isValid = window.SchedulerCoreUtils.canBlockFit(
-                               { bunk, divName: job.division, startTime: blockInfo.startMin, endTime: blockInfo.endMin, slots }, 
-                               window.SchedulerCoreUtils.fieldLabel(act), 
-                               activityProperties, 
-                               act, 
-                               false // Not a league
-                           );
-                           
-                           if (!isValid) {
-                               // If specific assignment fails validation (e.g. Bunk not allowed), drop it.
-                               // In a smarter system, we might fallback to Sports here, but for now we safeguard against illegal placements.
-                               finalPick = null;
-                           }
                        }
-                       
                        if (finalPick) {
                            fillBlock({ slots: slots, bunk, startTime: blockInfo.startMin, endTime: blockInfo.endMin }, finalPick, {}, {}, false);
                        }
                    });
                };
-
                writeAssignments(res.block1Assignments, job.blockA);
                writeAssignments(res.block2Assignments, job.blockB);
             });
         }
 
-        // -- PHASE 4: SPLIT ACTIVITIES (FIXED: Halftime Switch) --
+        // -- PHASE 4: SPLIT ACTIVITIES --
         const splitBlocks = schedulableSlotBlocks.filter(b => b.type === 'split');
         splitBlocks.forEach(sb => {
-            // Find Midpoint
-            const midTime = Math.floor(sb.startMin + (sb.endMin - sb.startMin) / 2);
-            
-            // Divide Bunks
+            const mid = Math.floor(sb.startMin + (sb.endMin - sb.startMin) / 2);
             const midIdx = Math.ceil(sb.bunks.length / 2);
-            const bunksGroup1 = sb.bunks.slice(0, midIdx);
-            const bunksGroup2 = sb.bunks.slice(midIdx);
+            const bunks1 = sb.bunks.slice(0, midIdx);
+            const bunks2 = sb.bunks.slice(midIdx);
+            const e1 = sb.subEvents[0].event;
+            const e2 = sb.subEvents[1].event;
             
-            const eventA = sb.subEvents[0].event;
-            const eventB = sb.subEvents[1].event;
-            
-            // Helper to resolve specific activity
             const resolve = (bunk, evtName, startTime, endTime) => {
                 const norm = normalizeGA(evtName);
                 if (evtName === 'Swim') return { field:'Swim', _activity:'Swim' };
@@ -291,27 +267,23 @@
                 return { field: evtName, _activity: evtName };
             };
 
-            // First Half (Start -> Mid)
-            // Group 1 gets Event A, Group 2 gets Event B
             const slots1 = window.SchedulerCoreUtils.findSlotsForRange(sb.startMin, midTime);
-            bunksGroup1.forEach(b => fillBlock({ slots: slots1, bunk: b, startTime: sb.startMin, endTime: midTime }, resolve(b, eventA, sb.startMin, midTime), {}, {}, false));
-            bunksGroup2.forEach(b => fillBlock({ slots: slots1, bunk: b, startTime: sb.startMin, endTime: midTime }, resolve(b, eventB, sb.startMin, midTime), {}, {}, false));
+            bunks1.forEach(b => fillBlock({ slots: slots1, bunk: b, startTime: sb.startMin, endTime: midTime }, resolve(b, e1, sb.startMin, midTime), {}, {}, false));
+            bunks2.forEach(b => fillBlock({ slots: slots1, bunk: b, startTime: sb.startMin, endTime: midTime }, resolve(b, e2, sb.startMin, midTime), {}, {}, false));
 
-            // Second Half (Mid -> End) - SWITCH!
-            // Group 1 gets Event B, Group 2 gets Event A
             const slots2 = window.SchedulerCoreUtils.findSlotsForRange(midTime, sb.endMin);
-            bunksGroup1.forEach(b => fillBlock({ slots: slots2, bunk: b, startTime: midTime, endTime: sb.endMin }, resolve(b, eventB, midTime, sb.endMin), {}, {}, false));
-            bunksGroup2.forEach(b => fillBlock({ slots: slots2, bunk: b, startTime: midTime, endTime: sb.endMin }, resolve(b, eventA, midTime, sb.endMin), {}, {}, false));
+            bunks1.forEach(b => fillBlock({ slots: slots2, bunk: b, startTime: midTime, endTime: sb.endMin }, resolve(b, e2, midTime, sb.endMin), {}, {}, false));
+            bunks2.forEach(b => fillBlock({ slots: slots2, bunk: b, startTime: midTime, endTime: sb.endMin }, resolve(b, e1, midTime, sb.endMin), {}, {}, false));
         });
 
-        // -- PHASE 5: GENERAL ACTIVITIES (The Sand) --
+        // -- PHASE 5: GENERAL ACTIVITIES --
         const generalBlocks = schedulableSlotBlocks.filter(b => 
-            !b.type && // Not split/smart
+            !b.type && 
             !b.event.includes('League') && 
-            !window.scheduleAssignments[b.bunk]?.[b.slots[0]] // Not yet filled
+            !b.event.includes('Specialty League') &&
+            !window.scheduleAssignments[b.bunk]?.[b.slots[0]]
         );
 
-        // Sort by Bunk Size (Bin Packing)
         generalBlocks.sort((a, b) => (bunkMetaData[b.bunk]?.size || 0) - (bunkMetaData[a.bunk]?.size || 0));
 
         generalBlocks.forEach(block => {
@@ -326,7 +298,6 @@
 
             if (pick) {
                 fillBlock(block, pick, {}, yesterdayHistory, false);
-                // Update history counts...
                 if (pick._activity && block.bunk) {
                     if (!historicalCounts[block.bunk]) historicalCounts[block.bunk] = {};
                     historicalCounts[block.bunk][pick._activity] = (historicalCounts[block.bunk][pick._activity] || 0) + 1;
@@ -340,7 +311,7 @@
             }
         });
 
-        // 8. Pass 5 - History Update (Pass Through)
+        // 8. Pass 5 - History Update
         try {
             const historyToSave = rotationHistory;
             const timestamp = Date.now();
@@ -372,12 +343,10 @@
                 });
             });
             window.saveRotationHistory?.(historyToSave);
-            console.log("Smart Scheduler: Rotation history updated.");
         } catch (e) {
             console.error("Smart Scheduler: Failed to update rotation history.", e);
         }
 
-        // Save & Render
         window.saveCurrentDailyData("unifiedTimes", window.unifiedTimes);
         window.updateTable?.();
         window.saveSchedule?.();
