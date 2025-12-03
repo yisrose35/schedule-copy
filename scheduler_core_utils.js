@@ -6,6 +6,7 @@
 // - Added Transition Logic, Zone Handshake, Buffer Occupancy, Concurrency Check
 // - Implemented Minimum Duration Check (Issue 1)
 // - Implemented Anchor Time Logic (User Requirement)
+// - FIX: Added null check for 'props' in getTransitionRules to prevent crash.
 // ============================================================================
 
 (function() {
@@ -112,6 +113,7 @@
         // Default safe structure
         const defaultRules = { preMin: 0, postMin: 0, label: "Travel", zone: window.DEFAULT_ZONE_NAME, occupiesField: false, minDurationMin: 0 };
         
+        // FIX: Ensure props exists before accessing transition property
         if (!props || !props.transition) {
             return defaultRules;
         }
