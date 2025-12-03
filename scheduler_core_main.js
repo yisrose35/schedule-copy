@@ -292,12 +292,12 @@
             };
 
             const slots1 = window.SchedulerCoreUtils.findSlotsForRange(sb.startMin, midTime);
-            bunks1.forEach(b => fillBlock({ slots: slots1, bunk: b, startTime: sb.startMin, endTime: midTime }, resolve(b, e1, sb.startMin, midTime), {}, {}, false));
-            bunks2.forEach(b => fillBlock({ slots: slots1, bunk: b, startTime: sb.startMin, endTime: midTime }, resolve(b, e2, sb.startMin, midTime), {}, {}, false));
+            bunksGroup1.forEach(b => fillBlock({ slots: slots1, bunk: b, startTime: sb.startMin, endTime: midTime }, resolve(b, e1, sb.startMin, midTime), {}, {}, false));
+            bunksGroup2.forEach(b => fillBlock({ slots: slots1, bunk: b, startTime: sb.startMin, endTime: midTime }, resolve(b, e2, sb.startMin, midTime), {}, {}, false));
 
             const slots2 = window.SchedulerCoreUtils.findSlotsForRange(midTime, sb.endMin);
-            bunks1.forEach(b => fillBlock({ slots: slots2, bunk: b, startTime: midTime, endTime: sb.endMin }, resolve(b, e2, midTime, sb.endMin), {}, {}, false));
-            bunks2.forEach(b => fillBlock({ slots: slots2, bunk: b, startTime: midTime, endTime: sb.endMin }, resolve(b, e1, midTime, sb.endMin), {}, {}, false));
+            bunksGroup1.forEach(b => fillBlock({ slots: slots2, bunk: b, startTime: midTime, endTime: sb.endMin }, resolve(b, e2, midTime, sb.endMin), {}, {}, false));
+            bunksGroup2.forEach(b => fillBlock({ slots: slots2, bunk: b, startTime: midTime, endTime: sb.endMin }, resolve(b, e1, midTime, sb.endMin), {}, {}, false));
         });
 
         // -- PHASE 5: GENERAL ACTIVITIES --
