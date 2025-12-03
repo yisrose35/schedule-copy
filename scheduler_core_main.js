@@ -6,7 +6,7 @@
 // - Entry point (runSkeletonOptimizer)
 // - Context Parsing (Skeleton -> Blocks)
 // - Call Leagues (Pass 3)
-// - Main Loop (Pass 4) WITH RESCUE STRATEGY
+// - Main Loop (Pass 4) WITH AGGRESSIVE SHARING RESCUE
 // - History Saving (Pass 5)
 // ============================================================================
 
@@ -138,7 +138,7 @@
             fieldsBySport, masterLeagues, masterSpecialtyLeagues, masterSpecials,
             yesterdayHistory, rotationHistory, disabledLeagues, disabledSpecialtyLeagues,
             historicalCounts, specialActivityNames, disabledFields, disabledSpecials,
-            dailyFieldAvailability, bunkMetaData // Grab metaData for size sorting
+            dailyFieldAvailability, bunkMetaData 
         } = config;
 
         let fieldUsageBySlot = {};
@@ -440,31 +440,52 @@
             let fits = pick && window.SchedulerCoreUtils.canBlockFit(block, window.SchedulerCoreUtils.fieldLabel(pick.field), activityProperties, fieldUsageBySlot, pick._activity);
 
             // 2. RESCUE STRATEGY: If "Best" failed, try ALL combinations to avoid Free
+            //    WITH AGGRESSIVE DOUBLING-UP PRIORITIZATION
             if (!fits) {
                 // Determine valid pool based on event type
                 let candidates = [];
                 if (block.event === 'Sports Slot' || block.event === 'Sports') {
-                    // Filter only fields with sports
                     candidates = allActivities.filter(a => a.type === 'field' && a.sport);
                 } else if (block.event === 'Special Activity' || block.event === 'Special Activity Slot') {
-                    // Filter only special activities
                     candidates = allActivities.filter(a => a.type === 'special');
                 } else {
-                    // General Activity: Try Everything
                     candidates = allActivities.slice();
                 }
 
-                // SHUFFLE the candidates to create "Unlimited Different Combinations"
-                // This prevents getting stuck in the same failed pattern
+                // A) Randomize first for variety
                 candidates = shuffleArray(candidates);
+
+                // B) PUSH THE SHARING RULE:
+                // Sort candidates to put "Partially Filled" (Occupied but Sharable) fields FIRST.
+                // This forces "Doubling Up" before grabbing empty fields.
+                candidates.sort((a, b) => {
+                    if (block.slots.length === 0) return 0;
+                    const slot = block.slots[0];
+                    
+                    const usageA = fieldUsageBySlot[slot]?.[a.field] || { count: 0 };
+                    const usageB = fieldUsageBySlot[slot]?.[b.field] || { count: 0 };
+                    
+                    const propsA = activityProperties[a.field];
+                    const propsB = activityProperties[b.field];
+
+                    // Capacity: 2 if sharable/all/custom, else 1
+                    const capA = propsA?.sharableWith?.capacity ?? (propsA?.sharable ? 2 : 1);
+                    const capB = propsB?.sharableWith?.capacity ?? (propsB?.sharable ? 2 : 1);
+
+                    // "Semi-Full" = Has people, but less than max capacity
+                    const aIsSemi = (usageA.count > 0 && usageA.count < capA);
+                    const bIsSemi = (usageB.count > 0 && usageB.count < capB);
+
+                    if (aIsSemi && !bIsSemi) return -1; // A is "Sharing Opportunity", promote it
+                    if (!aIsSemi && bIsSemi) return 1;
+                    return 0; 
+                });
 
                 // Brute-force check until one fits
                 for (const cand of candidates) {
                     const tempFieldName = cand.field;
                     const tempActivity = cand.type === 'special' ? cand.field : (cand.sport || cand.field);
                     
-                    // Note: You can optionally add logic here to skip things used yesterday if you want strict rotation,
-                    // but since the goal is to prevent Free, we prioritize availability.
                     if (window.SchedulerCoreUtils.canBlockFit(block, tempFieldName, activityProperties, fieldUsageBySlot, tempActivity)) {
                         pick = {
                             field: tempFieldName,
@@ -489,7 +510,6 @@
                     }
                 }
             } else {
-                // Only assign free if absolutely NO candidate fit the slot
                 fillBlock(block, { field: "Free", sport: null, _activity: "Free" }, fieldUsageBySlot, yesterdayHistory, false);
             }
         }
