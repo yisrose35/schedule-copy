@@ -553,7 +553,7 @@
                         } else if (entry && !entry.continuation && entry._activity !== TRANSITION_TYPE) {
                             lastActivity = null;
                         }
-                    });
+                    }
                 });
             });
             window.saveRotationHistory?.(historyToSave);
