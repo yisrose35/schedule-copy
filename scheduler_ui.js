@@ -1,6 +1,5 @@
 // ============================================================================
-// scheduler_ui.js (UPDATED: LEAGUE MATCHUP RENDERING + FIXED formatEntry)
-// Timeline-aware, fully integrated with league_core and SmartTile system
+// scheduler_ui.js (FIXED: SYNTAX & FALLBACKS)
 // ============================================================================
 
 (function () {
@@ -109,9 +108,7 @@
     if (!bunk) return;
 
     const newName = prompt(
-      `Edit activity for ${bunk}\n${minutesToTimeLabel(startMin)} - ${minutesToTimeLabel(
-        endMin
-      )}\n(Enter CLEAR or FREE to empty)`,
+      `Edit activity for ${bunk}\n${minutesToTimeLabel(startMin)} - ${minutesToTimeLabel(endMin)}\n(Enter CLEAR or FREE to empty)`,
       current
     );
     if (newName === null) return;
@@ -122,7 +119,7 @@
       value.toUpperCase() === "CLEAR" ||
       value.toUpperCase() === "FREE";
 
-    // VALIDATION (unchanged)
+    // VALIDATION
     if (
       !isClear &&
       window.SchedulerCoreUtils &&
@@ -130,11 +127,7 @@
     ) {
       const warnings = [];
       const config = window.SchedulerCoreUtils.loadAndFilterData();
-      const {
-        activityProperties,
-        historicalCounts,
-        lastUsedDates,
-      } = config;
+      const { activityProperties, historicalCounts, lastUsedDates } = config;
 
       const allKnown = Object.keys(activityProperties);
       const resolvedName = resolveResourceName(value, allKnown) || value;
@@ -185,9 +178,7 @@
           const total = historyCount + todayCount + 1;
           if (total > max) {
             const lastDateStr = lastUsedDates[bunk]?.[resolvedName];
-            const dateInfo = lastDateStr
-              ? ` (Last used: ${lastDateStr})`
-              : "";
+            const dateInfo = lastDateStr ? ` (Last used: ${lastDateStr})` : "";
             warnings.push(
               `⚠️ MAX USAGE: "${resolvedName}" exceeded limit (${total}/${max})${dateInfo}.`
             );
@@ -205,15 +196,14 @@
         )
           capacityLimit = 2;
 
-        const isAvailable =
-          window.SchedulerCoreUtils.timeline.checkAvailability(
-            resolvedName,
-            startMin,
-            endMin,
-            1,
-            capacityLimit,
-            bunk
-          );
+        const isAvailable = window.SchedulerCoreUtils.timeline.checkAvailability(
+          resolvedName,
+          startMin,
+          endMin,
+          1,
+          capacityLimit,
+          bunk
+        );
 
         if (!isAvailable) {
           warnings.push(
@@ -335,7 +325,7 @@
   }
 
   // ==========================================================================
-  // **MAIN RENDERER — WITH FULL LEAGUE FIX**
+  // **MAIN RENDERER**
   // ==========================================================================
   function renderStaggeredView(container) {
     container.innerHTML = "";
@@ -406,23 +396,17 @@
           expanded.push({
             ...b,
             endMin: mid,
-            label: `${minutesToTimeLabel(b.startMin)} - ${minutesToTimeLabel(
-              mid
-            )}`,
+            label: `${minutesToTimeLabel(b.startMin)} - ${minutesToTimeLabel(mid)}`,
           });
           expanded.push({
             ...b,
             startMin: mid,
-            label: `${minutesToTimeLabel(mid)} - ${minutesToTimeLabel(
-              b.endMin
-            )}`,
+            label: `${minutesToTimeLabel(mid)} - ${minutesToTimeLabel(b.endMin)}`,
           });
         } else {
           expanded.push({
             ...b,
-            label: `${minutesToTimeLabel(b.startMin)} - ${minutesToTimeLabel(
-              b.endMin
-            )}`,
+            label: `${minutesToTimeLabel(b.startMin)} - ${minutesToTimeLabel(b.endMin)}`,
           });
         }
       });
@@ -436,7 +420,7 @@
         tr.appendChild(tdTime);
 
         // =====================================================================
-        // LEAGUE BLOCK RENDER — **FIXED & FULL MATCHUPS**
+        // LEAGUE BLOCK RENDER
         // =====================================================================
         if (
           block.event.startsWith("League Game") ||
@@ -486,18 +470,17 @@
         }
 
         // =====================================================================
-        // NON-LEAGUE CELLS
+        // STANDARD CELLS (With Fallback)
         // =====================================================================
         const isDismissal = block.event.toLowerCase().includes("dismiss");
         const isSnack = block.event.toLowerCase().includes("snack");
-        const isGeneratedSlot =
-          uiIsGeneratedEventName(block.event) ||
-          block.event.includes("/");
+        const isGeneratedSlot = uiIsGeneratedEventName(block.event) || block.event.includes("/");
 
         bunks.forEach((bunk) => {
           const td = document.createElement("td");
-          let label = block.event;
+          let label = "";
           const slotIdx = findFirstSlotForTime(block.startMin);
+          const entry = getEntry(bunk, slotIdx);
 
           if (isDismissal) {
             label = "Dismissal";
@@ -506,24 +489,24 @@
             label = "Snacks";
             td.style.background = "#e7ffe7";
           } else if (!isGeneratedSlot) {
+            // Pinned/Custom
             td.style.background = "#fff7cc";
             label = block.event;
           } else {
-            const entry = getEntry(bunk, slotIdx);
+            // GENERATED SLOT
             if (entry) {
                 label = formatEntry(entry);
             } else {
-                // FALLBACK: If assignment is missing (e.g. data wipe), show the block event name
-                // so the cell isn't blank white
-                label = block.event; 
+                // FALLBACK: If assignment missing, show skeleton name
+                label = block.event;
                 if (block.type === 'smart') label += ' (Smart)';
+                td.style.background = "#fffcf0"; // Distinct 'empty' color
             }
           }
 
           td.textContent = label;
           td.style.cursor = "pointer";
-          td.onclick = () =>
-            editCell(bunk, block.startMin, block.endMin, label);
+          td.onclick = () => editCell(bunk, block.startMin, block.endMin, label);
           tr.appendChild(td);
         });
 
@@ -535,4 +518,42 @@
     });
   }
 
-  // ==========================================================================<br>  // SAVE / LOAD<br>  // ==========================================================================<br>  function saveSchedule() {<br>    window.saveCurrentDailyData?.(<br>      "scheduleAssignments",<br>      window.scheduleAssignments<br>    );<br>    window.saveCurrentDailyData?.(<br>      "leagueAssignments",<br>      window.leagueAssignments<br>    );<br>    window.saveCurrentDailyData?.("unifiedTimes", window.unifiedTimes);<br>  }<br><br>  function reconcileOrRenderSaved() {<br>    try {<br>      const data = window.loadCurrentDailyData?.() || {};<br>      window.scheduleAssignments = data.scheduleAssignments || {};<br>      window.leagueAssignments = data.leagueAssignments || {};<br>      const savedTimes = data.unifiedTimes || [];<br>      window.unifiedTimes = savedTimes.map((slot) => ({<br>        ...slot,<br>        start: new Date(slot.start),<br>        end: new Date(slot.end),<br>      }));<br>    } catch (e) {<br>      console.error("Schedule load error:", e);<br>      window.scheduleAssignments = {};<br>      window.leagueAssignments = {};<br>      window.unifiedTimes = [];<br>    }<br>    updateTable();<br>  }<br><br>  function initScheduleSystem() {<br>    reconcileOrRenderSaved();<br>  }<br><br>  // EXPORT<br>  window.updateTable = updateTable;<br>  window.initScheduleSystem = initScheduleSystem;<br>  window.saveSchedule = saveSchedule;<br><br>})();
+  // ==========================================================================
+  // SAVE / LOAD
+  // ==========================================================================
+  function saveSchedule() {
+    window.saveCurrentDailyData?.("scheduleAssignments", window.scheduleAssignments);
+    window.saveCurrentDailyData?.("leagueAssignments", window.leagueAssignments);
+    window.saveCurrentDailyData?.("unifiedTimes", window.unifiedTimes);
+  }
+
+  function reconcileOrRenderSaved() {
+    try {
+      const data = window.loadCurrentDailyData?.() || {};
+      window.scheduleAssignments = data.scheduleAssignments || {};
+      window.leagueAssignments = data.leagueAssignments || {};
+      const savedTimes = data.unifiedTimes || [];
+      window.unifiedTimes = savedTimes.map((slot) => ({
+        ...slot,
+        start: new Date(slot.start),
+        end: new Date(slot.end),
+      }));
+    } catch (e) {
+      console.error("Schedule load error:", e);
+      window.scheduleAssignments = {};
+      window.leagueAssignments = {};
+      window.unifiedTimes = [];
+    }
+    updateTable();
+  }
+
+  function initScheduleSystem() {
+    reconcileOrRenderSaved();
+  }
+
+  // EXPORT
+  window.updateTable = updateTable;
+  window.initScheduleSystem = initScheduleSystem;
+  window.saveSchedule = saveSchedule;
+
+})();
