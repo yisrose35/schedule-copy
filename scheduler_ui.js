@@ -187,29 +187,16 @@
                 const currentPeak = window.SchedulerCoreUtils.timeline.getPeakUsage(resolvedName, startMin, endMin, bunk);
                 warnings.push(`⚠️ CAPACITY CONFLICT: "${resolvedName}" is full during this time.\n   Current Peak: ${currentPeak} bunks.\n   Limit: ${capacityLimit}.`);
             }
-
-            // -------------------------------------------------------------
-            // D. HEADCOUNT CHECK
-            // -------------------------------------------------------------
-            const maxHeadcount = sportMetaData[resolvedName]?.maxCapacity || Infinity;
-            if (maxHeadcount !== Infinity) {
-                // For headcount, we still need to loop or ask timeline for specific owners
-                // The Timeline class currently stores 'weight', but we can infer owner from the list.
-                // For simplicity in this UI update, we will assume Timeline check covers the main hard constraint.
-                // If headcount is critical, we rely on the Timeline's weight if we adjusted weights based on size, 
-                // but standard system uses weights for Bunk Count (1 or 2).
-                // We will skip complex headcount calculation here to rely on the robust Timeline Capacity.
-            }
             
             // -------------------------------------------------------------
-            // E. TIME RULES CHECK
+            // D. TIME RULES CHECK
             // -------------------------------------------------------------
             if (!window.SchedulerCoreUtils.isTimeAvailable(startMin, endMin, props)) {
                  warnings.push(`⚠️ TIME RESTRICTION: "${resolvedName}" is closed/unavailable during this time block.`);
             }
         }
 
-        // F. BLOCKER PROMPT
+        // E. BLOCKER PROMPT
         if (warnings.length > 0) {
             const msg = warnings.join("\n\n") + "\n\nDo you want to OVERRIDE these rules and schedule anyway?";
             if (!confirm(msg)) {
