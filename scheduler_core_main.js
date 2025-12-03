@@ -1,5 +1,3 @@
-
-
 // ============================================================================
 // scheduler_core_main.js
 // PART 3 of 3: THE ORCHESTRATOR (Main Entry)
@@ -8,7 +6,7 @@
 // - Entry point (runSkeletonOptimizer)
 // - Context Parsing (Skeleton -> Blocks)
 // - Call Leagues (Pass 3)
-// - Main Loop (Pass 4)
+// - Main Loop (Pass 4) WITH RESCUE STRATEGY
 // - History Saving (Pass 5)
 // ============================================================================
 
@@ -51,6 +49,17 @@
         const keys = ["specialtyleague", "specialityleague", "specleague", "specialleague", "sleauge"];
         if (keys.some(k => s.includes(k))) return "Specialty League";
         return null;
+    }
+
+    // Helper to randomize arrays (Fisher-Yates) for "Different Combinations"
+    function shuffleArray(array) {
+        if (!Array.isArray(array)) return [];
+        const arr = array.slice();
+        for (let i = arr.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+        return arr;
     }
 
     // =================================================================
@@ -425,11 +434,51 @@
                 pick = window.findBestGeneralActivity?.(block, allActivities, h2hActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
             }
 
-            if (pick && !window.SchedulerCoreUtils.canBlockFit(block, window.SchedulerCoreUtils.fieldLabel(pick.field), activityProperties, fieldUsageBySlot, pick._activity)) {
-                pick = null;
+            // --- VALIDATION & RESCUE STRATEGY ---
+            
+            // 1. Check if the "Best" pick actually fits
+            let fits = pick && window.SchedulerCoreUtils.canBlockFit(block, window.SchedulerCoreUtils.fieldLabel(pick.field), activityProperties, fieldUsageBySlot, pick._activity);
+
+            // 2. RESCUE STRATEGY: If "Best" failed, try ALL combinations to avoid Free
+            if (!fits) {
+                // Determine valid pool based on event type
+                let candidates = [];
+                if (block.event === 'Sports Slot' || block.event === 'Sports') {
+                    // Filter only fields with sports
+                    candidates = allActivities.filter(a => a.type === 'field' && a.sport);
+                } else if (block.event === 'Special Activity' || block.event === 'Special Activity Slot') {
+                    // Filter only special activities
+                    candidates = allActivities.filter(a => a.type === 'special');
+                } else {
+                    // General Activity: Try Everything
+                    candidates = allActivities.slice();
+                }
+
+                // SHUFFLE the candidates to create "Unlimited Different Combinations"
+                // This prevents getting stuck in the same failed pattern
+                candidates = shuffleArray(candidates);
+
+                // Brute-force check until one fits
+                for (const cand of candidates) {
+                    const tempFieldName = cand.field;
+                    const tempActivity = cand.type === 'special' ? cand.field : (cand.sport || cand.field);
+                    
+                    // Note: You can optionally add logic here to skip things used yesterday if you want strict rotation,
+                    // but since the goal is to prevent Free, we prioritize availability.
+                    if (window.SchedulerCoreUtils.canBlockFit(block, tempFieldName, activityProperties, fieldUsageBySlot, tempActivity)) {
+                        pick = {
+                            field: tempFieldName,
+                            sport: cand.sport || null,
+                            _activity: tempActivity,
+                            _h2h: (cand.type === 'field' && !!cand.sport)
+                        };
+                        fits = true;
+                        break; // Found a rescue match!
+                    }
+                }
             }
 
-            if (pick) {
+            if (fits && pick) {
                 fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, false);
                 if (pick._activity && block.bunk) {
                     if (!historicalCounts[block.bunk]) historicalCounts[block.bunk] = {};
@@ -440,6 +489,7 @@
                     }
                 }
             } else {
+                // Only assign free if absolutely NO candidate fit the slot
                 fillBlock(block, { field: "Free", sport: null, _activity: "Free" }, fieldUsageBySlot, yesterdayHistory, false);
             }
         }
