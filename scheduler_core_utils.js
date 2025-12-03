@@ -260,17 +260,6 @@
             capacityLimit = 2;
         }
 
-        // Check Division/Bunk Restrictions (Strict)
-        if (props.preferences && props.preferences.enabled && props.preferences.exclusive && !props.preferences.list.includes(block.divName)) return false;
-        if (props && Array.isArray(props.allowedDivisions) && props.allowedDivisions.length > 0 && !props.allowedDivisions.includes(block.divName)) return false;
-        
-        const limitRules = props.limitUsage;
-        if (limitRules && limitRules.enabled) {
-            if (!limitRules.divisions[block.divName]) return false; // Division not allowed
-            const allowedBunks = limitRules.divisions[block.divName];
-            if (allowedBunks.length > 0 && block.bunk && !allowedBunks.includes(block.bunk)) return false; // Specific bunk check
-        }
-
         let myWeight = 1;
         
         // LEAGUE LOGIC: Full Buyout
