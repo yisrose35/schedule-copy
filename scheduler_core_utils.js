@@ -6,13 +6,14 @@
 // - Data Loading
 // - Constraint Logic (canBlockFit)
 // - STRICT DIVISION FIREWALL & LEAGUE LOCK
+// - *** NEW: PHYSICAL ROOT NAME MATCHING (Fixes "Blacktop - Sport" issues) ***
 // ============================================================================
 
 (function() {
     'use strict';
 
     // ===== CONFIG =====
-    const INCREMENT_MINS = 5;
+    const INCREMENT_MINS = 30;
     window.INCREMENT_MINS = INCREMENT_MINS;
 
     const Utils = {};
@@ -164,6 +165,46 @@
         return 1;
     }
 
+    // --- NEW HELPER: ROOT NAME EXTRACTOR ---
+    // Turns "Blacktop - Football" into "Blacktop"
+    // Turns "Field A - Soccer" into "Field A"
+    function getRootFieldName(name) {
+        if (!name) return "";
+        // Split by " - " (Space Dash Space) or just " – " (En dash)
+        // Adjust regex to catch standard separators used in your screenshots
+        const parts = String(name).split(/\s+[-–]\s+/); 
+        return parts[0].trim().toLowerCase();
+    }
+
+    // --- NEW HELPER: COMBINED USAGE GETTER ---
+    // Aggregates usage for ALL fields that share the same physical Root Name
+    function getCombinedUsage(slotIndex, proposedFieldName, fieldUsageBySlot) {
+        const combined = { count: 0, divisions: [], bunks: {} };
+        const slotData = fieldUsageBySlot[slotIndex];
+        if (!slotData) return combined;
+
+        const targetRoot = getRootFieldName(proposedFieldName);
+
+        Object.keys(slotData).forEach(key => {
+            const keyRoot = getRootFieldName(key);
+            
+            // If the physical location is the same (e.g. "Blacktop" == "Blacktop")
+            if (keyRoot === targetRoot) {
+                const u = slotData[key];
+                combined.count += (u.count || 0);
+                if (Array.isArray(u.divisions)) {
+                    u.divisions.forEach(d => {
+                        if (!combined.divisions.includes(d)) combined.divisions.push(d);
+                    });
+                }
+                if (u.bunks) {
+                    Object.assign(combined.bunks, u.bunks);
+                }
+            }
+        });
+        return combined;
+    }
+
     // =================================================================
     // MAIN CAPACITY CHECK (THE BOUNCER)
     // =================================================================
@@ -231,18 +272,16 @@
         // =========================================================
         // 1. PRE-SLOT LOOKBACK (The "Bleed" Check)
         // =========================================================
-        // This handles cases where an activity started at 10:30 and ends at 12:20,
-        // and you want to start at 11:00.
         if (blockStartMin != null && block.slots && block.slots.length > 0) {
             const firstSlotIndex = block.slots[0];
             if (firstSlotIndex > 0) {
                 const firstSlotStart = new Date(window.unifiedTimes[firstSlotIndex].start).getHours() * 60 + 
                                        new Date(window.unifiedTimes[firstSlotIndex].start).getMinutes();
                 
-                // If the block starts mid-slot or we need to check continuity
-                if (blockStartMin < firstSlotStart || true) { // Force check previous slot usage
+                if (blockStartMin < firstSlotStart || true) { 
                     const prevSlotIndex = firstSlotIndex - 1;
-                    const prevUsage = fieldUsageBySlot[prevSlotIndex]?.[fieldName];
+                    // *** CRITICAL CHANGE: Use Combined Usage for Pre-Slot too ***
+                    const prevUsage = getCombinedUsage(prevSlotIndex, fieldName, fieldUsageBySlot);
                     
                     if (prevUsage && prevUsage.count > 0) {
                         const assignments = window.scheduleAssignments || {};
@@ -250,9 +289,7 @@
 
                         // FIREWALL: Check Division of previous occupants
                         if (prevUsage.divisions && prevUsage.divisions.length > 0) {
-                            // If previous slot has a different division...
                             if (!prevUsage.divisions.includes(block.divName)) {
-                                // ...AND they are still on the field (end time > my start time)
                                 const isStillHere = Object.keys(prevUsage.bunks).some(bunkName => {
                                     const entry = assignments[bunkName]?.[prevSlotIndex];
                                     const entEnd = entry?._endTime ?? (firstSlotStart + INCREMENT_MINS);
@@ -273,7 +310,6 @@
                             }
                         });
                         
-                        // If we are a league, we count as Max. 
                         let myWeight = (String(proposedActivity).toLowerCase().includes("league")) ? maxCapacity : 1;
                         if (overlappingWeight + myWeight > maxCapacity) return false; 
                     }
@@ -286,14 +322,13 @@
         // =========================================================
         for (const slotIndex of block.slots || []) {
             if (slotIndex === undefined) return false;
-            const usage = fieldUsageBySlot[slotIndex]?.[fieldName] || { count: 0, divisions: [], bunks: {} };
+
+            // *** CRITICAL CHANGE: USE COMBINED USAGE ***
+            // This merges "Blacktop - Football" and "Blacktop - Soccer" into one usage object
+            const usage = getCombinedUsage(slotIndex, fieldName, fieldUsageBySlot);
             
             // --- STRICT DIVISION FIREWALL ---
-            // If the field is currently occupied by a DIFFERENT division,
-            // it is completely invisible to us.
             if (usage.divisions && usage.divisions.length > 0) {
-                // If ANY division in the list is not us, block.
-                // (Assumes a field usually has 1 division unless incorrectly shared previously)
                 if (usage.divisions.some(d => d !== block.divName)) {
                     return false; 
                 }
@@ -312,17 +347,13 @@
 
                 if (existingBunk === block.bunk) continue;
 
-                // Check Same Game Identity
                 const myLabel = block._gameLabel || (String(proposedActivity).includes("League") ? proposedActivity : null);
                 const theirLabel = actualAssignment?._gameLabel || actualAssignment?._activity;
                 const isSameGame = (myLabel && theirLabel && String(myLabel) === String(theirLabel));
 
                 const existingIsLeague = isLeagueAssignment(actualAssignment, activityName);
 
-                // If existing is League and we aren't part of it -> BLOCK
                 if (existingIsLeague && !isSameGame) return false;
-                
-                // If we are League and existing isn't part of it -> BLOCK
                 if (proposedIsLeague && !isSameGame) return false;
 
                 if (!isSameGame) {
