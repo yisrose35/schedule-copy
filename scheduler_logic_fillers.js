@@ -2,10 +2,9 @@
 // scheduler_logic_fillers.js
 //
 // UPDATED:
-// - Removed local 'canBlockFit' to prevent logic duplication.
-// - Now strictly uses window.SchedulerCoreUtils.canBlockFit.
-// - Uses SchedulerCoreUtils.fieldLabel for consistency.
-// - ADDED: Max Usage Limit check in findBestSpecial/General
+// - Adapted for Timeline Architecture.
+// - Removed 'fieldUsageBySlot' from canBlockFit calls (Timeline handles state).
+// - Added 'isLeague = false' flag to canBlockFit calls.
 // =================================================================
 
 (function() {
@@ -67,8 +66,8 @@ window.findBestSpecial = function(block, allActivities, fieldUsageBySlot, yester
     const availablePicks = specials.filter(pick => {
         const name = pick._activity;
         
-        // 1. Check standard constraints (time, sharing, field availability) using CORE UTILS
-        if (!window.SchedulerCoreUtils.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, name)) return false;
+        // 1. Check Timeline Constraints (Explicitly not a league)
+        if (!window.SchedulerCoreUtils.canBlockFit(block, fieldLabel(pick.field), activityProperties, name, false)) return false;
         
         // 2. Check Max Usage Limit (The Safety Net)
         if (isOverUsageLimit(name, block.bunk, activityProperties, historicalCounts, activitiesDoneToday)) return false;
@@ -89,7 +88,7 @@ window.findBestSportActivity = function(block, allActivities, fieldUsageBySlot, 
     const activitiesDoneToday = getGeneralActivitiesDoneToday(block.bunk);
 
     const availablePicks = sports.filter(pick => 
-        window.SchedulerCoreUtils.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, pick._activity) &&
+        window.SchedulerCoreUtils.canBlockFit(block, fieldLabel(pick.field), activityProperties, pick._activity, false) &&
         !activitiesDoneToday.has(pick._activity)
     );
     
@@ -104,8 +103,9 @@ window.findBestGeneralActivity = function(block, allActivities, h2hActivities, f
 
     const availablePicks = allPossiblePicks.filter(pick => {
         const name = pick._activity;
-        // Core validation
-        if (!window.SchedulerCoreUtils.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, name)) return false;
+        
+        // Core validation (Timeline)
+        if (!window.SchedulerCoreUtils.canBlockFit(block, fieldLabel(pick.field), activityProperties, name, false)) return false;
         
         // Check limits for specials here too if general picks a special
         if (pick.field && !pick.sport) { 
