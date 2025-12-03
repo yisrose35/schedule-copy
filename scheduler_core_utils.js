@@ -1,107 +1,27 @@
+
 // ============================================================================
 // scheduler_core_utils.js
-// PART 1 of 3: THE FOUNDATION (TIMELINE EDITION)
+// PART 1 of 3: THE FOUNDATION
 //
-// Updates:
-// - Added TIMELINE CLASS: Minute-by-minute capacity tracking.
-// - Removed Slot-Based Logic in favor of Timeline "Sweep" checks.
-// - Added "Full Buyout" logic for Leagues.
+// Role:
+// - Data Loading
+// - Constraint Logic (canBlockFit)
+// - FIX: DIVISION GUARD.
+//        Even if the game names match ("League Game 1"), different
+//        divisions are BLOCKED from sharing the field during leagues.
 // ============================================================================
 
 (function() {
     'use strict';
 
+    // ===== CONFIG =====
+    const INCREMENT_MINS = 30;
+    window.INCREMENT_MINS = INCREMENT_MINS;
+
     const Utils = {};
-    const INCREMENT_MINS = 30; // Still used for grid visualization defaults
 
     // =================================================================
-    // 1. TIMELINE LOGIC (THE GATEKEEPER)
-    // =================================================================
-    
-    class TimelineSystem {
-        constructor() {
-            this.resources = {}; // { "Field Name": [ {start, end, weight, owner} ] }
-        }
-
-        // Initialize a resource timeline if missing
-        _ensureResource(name) {
-            if (!this.resources[name]) {
-                this.resources[name] = [];
-            }
-        }
-
-        // Add a reservation (No checks here, just storage)
-        addReservation(resourceName, startMin, endMin, weight, owner) {
-            if (!resourceName) return;
-            this._ensureResource(resourceName);
-            this.resources[resourceName].push({
-                start: startMin,
-                end: endMin,
-                weight: weight,
-                owner: owner
-            });
-        }
-
-        // The "Sweep" Algorithm: Calculates Peak Load in a given window
-        getPeakUsage(resourceName, startMin, endMin, excludeOwner = null) {
-            if (!this.resources[resourceName]) return 0;
-
-            // 1. Filter relevant events (Overlap Logic)
-            // Event must start before window ends AND end after window starts
-            const relevant = this.resources[resourceName].filter(r => {
-                if (excludeOwner && r.owner === excludeOwner) return false;
-                return (r.start < endMin && r.end > startMin);
-            });
-
-            if (relevant.length === 0) return 0;
-
-            // 2. Create Time Points (Start = +Weight, End = -Weight)
-            const points = [];
-            relevant.forEach(r => {
-                // Clamp points to the requested window for accurate graph
-                const s = Math.max(startMin, r.start);
-                const e = Math.min(endMin, r.end);
-                
-                if (s < e) {
-                    points.push({ time: s, type: 'start', val: r.weight });
-                    points.push({ time: e, type: 'end', val: -r.weight });
-                }
-            });
-
-            // 3. Sort Points
-            points.sort((a, b) => {
-                if (a.time !== b.time) return a.time - b.time;
-                // If times match: END (-weight) comes before START (+weight)
-                // This allows back-to-back scheduling (10:00 end, 10:00 start) without buffer
-                if (a.type === 'end' && b.type === 'start') return -1;
-                if (a.type === 'start' && b.type === 'end') return 1;
-                return 0;
-            });
-
-            // 4. Sweep
-            let maxLoad = 0;
-            let currentLoad = 0;
-
-            points.forEach(p => {
-                currentLoad += p.val;
-                if (currentLoad > maxLoad) maxLoad = currentLoad;
-            });
-
-            return maxLoad;
-        }
-
-        // Main Check Function
-        checkAvailability(resourceName, startMin, endMin, myWeight, capacityLimit, excludeOwner = null) {
-            const peak = this.getPeakUsage(resourceName, startMin, endMin, excludeOwner);
-            return (peak + myWeight) <= capacityLimit;
-        }
-    }
-
-    // Global Timeline Instance
-    Utils.timeline = new TimelineSystem();
-
-    // =================================================================
-    // 2. BASIC HELPERS
+    // 1. BASIC HELPERS
     // =================================================================
     Utils.parseTimeToMinutes = function(str) {
         if (str == null) return null;
@@ -147,7 +67,6 @@
         return d;
     };
 
-    // Keep for legacy slot finding if needed, but not primary logic
     Utils.findSlotsForRange = function(startMin, endMin) {
         const slots = [];
         if (!window.unifiedTimes || startMin == null || endMin == null) return slots;
@@ -163,15 +82,12 @@
     };
 
     Utils.getBlockTimeRange = function(block) {
-        // Prefer explicit start/end
-        if (block.startTime !== undefined && block.endTime !== undefined) {
-            return {
-                blockStartMin: Utils.parseTimeToMinutes(block.startTime),
-                blockEndMin: Utils.parseTimeToMinutes(block.endTime)
-            };
-        }
-        // Fallback to slots (Old System)
-        if (window.unifiedTimes && Array.isArray(block.slots) && block.slots.length > 0) {
+        let blockStartMin = (typeof block.startTime === "number") ? block.startTime : null;
+        let blockEndMin = (typeof block.endTime === "number") ? block.endTime : null;
+        if ((blockStartMin == null || blockEndMin == null) &&
+            window.unifiedTimes &&
+            Array.isArray(block.slots) &&
+            block.slots.length > 0) {
             const minIndex = Math.min(...block.slots);
             const maxIndex = Math.max(...block.slots);
             const firstSlot = window.unifiedTimes[minIndex];
@@ -179,28 +95,28 @@
             if (firstSlot && lastSlot) {
                 const firstStart = new Date(firstSlot.start);
                 const lastStart = new Date(lastSlot.start);
-                return {
-                    blockStartMin: firstStart.getHours() * 60 + firstStart.getMinutes(),
-                    blockEndMin: lastStart.getHours() * 60 + lastStart.getMinutes() + INCREMENT_MINS
-                };
+                blockStartMin = firstStart.getHours() * 60 + firstStart.getMinutes();
+                blockEndMin = lastStart.getHours() * 60 +
+                              lastStart.getMinutes() +
+                              INCREMENT_MINS;
             }
         }
-        return { blockStartMin: null, blockEndMin: null };
+        return { blockStartMin, blockEndMin };
     };
 
     // =================================================================
-    // 3. CONSTRAINT LOGIC (TIMELINE ADAPTER)
+    // 2. CONSTRAINT LOGIC
     // =================================================================
-    
-    // Check if time window is legally open in the Field Definition
-    Utils.isTimeAvailable = function(startMin, endMin, fieldProps) {
-        if (!fieldProps) return true;
-        
-        // Parse Rules
+    Utils.isTimeAvailable = function(slotIndex, fieldProps) {
+        if (!window.unifiedTimes || !window.unifiedTimes[slotIndex]) return false;
+        const slot = window.unifiedTimes[slotIndex];
+        const slotStartMin = new Date(slot.start).getHours() * 60 +
+                             new Date(slot.start).getMinutes();
+        const slotEndMin = slotStartMin + INCREMENT_MINS;
         const rules = (fieldProps.timeRules || []).map(r => {
             if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
             return {
-                type: r.type,
+                ...r,
                 startMin: Utils.parseTimeToMinutes(r.start),
                 endMin: Utils.parseTimeToMinutes(r.end)
             };
@@ -210,81 +126,214 @@
         if (!fieldProps.available) return false;
 
         const hasAvailableRules = rules.some(r => r.type === 'Available');
+        let isAvailable = !hasAvailableRules;
+
+        for (const rule of rules) {
+            if (rule.type === 'Available') {
+                if (rule.startMin == null || rule.endMin == null) continue;
+                if (slotStartMin >= rule.startMin && slotEndMin <= rule.endMin) {
+                    isAvailable = true;
+                    break;
+                }
+            }
+        }
+        for (const rule of rules) {
+            if (rule.type === 'Unavailable') {
+                if (rule.startMin == null || rule.endMin == null) continue;
+                if (slotStartMin < rule.endMin && slotEndMin > rule.startMin) {
+                    isAvailable = false;
+                    break;
+                }
+            }
+        }
+        return isAvailable;
+    };
+
+    // Main capacity check
+    Utils.canBlockFit = function(block, fieldName, activityProperties, fieldUsageBySlot, proposedActivity) {
+        if (!fieldName) return false;
+        const props = activityProperties[fieldName];
+        if (!props) return true;
+
+        let limit = 1;
+        if (props.sharableWith) {
+            if (props.sharableWith.capacity) limit = parseInt(props.sharableWith.capacity);
+            else if (props.sharable || props.sharableWith.type === 'all' || props.sharableWith.type === 'custom') limit = 2;
+        } else if (props.sharable) {
+            limit = 2;
+        }
+
+        const bunkMetaData = window.SchedulerCoreUtils._bunkMetaData || {};
+        const sportMetaData = window.SchedulerCoreUtils._sportMetaData || {};
+        const maxHeadcount = sportMetaData[proposedActivity]?.maxCapacity || Infinity;
+        const mySize = bunkMetaData[block.bunk]?.size || 0;
+
+        // Preferences checks
+        if (props.preferences && props.preferences.enabled && props.preferences.exclusive && !props.preferences.list.includes(block.divName)) return false;
+        if (props && Array.isArray(props.allowedDivisions) && props.allowedDivisions.length > 0 && !props.allowedDivisions.includes(block.divName)) return false;
         
-        // 1. If "Available" rules exist, current time MUST be inside one
-        if (hasAvailableRules) {
-            let insideAvailable = false;
-            for (const rule of rules) {
-                if (rule.type === 'Available') {
-                    // Check if block fits entirely inside available window
-                    if (startMin >= rule.startMin && endMin <= rule.endMin) {
-                        insideAvailable = true;
-                        break;
+        const limitRules = props.limitUsage;
+        if (limitRules && limitRules.enabled) {
+            if (!limitRules.divisions[block.divName]) return false;
+            const allowedBunks = limitRules.divisions[block.divName];
+            if (allowedBunks.length > 0 && block.bunk && !allowedBunks.includes(block.bunk)) return false;
+        }
+
+        const { blockStartMin, blockEndMin } = Utils.getBlockTimeRange(block);
+        const rules = (props.timeRules || []).map(r => {
+            if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
+            return { ...r, startMin: Utils.parseTimeToMinutes(r.start), endMin: Utils.parseTimeToMinutes(r.end) };
+        });
+
+        // Time Rules
+        if (rules.length > 0) {
+            if (!props.available) return false;
+            const hasAvailableRules = rules.some(r => r.type === 'Available');
+            if (blockStartMin != null && blockEndMin != null) {
+                if (hasAvailableRules) {
+                    let insideAvailable = false;
+                    for (const rule of rules) {
+                        if (rule.type !== 'Available' || rule.startMin == null || rule.endMin == null) continue;
+                        if (blockStartMin >= rule.startMin && blockEndMin <= rule.endMin) {
+                            insideAvailable = true;
+                            break;
+                        }
+                    }
+                    if (!insideAvailable) return false;
+                }
+                for (const rule of rules) {
+                    if (rule.type !== 'Unavailable' || rule.startMin == null || rule.endMin == null) continue;
+                    if (blockStartMin < rule.endMin && blockEndMin > rule.startMin) return false;
+                }
+            }
+        } else {
+            if (!props.available) return false;
+        }
+
+        // PRE-SLOT LOOKBACK (Standard)
+        if (blockStartMin != null && block.slots && block.slots.length > 0) {
+            const firstSlotIndex = block.slots[0];
+            if (firstSlotIndex > 0) {
+                const firstSlotStart = new Date(window.unifiedTimes[firstSlotIndex].start).getHours() * 60 + 
+                                       new Date(window.unifiedTimes[firstSlotIndex].start).getMinutes();
+                if (blockStartMin < firstSlotStart) {
+                    const prevSlotIndex = firstSlotIndex - 1;
+                    const prevUsage = fieldUsageBySlot[prevSlotIndex]?.[fieldName];
+                    
+                    if (prevUsage && prevUsage.count > 0) {
+                        let overlappingCount = 0;
+                        const assignments = window.scheduleAssignments || {};
+                        Object.keys(prevUsage.bunks).forEach(bunkName => {
+                            const entry = assignments[bunkName]?.[prevSlotIndex];
+                            if (entry) {
+                                const entEnd = entry._endTime ?? firstSlotStart; 
+                                if (entEnd > blockStartMin) overlappingCount++;
+                            } else {
+                                overlappingCount++;
+                            }
+                        });
+                        if (overlappingCount >= limit) return false; 
                     }
                 }
             }
-            if (!insideAvailable) return false;
         }
 
-        // 2. If "Unavailable" rules exist, current time MUST NOT overlap
-        for (const rule of rules) {
-            if (rule.type === 'Unavailable') {
-                // Overlap check
-                if (startMin < rule.endMin && endMin > rule.startMin) {
-                    return false;
+        // --- MAIN SLOT LOOP ---
+        for (const slotIndex of block.slots || []) {
+            if (slotIndex === undefined) return false;
+            const usage = fieldUsageBySlot[slotIndex]?.[fieldName] || { count: 0, divisions: [], bunks: {} };
+            
+            // 1. BASIC CAPACITY
+            if (usage.count >= limit) return false;
+            
+            // 2. HEADCOUNT
+            if (maxHeadcount !== Infinity) {
+                let currentHeadcount = 0;
+                Object.keys(usage.bunks).forEach(bName => {
+                    currentHeadcount += (bunkMetaData[bName]?.size || 0);
+                });
+                if (currentHeadcount + mySize > maxHeadcount) return false;
+            }
+
+            if (usage.count > 0) {
+                // 3. LEAGUE GUARD (FIXED)
+                // If a league game is present, verify:
+                // A) Same Game Name
+                // B) Same Division (Prevents Div 2 vs Div 3 collisions)
+                for (const bKey in usage.bunks) {
+                    const existingActivity = usage.bunks[bKey];
+                    if (existingActivity && String(existingActivity).toLowerCase().includes("league game")) {
+                        
+                        // A) Name Check
+                        const existingStr = String(existingActivity).trim().toLowerCase();
+                        const proposedStr = String(proposedActivity || "").trim().toLowerCase();
+                        if (existingStr !== proposedStr) return false; 
+
+                        // B) Division Check (THE FIX)
+                        // If the field is currently used by a DIFFERENT division, block it.
+                        // (usage.divisions is an array of div names currently on the field)
+                        if (usage.divisions && usage.divisions.length > 0) {
+                            if (!usage.divisions.includes(block.divName)) {
+                                return false; // BLOCKED: Different division already here!
+                            }
+                        }
+                    }
+                }
+
+                // 4. Standard Activity Compatibility
+                let existingActivity = null;
+                for (const bunkName in usage.bunks) {
+                    if (usage.bunks[bunkName]) {
+                        existingActivity = usage.bunks[bunkName];
+                        break;
+                    }
+                }
+                const proposedIsLeague = String(proposedActivity).toLowerCase().includes("league game");
+                if (!proposedIsLeague) {
+                    if (existingActivity && proposedActivity && existingActivity !== proposedActivity) return false;
                 }
             }
-        }
 
+            if (!Utils.isTimeAvailable(slotIndex, props)) return false;
+        }
         return true;
     };
 
-    // NEW: The Timeline-Based Check
-    Utils.canBlockFit = function(block, fieldName, activityProperties, proposedActivity, isLeague = false) {
+    // League Check (Apply same Division Guard)
+    Utils.canLeagueGameFit = function(block, fieldName, fieldUsageBySlot, activityProperties) {
         if (!fieldName) return false;
         const props = activityProperties[fieldName];
-        if (!props) return true; // No rules, assume open
+        if (!props) return false;
+        const limit = 1;
 
-        // 1. Parse Block Time
-        const { blockStartMin, blockEndMin } = Utils.getBlockTimeRange(block);
-        if (blockStartMin == null || blockEndMin == null) return false;
+        if (props.preferences && props.preferences.enabled && props.preferences.exclusive && !props.preferences.list.includes(block.divName)) return false;
+        if (props && Array.isArray(props.allowedDivisions) && props.allowedDivisions.length > 0 && !props.allowedDivisions.includes(block.divName)) return false;
 
-        // 2. Determine Limits & Weights
-        let capacityLimit = 1; // Default Exclusive
-        
-        // Check Sharable
-        if (props.sharableWith) {
-            if (props.sharableWith.capacity) capacityLimit = parseInt(props.sharableWith.capacity);
-            else if (props.sharable || props.sharableWith.type === 'all' || props.sharableWith.type === 'custom') capacityLimit = 2;
-        } else if (props.sharable) {
-            capacityLimit = 2;
+        const limitRules = props.limitUsage;
+        if (limitRules && limitRules.enabled) {
+            if (!limitRules.divisions[block.divName]) return false;
         }
 
-        let myWeight = 1;
+        if (!props.available) return false;
+
+        const { blockStartMin } = Utils.getBlockTimeRange(block);
         
-        // LEAGUE LOGIC: Full Buyout
-        // If I am a league, I consume the entire capacity
-        if (isLeague) {
-            myWeight = capacityLimit; 
+        for (const slotIndex of block.slots || []) {
+            if (slotIndex === undefined) return false;
+            const usage = fieldUsageBySlot[slotIndex]?.[fieldName] || { count: 0, divisions: [] };
+            
+            if (usage.count >= limit) return false;
+
+            // Strict Division Guard
+            // If anyone else is here, it's a conflict unless it's empty.
+            // (League games generally need the whole field empty to start)
+            if (usage.count > 0) return false;
         }
-
-        // 3. Check Base Time Availability (Setup Rules)
-        if (!Utils.isTimeAvailable(blockStartMin, blockEndMin, props)) return false;
-
-        // 4. TIMELINE CHECK
-        // Check if adding 'myWeight' to the current peak load exceeds 'capacityLimit'
-        return Utils.timeline.checkAvailability(
-            fieldName, 
-            blockStartMin, 
-            blockEndMin, 
-            myWeight, 
-            capacityLimit,
-            block.bunk // Exclude myself (for resizing/moving logic)
-        );
+        return true;
     };
 
     // =================================================================
-    // 4. DATA LOADER (With Timeline Rebuild)
+    // 3. DATA LOADER
     // =================================================================
     function parseTimeRule(rule) {
         if (!rule) return null;
@@ -542,66 +591,6 @@
             schedule: yesterdayData.scheduleAssignments || {},
             leagues: yesterdayData.leagueAssignments || {}
         };
-
-        // -------------------------------------------------------------
-        // REBUILD TIMELINE FROM SAVED SCHEDULE
-        // -------------------------------------------------------------
-        Utils.timeline = new TimelineSystem(); // Reset
-        
-        const assignments = dailyData.scheduleAssignments || {};
-        const unifiedTimes = window.unifiedTimes || []; 
-
-        Object.keys(assignments).forEach(bunk => {
-            const schedule = assignments[bunk];
-            if (!Array.isArray(schedule)) return;
-
-            schedule.forEach((entry, slotIdx) => {
-                if (!entry || entry.continuation) return;
-                
-                const fieldName = (typeof entry.field === 'string') ? entry.field : entry.field?.name;
-                if (!fieldName || fieldName === "Free" || fieldName === "No Field") return;
-
-                let startMin, endMin;
-                
-                if (unifiedTimes[slotIdx]) {
-                    const sDate = new Date(unifiedTimes[slotIdx].start);
-                    startMin = sDate.getHours() * 60 + sDate.getMinutes();
-                    
-                    let durationSlots = 1;
-                    for (let i = slotIdx + 1; i < schedule.length; i++) {
-                        if (schedule[i] && schedule[i].continuation && 
-                            ((typeof schedule[i].field === 'string' ? schedule[i].field : schedule[i].field?.name) === fieldName)) {
-                            durationSlots++;
-                        } else {
-                            break;
-                        }
-                    }
-                    const lastSlotIdx = slotIdx + durationSlots - 1;
-                    if (unifiedTimes[lastSlotIdx]) {
-                        if (unifiedTimes[lastSlotIdx].end) {
-                            const eDate = new Date(unifiedTimes[lastSlotIdx].end);
-                            endMin = eDate.getHours() * 60 + eDate.getMinutes();
-                        } else {
-                            const lsDate = new Date(unifiedTimes[lastSlotIdx].start);
-                            endMin = (lsDate.getHours() * 60 + lsDate.getMinutes()) + INCREMENT_MINS;
-                        }
-                    }
-                }
-
-                if (startMin != null && endMin != null) {
-                    let weight = 1;
-                    if (entry._h2h || (entry.sport && entry.sport.includes("League"))) {
-                        const props = activityProperties[fieldName];
-                        if (props) {
-                            weight = props.sharableWith?.capacity || (props.sharable ? 2 : 1);
-                        } else {
-                            weight = 2; 
-                        }
-                    }
-                    Utils.timeline.addReservation(fieldName, startMin, endMin, weight, bunk);
-                }
-            });
-        });
 
         return {
             divisions,
