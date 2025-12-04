@@ -2,10 +2,10 @@
 // total_solver_engine.js
 // (NEW CORE UTILITY: Backtracking Constraint Solver — Option 1)
 //
-// UPDATED: Added "Anti-Boredom" Logic
-// - Penalizes back-to-back repeats heavily.
-// - Checks yesterday's history.
-// - Enforces Max Usage limits strictly.
+// UPDATED: STRICT "ONE & DONE" VARIETY
+// - Hard Cap: Disqualifies an activity immediately if it's already been played today.
+// - Logic separates Field vs Activity (allows same field if different sport).
+// - Random shuffle added to break "Hockey Arena" dominance.
 // ============================================================================
 
 (function() {
@@ -18,9 +18,7 @@ const MAX_ITERATIONS = 5000;
 let globalConfig = null;
 let activityProperties = {};
 let currentScorecard = null;
-let availableSports = [];
-let availableSpecials = [];
-let leagueData = {};
+let allCandidateOptions = []; // Now stores objects: { field, sport, activityName, type }
 
 // ============================================================================
 // HELPERS
@@ -28,6 +26,15 @@ let leagueData = {};
 
 function isLeagueActivity(pick) {
     return pick && pick._isLeague;
+}
+
+// Fisher-Yates Shuffle to randomize picks
+function shuffleArray(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
 }
 
 function calculatePenaltyCost(block, pick) {
@@ -42,56 +49,59 @@ function calculatePenaltyCost(block, pick) {
     // Count how many times this activity is already scheduled TODAY
     let todayCount = 0;
     entries.forEach(e => {
+        // Count exact matches (Same Activity Name), excluding current slot
         if (e._activity === activityName && e.startMin !== block.startTime) {
             todayCount++;
         }
     });
 
-    // 2. CHECK MAX USAGE (HARD LIMIT)
-    // If it's a special activity with a limit, check history + today
+    // 2. STRICT "NO REPEATS" RULE
+    // If not a league, you CANNOT do the same activity twice.
+    // This forces the solver to find anything else.
+    if (!pick._isLeague && todayCount >= 1) {
+        return 9999; // DISQUALIFIED
+    }
+
+    // 3. CHECK MAX USAGE (Specific Special Limits)
     const specialRule = globalConfig.masterSpecials?.find(s => s.name === activityName);
     if (specialRule && specialRule.maxUsage > 0) {
         const histCount = globalConfig.historicalCounts?.[bunk]?.[activityName] || 0;
         if (histCount + todayCount >= specialRule.maxUsage) {
-            return 9999; // DISQUALIFIED: Cap reached
+            return 9999; // DISQUALIFIED
         }
     }
 
-    // 3. IMMEDIATE REPEAT (BACK-TO-BACK) - MASSIVE PENALTY
-    // Check if the previous slot (ending near this start time) has the same activity
-    const prevEntry = entries.find(e => Math.abs(e.endMin - block.startTime) <= 15);
-    if (prevEntry && prevEntry._activity === activityName) {
-        penalty += 1000; // Strongly avoid back-to-back
+    // 4. 360° ADJACENCY CHECK (Prevents Back-to-Back)
+    // Looks for any entry ending near my start OR starting near my end
+    const isAdjacent = entries.some(e => {
+        const touchesPrev = Math.abs(e.endMin - block.startTime) <= 15;
+        const touchesNext = Math.abs(e.startMin - block.endTime) <= 15;
+        return (touchesPrev || touchesNext) && e._activity === activityName;
+    });
+
+    if (isAdjacent) {
+        return 9999; // DISQUALIFIED (Redundant if limit is 1, but safe)
     }
 
-    // 4. YESTERDAY REPEAT (ROTATION)
+    // 5. YESTERDAY REPEAT (ROTATION)
     const yesterdaySched = globalConfig.yesterdayHistory?.schedule?.[bunk] || {};
     const playedYesterday = Object.values(yesterdaySched).some(e => e._activity === activityName);
     if (playedYesterday) {
-        penalty += 200; // Prefer something new
+        penalty += 300; // Strong preference for new things
     }
 
-    // 5. DAILY REPEAT SCALING
-    if (todayCount > 0) {
-        // 1st repeat = 50, 2nd = 150, 3rd = 300... exponential discouragement
-        penalty += (50 + (todayCount * 100)); 
-    }
-
-    // 6. LEAGUE PRIORITY
-    if (pick._isLeague && todayCount > 0) penalty += 500; // Leagues should strictly happen once
-
-    // 7. SEASON FAIRNESS (Scorecard)
+    // 6. SEASON FAIRNESS
     const fair = currentScorecard.teamFairness[bunk] || {};
     const cum = fair.totalPenalties || 0;
     penalty += Math.floor(cum / 10);
 
-    // 8. PREFERENCES
-    const props = activityProperties[activityName];
+    // 7. PREFERENCES
+    // Uses the Field Name for preference lookup
+    const props = activityProperties[pick.field]; 
     if (props?.preferences?.enabled) {
         const idx = (props.preferences.list || []).indexOf(block.divName);
         if (idx !== -1) {
-            // Preferred: negative = bonus
-            penalty -= (20 - (idx * 2)); 
+            penalty -= (50 - (idx * 5)); // Bonus for preferred fields
         } else if (props.preferences.exclusive) {
             penalty += 2000; // Exclusive violation
         }
@@ -230,34 +240,38 @@ Solver.sortBlocksByDifficulty = function(blocks, config) {
     return blocks.sort((a, b) => {
         if (a._isLeague && !b._isLeague) return -1;
         if (!a._isLeague && b._isLeague) return 1;
+        
         const sa = bunkMeta[a.bunk]?.size || 0;
         const sb = bunkMeta[b.bunk]?.size || 0;
-        return sb - sa;
+        // Add random shuffle for identical sizes to prevent "Pattern Lock"
+        if (sa !== sb) return sb - sa;
+        return Math.random() - 0.5; 
     });
 };
 
 Solver.getValidActivityPicks = function(block) {
-    const picks = [];
+    let picks = [];
     
-    // Merge both lists so we consider everything
-    const allActs = availableSpecials.concat(availableSports);
-
-    for (const act of allActs) {
-        // Use standard fit check (time, div firewall, etc)
+    // Iterate over the PRE-CALCULATED candidates (Sports + Specials)
+    // This list includes distinct {field, sport} combinations.
+    for (const cand of allCandidateOptions) {
+        
+        // 1. Physical Fit Check (Time, Field Availability, Division Firewall)
         const fits = window.SchedulerCoreUtils.canBlockFit(
             block,
-            act,
+            cand.field,
             activityProperties,
-            act
+            cand.activityName
         );
         
         if (fits) {
             const pick = {
-                field: act,
-                sport: null,
-                _activity: act
+                field: cand.field,
+                sport: cand.sport,
+                _activity: cand.activityName
             };
-            // Calculate detailed penalty (Repeats, History, etc)
+            
+            // 2. Logical Validity Check (Repeats, Limits, History)
             const cost = calculatePenaltyCost(block, pick);
             
             // Only add if not disqualified (9999 cost)
@@ -267,11 +281,14 @@ Solver.getValidActivityPicks = function(block) {
         }
     }
 
-    // Always allow "Free" as a last resort
+    // Always allow "Free" as a fallback
     picks.push({
         pick: { field: "Free", sport: null, _activity: "Free" },
-        cost: 9999
+        cost: 9000
     });
+
+    // Randomize candidates with same cost
+    picks = shuffleArray(picks);
 
     return picks;
 };
@@ -333,11 +350,37 @@ Solver.solveSchedule = function(allBlocks, config) {
     globalConfig = config;
     activityProperties = config.activityProperties || {};
 
-    availableSports = config.allActivities
-        .filter(a => a.type === "field" && a.sport)
-        .map(a => a.field);
+    // --- PREPARE CANDIDATES (Unique Field/Sport Combos) ---
+    // This allows "Hockey" and "Handball" on the same "Hockey Arena"
+    // to be treated as different activities.
+    
+    allCandidateOptions = [];
 
-    availableSpecials = config.masterSpecials.map(s => s.name);
+    // 1. SPORTS (Field + Sport combo)
+    if (config.allActivities) {
+        config.allActivities.forEach(a => {
+            if (a.type === 'field' && a.sport) {
+                allCandidateOptions.push({
+                    field: a.field,
+                    sport: a.sport,
+                    activityName: a.sport, // Use SPORT name for uniqueness
+                    type: 'sport'
+                });
+            }
+        });
+    }
+
+    // 2. SPECIALS (Field/Name is activity)
+    if (config.masterSpecials) {
+        config.masterSpecials.forEach(s => {
+            allCandidateOptions.push({
+                field: s.name,
+                sport: null,
+                activityName: s.name,
+                type: 'special'
+            });
+        });
+    }
 
     currentScorecard = window.DataPersistence.loadSolverScorecard();
 
@@ -349,22 +392,24 @@ Solver.solveSchedule = function(allBlocks, config) {
     const solvedLeague = Solver.solveLeagueSchedule(leagueBlocks);
 
     // Step B: Backtracking for general activities
-    let solvedActivity = [];
     let iterations = 0;
 
     function backtrack(idx, acc) {
         iterations++;
-        // Limit depth to avoid freezing on massive schedules
+        // Limit depth
         if (iterations > MAX_ITERATIONS) return acc; 
         if (idx === activityBlocks.length) return acc;
 
         const block = activityBlocks[idx];
         
-        // Get picks sorted by Cost (Lowest Penalty First)
+        // Get valid picks (SHUFFLED then SORTED by cost)
         const picks = Solver.getValidActivityPicks(block)
             .sort((a, b) => a.cost - b.cost);
 
-        for (const p of picks) {
+        // Try the best 5 picks
+        const bestPicks = picks.slice(0, 5);
+
+        for (const p of bestPicks) {
             const res = Solver.applyTentativePick(block, p);
             
             const out = backtrack(idx + 1, [...acc, { block, solution: p.pick }]);
@@ -373,7 +418,7 @@ Solver.solveSchedule = function(allBlocks, config) {
             Solver.undoTentativePick(res);
         }
 
-        return null; // No solution found for this branch
+        return null; 
     }
 
     const finalAssignments = backtrack(0, solvedLeague);
@@ -389,7 +434,7 @@ Solver.solveSchedule = function(allBlocks, config) {
         }));
     }
 
-    console.error("Total Solver: failed to fully solve — returning partial/empty array.");
+    console.error("Total Solver: failed to fully solve.");
     return [];
 };
 
