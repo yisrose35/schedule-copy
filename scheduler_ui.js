@@ -1,6 +1,10 @@
 // ============================================================================
-// scheduler_ui.js  — FIXED RENDERER
-// Fixes: "White Gaps" / Broken Grid Layout / Row Merging
+// scheduler_ui.js (RESTORED: SKELETON-DRIVEN DYNAMIC GRID)
+//
+// Features:
+// 1. Dynamic Gridlines: Rows are generated based on YOUR Skeleton Blocks.
+// 2. Wrapper Logic: Merges "Transition -> Activity -> Transition" into one cell.
+// 3. Minute-Engine Compatible: Removes broken "slot index" lookups.
 // ============================================================================
 
 (function () {
@@ -11,6 +15,10 @@
   // -------------------------------------------------------------------------
   // TIME HELPERS
   // -------------------------------------------------------------------------
+  function parseTimeToMinutes(str) {
+    return window.SchedulerCoreUtils.parseTimeToMinutes(str);
+  }
+
   function minutesToTimeLabel(min) {
     const h24 = Math.floor(min / 60);
     const m = String(min % 60).padStart(2, "0");
@@ -25,9 +33,7 @@
   function resolveResourceName(input, knownNames) {
     if (!input || !knownNames) return null;
     const clean = String(input).toLowerCase().trim();
-
     if (knownNames.includes(input)) return input;
-
     const sorted = [...knownNames].sort((a, b) => b.length - a.length);
     for (const name of sorted) {
       if (clean.startsWith(name.toLowerCase())) return name;
@@ -36,46 +42,25 @@
   }
 
   // -------------------------------------------------------------------------
-  // GENERATED EVENT NAME CHECK
-  // -------------------------------------------------------------------------
-  const UI_GENERATED_EVENTS = new Set([
-    "general activity",
-    "general activity slot",
-    "activity",
-    "activities",
-    "sports",
-    "sport",
-    "sports slot",
-    "special activity",
-    "swim",
-    "league game",
-    "specialty league"
-  ]);
-
-  function uiIsGeneratedEventName(name) {
-    if (!name) return false;
-    return UI_GENERATED_EVENTS.has(String(name).trim().toLowerCase());
-  }
-
-  // -------------------------------------------------------------------------
-  // GET ENTRY FOR BUNK AT SPECIFIC START MINUTE
+  // GET ENTRY (Robust Minute Lookup)
   // -------------------------------------------------------------------------
   function getEntry(bunk, startMin) {
-    const a = window.scheduleAssignments || {};
-    if (!a[bunk]) return null;
-    return a[bunk][startMin] || null;
+    const bunkSched = window.scheduleAssignments?.[bunk];
+    if (!bunkSched) return null;
+    // Direct lookup by minute
+    return bunkSched[startMin] || null;
   }
 
   // -------------------------------------------------------------------------
-  // FORMAT ENTRY (INCLUDING TRANSITIONS)
+  // FORMAT ENTRY
   // -------------------------------------------------------------------------
   function formatEntry(entry) {
     if (!entry) return "";
     if (entry._isDismissal) return "Dismissal";
     if (entry._isSnack) return "Snacks";
-
+    
     if (entry.field === TRANSITION_TYPE) {
-      return "🏃 Transition";
+      return `🏃‍♂️ ${entry.sport || entry.field}`;
     }
 
     const label = entry._activity || entry.field || "";
@@ -86,143 +71,48 @@
   }
 
   // -------------------------------------------------------------------------
-  // EDIT CELL (MINUTE ACCURATE + FIXED)
+  // EDIT CELL
   // -------------------------------------------------------------------------
   function editCell(bunk, startMin, endMin, current) {
     if (!bunk) return;
 
     const config = window.SchedulerCoreUtils.loadAndFilterData();
     const { activityProperties, divisions } = config;
-
-    const divName = Object.keys(divisions).find(d =>
-      divisions[d].bunks.includes(bunk)
-    );
+    const divName = Object.keys(divisions).find(d => divisions[d].bunks.includes(bunk));
 
     const newInput = prompt(
-      `Edit activity for ${bunk}\n${minutesToTimeLabel(
-        startMin
-      )} - ${minutesToTimeLabel(endMin)}\n(Enter CLEAR or FREE to empty)`,
+      `Edit activity for ${bunk}\n${minutesToTimeLabel(startMin)} - ${minutesToTimeLabel(endMin)}\n(Enter CLEAR or FREE to empty)`,
       current
     );
 
     if (newInput === null) return;
 
     const value = newInput.trim();
-    const isClear =
-      value === "" ||
-      value.toUpperCase() === "CLEAR" ||
-      value.toUpperCase() === "FREE";
+    const isClear = value === "" || ["CLEAR", "FREE"].includes(value.toUpperCase());
 
-    // LOAD ORIGINAL FIELD BEFORE DELETING ANYTHING
-    const origEntry = getEntry(bunk, startMin);
-    const oldField = origEntry ? origEntry.field : null;
-
-    // ---------------------------------------------------------------------
-    // CLEAR / DELETE BLOCK
-    // ---------------------------------------------------------------------
-    if (isClear) {
-      delete window.scheduleAssignments[bunk][startMin];
-
-      // Clear reservations fully
-      Object.keys(window.fieldReservationLog).forEach(field => {
+    // 1. CLEANUP OLD
+    // We must clear the exact start time, plus any reservations
+    delete window.scheduleAssignments[bunk][startMin];
+    Object.keys(window.fieldReservationLog).forEach(field => {
         window.fieldReservationLog[field] = window.fieldReservationLog[field].filter(
-          r => !(r.bunk === bunk && r.startMin === startMin)
+            r => !(r.bunk === bunk && r.startMin === startMin)
         );
-      });
+    });
 
-      saveSchedule();
-      updateTable();
-      return;
+    if (isClear) {
+        saveSchedule();
+        updateTable();
+        return;
     }
 
-    // ---------------------------------------------------------------------
-    // NORMAL EDIT (Rewrite block)
-    // ---------------------------------------------------------------------
+    // 2. WRITE NEW
     const allNames = Object.keys(activityProperties);
     const resolvedName = resolveResourceName(value, allNames) || value;
-    const props = activityProperties[resolvedName];
 
-    // VALIDATION WARNINGS
-    const warnings = [];
-
-    if (props) {
-      // Duration check
-      const transRules = window.SchedulerCoreUtils.getTransitionRules(
-        resolvedName,
-        activityProperties
-      );
-
-      const { activityDuration } =
-        window.SchedulerCoreUtils.getEffectiveTimeRange(
-          { startTime: startMin, endTime: endMin },
-          transRules
-        );
-
-      if (activityDuration < transRules.minDurationMin) {
-        warnings.push(
-          `⚠️ DURATION WARNING: Actual activity = ${activityDuration} min (min = ${transRules.minDurationMin}).`
-        );
-      }
-
-      // Check capacity via canBlockFit
-      const tempBlock = { bunk, startTime: startMin, endTime: endMin, divName };
-      const canFit = window.SchedulerCoreUtils.canBlockFit(
-        tempBlock,
-        resolvedName,
-        activityProperties,
-        resolvedName
-      );
-
-      if (!canFit) {
-        warnings.push(
-          `⚠️ CAPACITY CONFLICT: "${resolvedName}" is full or blocked at this time.`
-        );
-      }
-    }
-
-    // If warnings exist: ask user
-    if (warnings.length > 0) {
-      const msg =
-        warnings.join("\n\n") +
-        `\n\nOverride these warnings and schedule anyway?`;
-
-      if (!confirm(msg)) return;
-    }
-
-    // ---------------------------------------------------------------------
-    // CLEAN OLD RESERVATIONS (critical fix)
-    // ---------------------------------------------------------------------
-    if (oldField) {
-      Object.keys(window.fieldReservationLog).forEach(field => {
-        window.fieldReservationLog[field] = window.fieldReservationLog[field].filter(
-          r => !(r.bunk === bunk && r.startMin === startMin)
-        );
-      });
-    }
-
-    // Remove old assignment
-    delete window.scheduleAssignments[bunk][startMin];
-
-    // ---------------------------------------------------------------------
-    // WRITE NEW BLOCK USING fillBlock (correct signature)
-    // ---------------------------------------------------------------------
     window.fillBlock(
-      {
-        divName,
-        bunk,
-        startTime: startMin,
-        endTime: endMin
-      },
-      {
-        field: resolvedName,
-        sport: null,
-        _activity: resolvedName,
-        _fixed: true
-      },
-      null,
-      false,
-      activityProperties,
-      true
+        { divName, bunk, startTime: startMin, endTime: endMin },
+        { field: resolvedName, sport: null, _activity: resolvedName, _fixed: true },
+        null, false, activityProperties, true
     );
 
     saveSchedule();
@@ -230,28 +120,21 @@
   }
 
   // -------------------------------------------------------------------------
-  // MAIN RENDERER (UPDATED TO MATCH MINUTE TIMELINE)
+  // MAIN RENDERER: SKELETON-DRIVEN
   // -------------------------------------------------------------------------
   function updateTable() {
     const container = document.getElementById("scheduleTable");
     if (!container) return;
-
-    renderStaggeredView(container);
+    renderSkeletonGrid(container);
   }
 
-  // -------------------------------------------------------------------------
-  // STAGGERED MINUTE VIEW
-  // -------------------------------------------------------------------------
-  function renderStaggeredView(container) {
+  function renderSkeletonGrid(container) {
     container.innerHTML = "";
-
+    
     const config = window.SchedulerCoreUtils.loadAndFilterData();
     const { divisions, availableDivisions } = config;
-
     const daily = window.loadCurrentDailyData?.() || {};
     const manualSkeleton = daily.manualSkeleton || [];
-
-    const parseTime = window.SchedulerCoreUtils.parseTimeToMinutes;
 
     if (!Array.isArray(manualSkeleton) || manualSkeleton.length === 0) {
       container.innerHTML = "<p>No daily schedule generated.</p>";
@@ -262,181 +145,199 @@
     wrapper.className = "schedule-view-wrapper";
     container.appendChild(wrapper);
 
-    // -----------------------------------------------------
-    // Collect all unique minute boundaries
-    // -----------------------------------------------------
-    const allTimes = new Set();
-
-    // From Skeleton
-    manualSkeleton.forEach(item => {
-      const s = parseTime(item.startTime);
-      const e = parseTime(item.endTime);
-      if (s !== null) allTimes.add(s);
-      if (e !== null) allTimes.add(e);
-    });
-
-    // From Actual Assignments (Critical for detecting generated blocks)
-    Object.values(window.scheduleAssignments).forEach(sched => {
-      Object.values(sched).forEach(entry => {
-        if (entry.startMin != null) allTimes.add(entry.startMin);
-        if (entry.endMin != null) allTimes.add(entry.endMin);
-      });
-    });
-
-    const sorted = [...allTimes].sort((a, b) => a - b);
-
-    // Build Time Segments
-    const rows = [];
-    for (let i = 0; i < sorted.length - 1; i++) {
-      const start = sorted[i];
-      const end = sorted[i + 1];
-      if (end > start) {
-        rows.push({
-          startMin: start,
-          endMin: end,
-          label: `${minutesToTimeLabel(start)} - ${minutesToTimeLabel(end)}`
-        });
-      }
-    }
-
-    if (rows.length === 0) {
-      container.innerHTML = "<p>Invalid time range.</p>";
-      return;
-    }
-
-    // -----------------------------------------------------
-    // Render each division
-    // -----------------------------------------------------
+    // --- PER DIVISION LOOP ---
     availableDivisions.forEach(div => {
-      const bunks = divisions[div]?.bunks || [];
+      const bunks = (divisions[div]?.bunks || []).slice().sort();
       if (bunks.length === 0) return;
 
       const table = document.createElement("table");
       table.className = "schedule-division-table";
 
-      const head = document.createElement("thead");
-      head.innerHTML = `
-        <tr><th colspan="${1 + bunks.length}" style="background:${
-        divisions[div]?.color || "#444"
-      };color:white;">${div}</th></tr>
-        <tr><th>Time</th>${bunks
-          .map(b => `<th>${b}</th>`)
-          .join("")}</tr>
+      // THEAD
+      const thead = document.createElement("thead");
+      thead.innerHTML = `
+        <tr><th colspan="${1 + bunks.length}" style="background:${divisions[div]?.color || "#444"};color:white;">${div}</th></tr>
+        <tr><th>Time</th>${bunks.map(b => `<th>${b}</th>`).join("")}</tr>
       `;
       table.appendChild(head);
 
-      const body = document.createElement("tbody");
-      const skip = {}; // Tracks skip state per bunk (minutes)
+      // TBODY
+      const tbody = document.createElement("tbody");
 
-      rows.forEach((row) => {
-        const { startMin, endMin, label } = row;
-        const tr = document.createElement("tr");
+      // 1. Get Skeleton Blocks for this Division (The "Dynamic Gridlines")
+      const rawBlocks = manualSkeleton.filter(b => b.division === div);
+      
+      // Expand "Split" tiles into two visual rows
+      const rows = [];
+      rawBlocks.forEach(b => {
+          const s = parseTimeToMinutes(b.startTime);
+          const e = parseTimeToMinutes(b.endTime);
+          if (s === null || e === null) return;
 
-        // Time Column
-        const tdTime = document.createElement("td");
-        tdTime.textContent = label;
-        tdTime.style.whiteSpace = "nowrap";
-        tr.appendChild(tdTime);
-
-        bunks.forEach(bunk => {
-          // CHECK SKIP: If this bunk is already covered by a previous rowspan
-          if (skip[bunk] && skip[bunk] > startMin) {
-            return;
+          if (b.type === "split") {
+              const mid = s + (e - s) / 2;
+              rows.push({ ...b, startMin: s, endMin: mid, label: `${minutesToTimeLabel(s)} - ${minutesToTimeLabel(mid)}` });
+              rows.push({ ...b, startMin: mid, endMin: e, label: `${minutesToTimeLabel(mid)} - ${minutesToTimeLabel(e)}` });
+          } else {
+              rows.push({ ...b, startMin: s, endMin: e, label: `${minutesToTimeLabel(s)} - ${minutesToTimeLabel(e)}` });
           }
+      });
 
-          const entry = getEntry(bunk, startMin);
+      // Sort rows by time
+      rows.sort((a,b) => a.startMin - b.startMin);
 
-          let content = "";
-          let rowspan = 1;
-          let bg = "";
+      // 2. Render Rows
+      rows.forEach(block => {
+          const tr = document.createElement("tr");
+          
+          // Time Column
+          const tdTime = document.createElement("td");
+          tdTime.textContent = block.label;
+          tdTime.style.whiteSpace = "nowrap";
+          tdTime.style.fontWeight = "bold";
+          tr.appendChild(tdTime);
 
-          if (entry) {
-            // === FOUND ACTIVITY STARTING HERE ===
-            const act = entry._activity;
-            const isLeague = act === "League Game" || act === "Specialty League";
-            bg = entry._fixed ? "#fff8e1" : (isLeague ? "#dbeeff" : "");
-            content = formatEntry(entry);
-
-            // --- MERGE LOGIC (THE FIX) ---
-            let targetEnd = entry.endMin; // The definitive end time of this block
-
-            // Look ahead at subsequent rows
-            for (let rIndex = rows.indexOf(row) + 1; rIndex < rows.length; rIndex++) {
-                const nextRow = rows[rIndex];
-
-                // Case 1: The activity naturally covers this next row
-                // (e.g. Activity ends at 12:00, nextRow is 11:30-12:00)
-                if (nextRow.startMin < targetEnd) {
-                    rowspan++;
-                    continue;
-                }
-
-                // Case 2: Seamless continuation (Consecutive identical blocks)
-                const nextEntry = getEntry(bunk, nextRow.startMin);
-                if (nextEntry && nextEntry._activity === act) {
-                    rowspan++;
-                    targetEnd = nextEntry.endMin; // Extend our target
-                } else {
-                    break; // Stop merging
-                }
-            }
-
-            // Mark this bunk as skipped until targetEnd
-            skip[bunk] = targetEnd;
-
-            // LEAGUE EXCEPTION: Render colSpan for the first bunk, skip others
-            if (isLeague) {
-              if (bunk !== bunks[0]) return; // Only draw for first bunk
+          // LEAGUE ROW (Merged)
+          if (block.event.startsWith("League Game") || block.event.startsWith("Specialty League")) {
               const td = document.createElement("td");
               td.colSpan = bunks.length;
               td.style.background = "#dbeeff";
               td.style.fontWeight = "bold";
-              td.textContent = content;
-              td.onclick = () => editCell(bunk, startMin, entry.endMin, act);
-              td.rowSpan = rowspan;
+              td.style.textAlign = "center";
+              
+              // Try to find the League Label from the first bunk
+              const entry = getEntry(bunks[0], block.startMin);
+              let title = block.event;
+              if (entry) {
+                  if (entry._gameLabel) title += ` (${entry._gameLabel})`;
+                  if (entry._allMatchups && entry._allMatchups.length > 0) {
+                      title += `<ul style="margin:5px 0 0 0; padding:0; list-style:none; font-weight:normal; font-size:0.9em;">` + 
+                               entry._allMatchups.map(m => `<li>${m.teamA} vs ${m.teamB}</li>`).join("") + 
+                               `</ul>`;
+                  }
+              }
+              
+              td.innerHTML = title;
+              td.style.cursor = "pointer";
+              td.onclick = () => editCell(bunks[0], block.startMin, block.endMin, block.event);
+              
               tr.appendChild(td);
-
-              // Mark ALL bunks as skipped
-              bunks.slice(1).forEach(b => (skip[b] = targetEnd));
+              tbody.appendChild(tr);
               return;
-            }
-
-            const td = document.createElement("td");
-            td.style.background = bg;
-            td.rowSpan = rowspan;
-            td.textContent = content;
-            td.style.cursor = "pointer";
-            td.onclick = () => editCell(bunk, startMin, entry.endMin, content);
-            tr.appendChild(td);
-
-          } else {
-            // === EMPTY SLOT ===
-            const td = document.createElement("td");
-            td.onclick = () => editCell(bunk, startMin, endMin, "");
-            tr.appendChild(td);
           }
-        });
 
-        body.appendChild(tr);
+          // STANDARD BUNKS ROW
+          bunks.forEach(bunk => {
+              const td = document.createElement("td");
+              
+              // Get the entry at the START of this skeleton block
+              const entry = getEntry(bunk, block.startMin);
+              
+              let cellContent = "";
+              let bg = "";
+              let mainActivity = "";
+
+              if (entry) {
+                  const act = entry._activity;
+                  
+                  // --- WRAPPER DISPLAY LOGIC ---
+                  // If we find a transition, we look ahead to find the main activity
+                  // If we find an activity, we look behind/ahead for transitions
+                  // We assume the sequence fits roughly within the Skeleton Block
+                  
+                  if (act === TRANSITION_TYPE) {
+                      // It's a start transition. Find the Main Activity it leads to.
+                      // Simple heuristic: Look at the next entry in the schedule assignment map
+                      const sortedEntries = Object.values(window.scheduleAssignments[bunk]).sort((a,b) => a.startMin - b.startMin);
+                      const myIdx = sortedEntries.indexOf(entry);
+                      const next = sortedEntries[myIdx + 1];
+                      
+                      if (next && next._activity !== TRANSITION_TYPE) {
+                          mainActivity = next._activity;
+                          // Calculate times
+                          const preMins = entry.endMin - entry.startMin;
+                          const playMins = next.endMin - next.startMin;
+                          // Check for post
+                          const post = sortedEntries[myIdx + 2];
+                          let postMins = 0;
+                          if (post && post._activity === TRANSITION_TYPE) postMins = post.endMin - post.startMin;
+                          
+                          cellContent = `<strong>${mainActivity}</strong><br>` + 
+                                        `<span style="font-size:0.8em; color:#059669;">(${preMins}m To / ${playMins}m Play / ${postMins}m From)</span>`;
+                          bg = "#e0f7fa";
+                      } else {
+                          // Orphan transition
+                          cellContent = "🏃 Transition";
+                          bg = "#f3f4f6";
+                      }
+                  } 
+                  else {
+                      // It's an Activity. Check if it had a pre-transition we missed?
+                      // In the Skeleton view, the row starts at 11:00. 
+                      // If the transition started at 11:00, we caught it above.
+                      // If the Activity starts at 11:00 (no transition), we catch it here.
+                      
+                      mainActivity = act;
+                      cellContent = formatEntry(entry);
+                      bg = entry._fixed ? "#fff8e1" : "#e0f7fa";
+                  }
+              } else {
+                  // EMPTY
+                  // Check if there is an activity starting *mid-block*?
+                  // (e.g. Skeleton 11:00, but Activity starts 11:10)
+                  // Iterate assignment keys to find overlap
+                  const sched = window.scheduleAssignments[bunk];
+                  const midKey = Object.keys(sched).find(k => {
+                      const kMin = parseInt(k);
+                      return kMin > block.startMin && kMin < block.endMin;
+                  });
+                  
+                  if (midKey) {
+                      const midEntry = sched[midKey];
+                      if (midEntry._activity !== TRANSITION_TYPE) {
+                          cellContent = formatEntry(midEntry);
+                          mainActivity = midEntry._activity;
+                          bg = "#e0f7fa";
+                      } else {
+                          // Transition started late
+                          cellContent = "🏃 Transition"; 
+                      }
+                  }
+              }
+
+              // Dismissal / Snack Overrides based on Skeleton Event Name
+              if (block.event.toLowerCase().includes("dismiss")) { cellContent = "Dismissal"; bg = "#ffdddd"; }
+              else if (block.event.toLowerCase().includes("snack")) { cellContent = "Snacks"; bg = "#e7ffe7"; }
+              else if (!entry && !cellContent) {
+                  // If truly empty, use the skeleton name as placeholder if generated
+                  if (!["Activity", "Sports", "Special Activity"].includes(block.event)) {
+                      cellContent = block.event;
+                      bg = "#fff7cc";
+                  }
+              }
+
+              td.innerHTML = cellContent;
+              td.style.background = bg;
+              td.style.cursor = "pointer";
+              td.style.textAlign = "center";
+              td.style.verticalAlign = "middle";
+              
+              td.onclick = () => editCell(bunk, block.startMin, block.endMin, mainActivity || cellContent);
+              
+              tr.appendChild(td);
+          });
+
+          tbody.appendChild(tr);
       });
 
-      table.appendChild(body);
+      table.appendChild(tbody);
       wrapper.appendChild(table);
     });
   }
 
-  // -------------------------------------------------------------------------
-  // SAVE / LOAD
-  // -------------------------------------------------------------------------
   function saveSchedule() {
-    window.saveCurrentDailyData?.(
-      "scheduleAssignments",
-      window.scheduleAssignments
-    );
-    window.saveCurrentDailyData?.(
-      "leagueAssignments",
-      window.leagueAssignments
-    );
+    window.saveCurrentDailyData?.("scheduleAssignments", window.scheduleAssignments);
+    window.saveCurrentDailyData?.("leagueAssignments", window.leagueAssignments);
   }
 
   function reconcileOrRenderSaved() {
