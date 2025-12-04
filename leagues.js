@@ -841,9 +841,7 @@ if (m) {
     const tA = m[1].trim();
     const tB = m[2].trim();
 
-                if (m) {
-                    const tA = m[1].trim();
-                    const tB = m[2].trim();
+               
 
                     if (league.teams.includes(tA) && league.teams.includes(tB)) {
                         if (!gamesFound[headerLabel]) gamesFound[headerLabel] = [];
