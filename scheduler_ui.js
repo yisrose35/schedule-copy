@@ -213,6 +213,7 @@
                   if (entry._gameLabel) title += ` (${entry._gameLabel})`;
                   
                   // --- FIX APPLIED HERE: Treat _allMatchups as Strings ---
+                  // This is the key fix that allows "Team A vs Team B @ Field 1" to display correctly
                   if (entry._allMatchups && entry._allMatchups.length > 0) {
                       title += `<ul style="margin:5px 0 0 0; padding:0; list-style:none; font-weight:normal; font-size:0.9em;">` + 
                                entry._allMatchups.map(m => `<li>${m}</li>`).join("") + 
