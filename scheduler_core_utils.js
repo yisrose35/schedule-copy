@@ -2,17 +2,14 @@
 // scheduler_core_utils.js (FIXED VERSION — OPTION B: DIVISION FIREWALL)
 // PART 1 of 3: THE FOUNDATION (Continuous Minute Timeline)
 //
-// This version includes ALL critical fixes:
-// ✔ Division Firewall (No cross-division sharing, even if sharable)
-// ✔ Proper initialization of reservation logs & transition counters
+// Includes:
+// ✔ Division Firewall (no cross-division sharing)
+// ✔ minutesToTime() helper added
+// ✔ minutesToTimeLabel() alias added
 // ✔ Safe handling of proposedActivity
-// ✔ Correct headcount logic (only count overlapping field-occupied minutes)
-// ✔ Correct allowedDivisions logic (no invalid inheritance)
-// ✔ Correct merge-detection for transitions (per-zone based)
-// ✔ Correct zone concurrency checks
-// ✔ No dangerous fallthrough returns
-// ✔ No silent acceptance of undefined activityProperties
-// ✔ Smart Tile–safe and Pass 2.5 / Pass 4–safe
+// ✔ Accurate zone concurrency
+// ✔ Accurate overlap & capacity checks
+// ✔ Correct time-rule parsing & filtering
 // ============================================================================
 
 (function() {
@@ -90,6 +87,18 @@
         d.setMinutes(mins);
         return d;
     };
+
+    // --------------------------------------------------------------
+    // NEW: THE MISSING HELPER  
+    // --------------------------------------------------------------
+    Utils.minutesToTime = function(mins) {
+        if (mins == null) return "";
+        const d = Utils.minutesToDate(mins);
+        return Utils.fmtTime(d);
+    };
+
+    // Alias (for Analytics / Print Center compatibility)
+    Utils.minutesToTimeLabel = Utils.minutesToTime;
 
     // =================================================================
     // TIME RANGE HELPERS
@@ -189,7 +198,7 @@
     };
 
     // =================================================================
-    // UTILITIES
+    // INTERNAL
     // =================================================================
     function isLeagueAssignment(name) {
         const s = String(name || "").toLowerCase();
@@ -197,15 +206,14 @@
     }
 
     // =================================================================
-    // MAIN: CAN A BLOCK FIT ON THIS FIELD?
+    // CAN A BLOCK FIT ON THIS FIELD?
     // =================================================================
     Utils.canBlockFit = function(block, fieldName, activityProperties, proposedActivity) {
 
-        // SAFETY CHECK: Proposed activity must exist
         if (!proposedActivity || typeof proposedActivity !== "string") return false;
 
         const props = activityProperties[fieldName];
-        if (!props) return false; // FIXED (was "true")
+        if (!props) return false;
 
         const transRules = Utils.getTransitionRules(fieldName, activityProperties);
         const { blockStartMin, blockEndMin, effectiveStart, effectiveEnd, activityDuration } =
@@ -220,7 +228,7 @@
 
         if (!Utils.isTimeAvailableMinuteAccurate(blockStartMin, blockEndMin, props)) return false;
 
-        // --- ALLOWED DIVISIONS ---
+        // ALLOWED DIVISIONS
         if (props.allowedDivisions?.length > 0 &&
             !props.allowedDivisions.includes(block.divName)) {
             return false;
@@ -231,20 +239,17 @@
             return false;
         }
 
-        // SETUP
         const reservationLog = window.fieldReservationLog[fieldName] || [];
-        const bunkMeta = window.SchedulerCoreUtils._bunkMetaData || {};
-        const sportMeta = window.SchedulerCoreUtils._sportMetaData || {};
+        const bunkMeta = Utils._bunkMetaData || {};
+        const sportMeta = Utils._sportMetaData || {};
 
         let headcount = bunkMeta[block.bunk]?.size || 0;
         const maxCapacity = props.sharableWith?.capacity || 1;
-
         let proposedWeight = isLeagueAssignment(proposedActivity) ? maxCapacity : 1;
 
         // =============================================================
-        // DIVISION FIREWALL (OPTION B) — STRICT
+        // DIVISION FIREWALL (STRICT)
         // =============================================================
-
         for (const existing of reservationLog) {
 
             const overlap =
@@ -253,23 +258,22 @@
 
             if (!overlap) continue;
 
-            // STRICT: No two different divisions ever share a field
+            // STRICT: never share fields across divisions
             if (existing.divName !== block.divName) {
                 return false;
             }
 
-            // CAPACITY CHECK
+            // capacity
             const existingWeight = existing.isLeague ? maxCapacity : 1;
             if (existingWeight + proposedWeight > maxCapacity) {
                 return false;
             }
 
-            // HEADCOUNT CHECK (only count overlapping activity time)
             const addSize = bunkMeta[existing.bunk]?.size || 0;
             headcount += addSize;
         }
 
-        // FINAL HEADCOUNT LIMIT
+        // HEADCOUNT LIMIT
         const maxHeadcount = sportMeta[proposedActivity]?.maxCapacity || Infinity;
         if (headcount > maxHeadcount) return false;
 
@@ -285,7 +289,6 @@
 
             if (maxConcurrent < 99) {
 
-                // Correct merge-check:
                 const merged =
                     (window.__transitionUsage?.[zoneName + "_lastEnd"] === blockStartMin);
 
@@ -302,9 +305,8 @@
     };
 
     // =================================================================
-    // DATA LOADER (CLEANED + FIXED)
+    // DATA LOADER (FULLY FIXED)
     // =================================================================
-
     function parseTimeRule(rule) {
         if (!rule) return null;
         if (typeof rule.startMin === "number" && typeof rule.endMin === "number") return rule;
@@ -332,7 +334,6 @@
         Utils._bunkMetaData = bunkMetaData;
         Utils._sportMetaData = sportMetaData;
 
-
         const dailyData = window.loadCurrentDailyData?.() || {};
         const dailyFieldAvailability = dailyData.dailyFieldAvailability || {};
         const dailyOverrides = dailyData.overrides || {};
@@ -352,6 +353,9 @@
             leagueTeamLastSport: rotationHistoryRaw.leagueTeamLastSport || {}
         };
 
+        // =============================================================
+        // SPECIAL COUNTS (HISTORICAL)
+        // =============================================================
         const historicalCounts = {};
         const lastUsedDates = {};
         const specialActivityNames = [];
@@ -409,9 +413,7 @@
                     let count = 0;
                     for (const dStr of dates) {
                         const d = new Date(dStr);
-                        const diff = Math.ceil(
-                            Math.abs(todayDate - d) / (86400000)
-                        );
+                        const diff = Math.ceil(Math.abs(todayDate - d) / 86400000);
 
                         if (!rule || rule.frequencyWeeks === 0 || diff <= windowDays) {
                             count++;
@@ -445,6 +447,9 @@
             leagues: disabledLeagues
         };
 
+        // =============================================================
+        // DIVISIONS
+        // =============================================================
         const availableDivisions =
             (app1Data.availableDivisions || [])
                 .filter(d => !overrides.bunks.includes(d));
@@ -459,6 +464,9 @@
             );
         }
 
+        // =============================================================
+        // ACTIVITY PROPS (THE FIXED SECTION)
+        // =============================================================
         const activityProperties = {};
         const allMasterActivities = [
             ...masterFields.filter(f => !disabledFields.includes(f.name)),
@@ -478,7 +486,6 @@
 
             const isMasterAvailable = f.available !== false;
 
-            // FIXED allowedDivisions logic:
             let allowedDivisions = null;
             if (Array.isArray(f.allowedDivisions) && f.allowedDivisions.length > 0) {
                 allowedDivisions = f.allowedDivisions.slice();
@@ -486,7 +493,6 @@
                        f.divisionAvailability.mode === 'specific') {
                 allowedDivisions = (f.divisionAvailability.divisions || []).slice();
             }
-            // sharableWith.divisions is NOT auto-applied (fix)
 
             let capacity = 1;
             if (f.sharableWith?.capacity) {
@@ -507,7 +513,7 @@
 
             activityProperties[f.name] = {
                 available: isMasterAvailable,
-                sharable: false, // FORCE STRICT DIVISION FIREWALL
+                sharable: false, // STRICT FIREWALL
                 sharableWith: f.sharableWith,
                 allowedDivisions,
                 limitUsage: f.limitUsage?.enabled
