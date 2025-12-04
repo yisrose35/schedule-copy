@@ -744,6 +744,8 @@ function renderGrid() {
   }
 
   function loadSkeletonToBuilder(name) {
+    window.loadSkeletonToBuilder = loadSkeletonToBuilder;
+
     const all = window.getSavedSkeletons?.() || {};
     if (all[name]) dailySkeleton = JSON.parse(JSON.stringify(all[name]));
     renderGrid();
