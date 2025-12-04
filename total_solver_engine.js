@@ -2,10 +2,10 @@
 // total_solver_engine.js
 // (NEW CORE UTILITY: Backtracking Constraint Solver — Option 1)
 //
-// IMPORTANT:
-// - League activity uses the *field name* as activityName (Option 1).
-// - fillBlock() handles actual reservation; solver only chooses fields.
-// - Fully compatible with scheduler_core_utils.js (Division Firewall Version)
+// UPDATED: Added "Anti-Boredom" Logic
+// - Penalizes back-to-back repeats heavily.
+// - Checks yesterday's history.
+// - Enforces Max Usage limits strictly.
 // ============================================================================
 
 (function() {
@@ -35,30 +35,65 @@ function calculatePenaltyCost(block, pick) {
     const bunk = block.bunk;
     const activityName = pick._activity;
 
-    // ------------- Penalty: Duplicate Today (50) --------------
+    // 1. GET CURRENT STATE
     const todayAssign = window.scheduleAssignments[bunk] || {};
-    const isDupToday = Object.values(todayAssign)
-        .some(e => e._activity === activityName && e.startTime !== block.startTime);
-    if (isDupToday) penalty += 50;
+    const entries = Object.values(todayAssign);
+    
+    // Count how many times this activity is already scheduled TODAY
+    let todayCount = 0;
+    entries.forEach(e => {
+        if (e._activity === activityName && e.startMin !== block.startTime) {
+            todayCount++;
+        }
+    });
 
-    // ------------- League duplicate has extra hit --------------
-    if (pick._isLeague && isDupToday) penalty += 100;
+    // 2. CHECK MAX USAGE (HARD LIMIT)
+    // If it's a special activity with a limit, check history + today
+    const specialRule = globalConfig.masterSpecials?.find(s => s.name === activityName);
+    if (specialRule && specialRule.maxUsage > 0) {
+        const histCount = globalConfig.historicalCounts?.[bunk]?.[activityName] || 0;
+        if (histCount + todayCount >= specialRule.maxUsage) {
+            return 9999; // DISQUALIFIED: Cap reached
+        }
+    }
 
-    // ------------- Season-long fairness penalty --------------
+    // 3. IMMEDIATE REPEAT (BACK-TO-BACK) - MASSIVE PENALTY
+    // Check if the previous slot (ending near this start time) has the same activity
+    const prevEntry = entries.find(e => Math.abs(e.endMin - block.startTime) <= 15);
+    if (prevEntry && prevEntry._activity === activityName) {
+        penalty += 1000; // Strongly avoid back-to-back
+    }
+
+    // 4. YESTERDAY REPEAT (ROTATION)
+    const yesterdaySched = globalConfig.yesterdayHistory?.schedule?.[bunk] || {};
+    const playedYesterday = Object.values(yesterdaySched).some(e => e._activity === activityName);
+    if (playedYesterday) {
+        penalty += 200; // Prefer something new
+    }
+
+    // 5. DAILY REPEAT SCALING
+    if (todayCount > 0) {
+        // 1st repeat = 50, 2nd = 150, 3rd = 300... exponential discouragement
+        penalty += (50 + (todayCount * 100)); 
+    }
+
+    // 6. LEAGUE PRIORITY
+    if (pick._isLeague && todayCount > 0) penalty += 500; // Leagues should strictly happen once
+
+    // 7. SEASON FAIRNESS (Scorecard)
     const fair = currentScorecard.teamFairness[bunk] || {};
     const cum = fair.totalPenalties || 0;
     penalty += Math.floor(cum / 10);
 
-    // ------------- Preferences bonus/penalty --------------
+    // 8. PREFERENCES
     const props = activityProperties[activityName];
     if (props?.preferences?.enabled) {
         const idx = (props.preferences.list || []).indexOf(block.divName);
         if (idx !== -1) {
             // Preferred: negative = bonus
-            penalty -= (10 - idx);
+            penalty -= (20 - (idx * 2)); 
         } else if (props.preferences.exclusive) {
-            // Should not assign
-            penalty += 1000;
+            penalty += 2000; // Exclusive violation
         }
     }
 
@@ -203,26 +238,36 @@ Solver.sortBlocksByDifficulty = function(blocks, config) {
 
 Solver.getValidActivityPicks = function(block) {
     const picks = [];
+    
+    // Merge both lists so we consider everything
     const allActs = availableSpecials.concat(availableSports);
 
     for (const act of allActs) {
+        // Use standard fit check (time, div firewall, etc)
         const fits = window.SchedulerCoreUtils.canBlockFit(
             block,
             act,
             activityProperties,
             act
         );
+        
         if (fits) {
             const pick = {
                 field: act,
                 sport: null,
                 _activity: act
             };
+            // Calculate detailed penalty (Repeats, History, etc)
             const cost = calculatePenaltyCost(block, pick);
-            picks.push({ pick, cost });
+            
+            // Only add if not disqualified (9999 cost)
+            if (cost < 9000) {
+                picks.push({ pick, cost });
+            }
         }
     }
 
+    // Always allow "Free" as a last resort
     picks.push({
         pick: { field: "Free", sport: null, _activity: "Free" },
         cost: 9999
@@ -267,7 +312,7 @@ Solver.updateSeasonScorecard = function(assignments) {
         const bunk = item.block.bunk;
         const cost = calculatePenaltyCost(item.block, item.solution);
 
-        if (cost > 0 && cost < 9999) {
+        if (cost > 0 && cost < 9000) {
             if (!sc.teamFairness[bunk]) {
                 sc.teamFairness[bunk] = { totalPenalties: 0 };
             }
@@ -309,21 +354,26 @@ Solver.solveSchedule = function(allBlocks, config) {
 
     function backtrack(idx, acc) {
         iterations++;
-        if (iterations > MAX_ITERATIONS) return acc;
+        // Limit depth to avoid freezing on massive schedules
+        if (iterations > MAX_ITERATIONS) return acc; 
         if (idx === activityBlocks.length) return acc;
 
         const block = activityBlocks[idx];
+        
+        // Get picks sorted by Cost (Lowest Penalty First)
         const picks = Solver.getValidActivityPicks(block)
             .sort((a, b) => a.cost - b.cost);
 
         for (const p of picks) {
             const res = Solver.applyTentativePick(block, p);
+            
             const out = backtrack(idx + 1, [...acc, { block, solution: p.pick }]);
             if (out) return out;
+            
             Solver.undoTentativePick(res);
         }
 
-        return null;
+        return null; // No solution found for this branch
     }
 
     const finalAssignments = backtrack(0, solvedLeague);
@@ -339,7 +389,7 @@ Solver.solveSchedule = function(allBlocks, config) {
         }));
     }
 
-    console.error("Total Solver: failed to fully solve — returning empty array.");
+    console.error("Total Solver: failed to fully solve — returning partial/empty array.");
     return [];
 };
 
