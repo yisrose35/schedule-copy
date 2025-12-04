@@ -829,7 +829,18 @@
             const linesToScan = entry._allMatchups;
 
             linesToScan.forEach(line => {
-                const m = line.match(/^(.*?)\s+vs\.?\s+(.*?)(?:\s*[@\(]|$)/i);
+                // NEW: Support "1 vs 2 — Basketball @ Field" AND old formats
+let m = line.match(/^(.*?)\s+vs\.?\s+(.*?)\s+(?:—|-)\s+.*?@\s*(.*)$/i);
+
+// If new format didn't match, fall back to old
+if (!m) {
+    m = line.match(/^(.*?)\s+vs\.?\s+(.*?)(?:\s*[@\(]|$)/i);
+}
+
+if (m) {
+    const tA = m[1].trim();
+    const tB = m[2].trim();
+
                 if (m) {
                     const tA = m[1].trim();
                     const tB = m[2].trim();
