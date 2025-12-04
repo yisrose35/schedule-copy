@@ -1148,4 +1148,342 @@ function renderResourceOverridesUI() {
   }
 
   specialtyNames.forEach(name => {
-    const enabled = !current
+    const enabled = !currentOverrides.disabledSpecialtyLeagues.includes(name);
+    const onToggle = (isEnabled) => {
+      if (isEnabled)
+        currentOverrides.disabledSpecialtyLeagues =
+          currentOverrides.disabledSpecialtyLeagues.filter(n => n !== name);
+      else if (!currentOverrides.disabledSpecialtyLeagues.includes(name))
+        currentOverrides.disabledSpecialtyLeagues.push(name);
+
+      window.saveCurrentDailyData("disabledSpecialtyLeagues", currentOverrides.disabledSpecialtyLeagues);
+    };
+
+    specialtyListEl.appendChild(
+      createOverrideMasterListItem('specialty_league', name, enabled, onToggle)
+    );
+  });
+
+  renderOverrideDetailPane();
+}
+
+// -----------------------------------------------------------
+// MASTER LIST ITEM (Fields / Specials / Leagues)
+// -----------------------------------------------------------
+let selectedOverrideId = null;
+
+function createOverrideMasterListItem(type, name, isEnabled, onToggle) {
+  const el = document.createElement('div');
+  el.className = 'list-item';
+
+  const id = `${type}-${name}`;
+  if (id === selectedOverrideId) el.classList.add('selected');
+
+  const nameEl = document.createElement('span');
+  nameEl.className = 'list-item-name';
+  nameEl.textContent = name;
+
+  nameEl.onclick = () => {
+    selectedOverrideId = id;
+    renderResourceOverridesUI();
+    renderOverrideDetailPane();
+  };
+
+  const tog = document.createElement("label");
+  tog.className = "switch";
+  tog.title = isEnabled ? "Disable for today" : "Enable for today";
+  tog.onclick = (e) => e.stopPropagation();
+
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.checked = isEnabled;
+
+  cb.onchange = () => {
+    onToggle(cb.checked);
+    tog.title = cb.checked ? "Disable for today" : "Enable for today";
+  };
+
+  const slider = document.createElement("span");
+  slider.className = "slider";
+
+  tog.appendChild(cb);
+  tog.appendChild(slider);
+
+  el.appendChild(nameEl);
+  el.appendChild(tog);
+
+  return el;
+}
+
+// -----------------------------------------------------------
+// DETAIL PANE (Time Rules, Sports rules)
+// -----------------------------------------------------------
+function renderOverrideDetailPane() {
+  const pane = document.getElementById("override-detail-pane");
+  if (!pane) return;
+
+  if (!selectedOverrideId) {
+    pane.innerHTML = `<p class="muted">Select an item from the left.</p>`;
+    return;
+  }
+
+  pane.innerHTML = "";
+
+  const [type, name] = selectedOverrideId.split(/-(.+)/);
+
+  // FIELD or SPECIAL
+  if (type === 'field' || type === 'special') {
+    const fields = masterSettings.app1.fields || [];
+    const specials = masterSettings.app1.specialActivities || [];
+
+    const item = (type === 'field')
+      ? fields.find(f => f.name === name)
+      : specials.find(s => s.name === name);
+
+    if (!item) {
+      pane.innerHTML = `<p style="color:red;">Error: Item not found.</p>`;
+      return;
+    }
+
+    const globalRules = item.timeRules || [];
+
+    if (!currentOverrides.dailyFieldAvailability[name]) {
+      currentOverrides.dailyFieldAvailability[name] = [];
+    }
+
+    const dailyRules = currentOverrides.dailyFieldAvailability[name];
+
+    const onSave = () => {
+      currentOverrides.dailyFieldAvailability[name] = dailyRules;
+      window.saveCurrentDailyData("dailyFieldAvailability", currentOverrides.dailyFieldAvailability);
+      renderOverrideDetailPane();
+    };
+
+    pane.appendChild(
+      renderTimeRulesUI(name, globalRules, dailyRules, onSave)
+    );
+
+    // Additional sports override if FIELD
+    if (type === 'field') {
+      const sports = item.activities || [];
+      const disabledToday = currentOverrides.dailyDisabledSportsByField[name] || [];
+
+      const sportList = document.createElement('div');
+      sportList.className = 'sport-override-list';
+      sportList.innerHTML = `<strong>Daily Sport Availability for ${name}</strong>`;
+
+      if (sports.length === 0) {
+        sportList.innerHTML += `<p class="muted" style="margin:5px 0 0 10px;">No sports are assigned in Fields tab.</p>`;
+      }
+
+      sports.forEach(sport => {
+        const isEnabled = !disabledToday.includes(sport);
+        const { wrapper, checkbox } = createCheckbox(sport, isEnabled);
+
+        checkbox.onchange = () => {
+          let list = currentOverrides.dailyDisabledSportsByField[name] || [];
+          if (checkbox.checked)
+            list = list.filter(s => s !== sport);
+          else if (!list.includes(sport))
+            list.push(sport);
+
+          currentOverrides.dailyDisabledSportsByField[name] = list;
+          window.saveCurrentDailyData("dailyDisabledSportsByField", currentOverrides.dailyDisabledSportsByField);
+        };
+
+        sportList.appendChild(wrapper);
+      });
+
+      pane.appendChild(sportList);
+    }
+
+    return;
+  }
+
+  // LEAGUE / SPECIALTY LEAGUE
+  if (type === 'league' || type === 'specialty_league') {
+    pane.innerHTML = `<p class="muted">Enable or disable this league with the toggle on the left.</p>`;
+    return;
+  }
+
+  pane.innerHTML = `<p class="muted">No details available.</p>`;
+}
+
+// -----------------------------------------------------------
+// TIME RULES UI COMPONENT
+// -----------------------------------------------------------
+function renderTimeRulesUI(itemName, globalRules, dailyRules, onSave) {
+  const container = document.createElement("div");
+
+  // Global Rules
+  const g = document.createElement("div");
+  g.innerHTML = `<strong>Global Rules (from Setup):</strong>`;
+  if (globalRules.length === 0) {
+    g.innerHTML += `<p class="muted">Available all day</p>`;
+  }
+  globalRules.forEach(rule => {
+    const r = document.createElement("div");
+    r.style.margin = "2px 0";
+    r.style.fontSize = "0.9em";
+    r.innerHTML = `
+      • <span style="color:${rule.type === 'Available' ? 'green' : 'red'};">
+        ${rule.type}
+      </span> from ${rule.start} to ${rule.end}
+    `;
+    g.appendChild(r);
+  });
+
+  // Daily Overrides
+  const d = document.createElement("div");
+  d.style.marginTop = "10px";
+  d.innerHTML = `<strong>Daily Override Rules (replace global rules):</strong>`;
+
+  const list = document.createElement("div");
+
+  if (dailyRules.length === 0) {
+    list.innerHTML = `<p class="muted">No daily rules. Using global rules.</p>`;
+  }
+
+  dailyRules.forEach((rule, idx) => {
+    const row = document.createElement("div");
+    row.style.margin = "3px 0";
+    row.style.padding = "4px";
+    row.style.background = "#fff8e1";
+    row.style.borderRadius = "4px";
+
+    const type = document.createElement("strong");
+    type.style.color = rule.type === "Available" ? "green" : "red";
+    type.textContent = rule.type;
+
+    const text = document.createElement("span");
+    text.textContent = ` from ${rule.start} to ${rule.end}`;
+
+    const rm = document.createElement("button");
+    rm.textContent = "✖";
+    rm.style.marginLeft = "8px";
+    rm.style.background = "transparent";
+    rm.style.border = "none";
+    rm.style.cursor = "pointer";
+
+    rm.onclick = () => {
+      dailyRules.splice(idx, 1);
+      onSave();
+    };
+
+    row.appendChild(type);
+    row.appendChild(text);
+    row.appendChild(rm);
+    list.appendChild(row);
+  });
+
+  d.appendChild(list);
+
+  // Add new rule
+  const addBox = document.createElement("div");
+  addBox.style.marginTop = "10px";
+
+  const sel = document.createElement("select");
+  sel.innerHTML = `
+    <option value="Available">Available</option>
+    <option value="Unavailable">Unavailable</option>
+  `;
+
+  const sIn = document.createElement("input");
+  sIn.placeholder = "9:00am";
+  sIn.style.width = "100px";
+  sIn.style.marginLeft = "5px";
+
+  const to = document.createElement("span");
+  to.textContent = " to ";
+  to.style.margin = "0 5px";
+
+  const eIn = document.createElement("input");
+  eIn.placeholder = "10:00am";
+  eIn.style.width = "100px";
+
+  const addBtn = document.createElement("button");
+  addBtn.textContent = "Add Rule";
+  addBtn.style.marginLeft = "8px";
+
+  addBtn.onclick = () => {
+    const type = sel.value;
+    const s = sIn.value;
+    const e = eIn.value;
+
+    if (!s || !e) { alert("Enter both times"); return; }
+    if (parseTimeToMinutes(s) == null || parseTimeToMinutes(e) == null) {
+      alert("Invalid time format."); return;
+    }
+    if (parseTimeToMinutes(s) >= parseTimeToMinutes(e)) {
+      alert("End must be after start."); return;
+    }
+
+    dailyRules.push({ type, start:s, end:e });
+    onSave();
+  };
+
+  addBox.appendChild(sel);
+  addBox.appendChild(sIn);
+  addBox.appendChild(to);
+  addBox.appendChild(eIn);
+  addBox.appendChild(addBtn);
+
+  container.appendChild(g);
+  container.appendChild(d);
+  container.appendChild(addBox);
+
+  return container;
+}
+
+// -------------------------------------------------------
+// COMMON HELPERS
+// -------------------------------------------------------
+function createCheckbox(name, isChecked) {
+  const wrapper = document.createElement('label');
+  wrapper.className = 'override-checkbox';
+
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = isChecked;
+
+  const text = document.createElement('span');
+  text.textContent = name;
+
+  wrapper.appendChild(cb);
+  wrapper.appendChild(text);
+
+  return { wrapper, checkbox: cb };
+}
+
+function createChip(name, color = '#007BFF', isDivision=false) {
+  const el = document.createElement('span');
+  el.className = 'bunk-button';
+  el.textContent = name;
+  el.dataset.value = name;
+
+  const defaultBorder = isDivision ? color : '#ccc';
+
+  el.style.borderColor = defaultBorder;
+  el.style.backgroundColor = 'white';
+  el.style.color = 'black';
+
+  el.onclick = () => {
+    const sel = el.classList.toggle('selected');
+    el.style.backgroundColor = sel ? color : 'white';
+    el.style.color = sel ? 'white' : 'black';
+    el.style.borderColor = sel ? color : defaultBorder;
+  };
+
+  return el;
+}
+
+function uid() {
+  return `id_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+// ======================================================================
+// EXPORT OBJECT
+// ======================================================================
+window.initDailyAdjustments = init;
+
+})();
