@@ -283,7 +283,7 @@ const minutesToTime =
     loadSel.onchange = () => {
       const name = loadSel.value;
       if (name && saved[name] && confirm(`Load "${name}"?`)) {
-        window.loadSkeletonToBuilder(name);
+        loadSkeletonToBuilder(name);
 
         saveName.value = name;
       }
