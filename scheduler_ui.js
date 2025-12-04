@@ -5,6 +5,7 @@
 // 1. Dynamic Gridlines: Rows are generated based on YOUR Skeleton Blocks.
 // 2. Wrapper Logic: Merges "Transition -> Activity -> Transition" into one cell.
 // 3. Minute-Engine Compatible: Removes broken "slot index" lookups.
+// 4. FIXED: League Matchup rendering (handles strings correctly).
 // ============================================================================
 
 (function () {
@@ -159,7 +160,7 @@
         <tr><th colspan="${1 + bunks.length}" style="background:${divisions[div]?.color || "#444"};color:white;">${div}</th></tr>
         <tr><th>Time</th>${bunks.map(b => `<th>${b}</th>`).join("")}</tr>
       `;
-      table.appendChild(thead); // Fixed typo here (was 'head')
+      table.appendChild(thead);
 
       // TBODY
       const tbody = document.createElement("tbody");
@@ -210,9 +211,11 @@
               let title = block.event;
               if (entry) {
                   if (entry._gameLabel) title += ` (${entry._gameLabel})`;
+                  
+                  // --- FIX APPLIED HERE: Treat _allMatchups as Strings ---
                   if (entry._allMatchups && entry._allMatchups.length > 0) {
                       title += `<ul style="margin:5px 0 0 0; padding:0; list-style:none; font-weight:normal; font-size:0.9em;">` + 
-                               entry._allMatchups.map(m => `<li>${m.teamA} vs ${m.teamB}</li>`).join("") + 
+                               entry._allMatchups.map(m => `<li>${m}</li>`).join("") + 
                                `</ul>`;
                   }
               }
@@ -241,23 +244,16 @@
                   const act = entry._activity;
                   
                   // --- WRAPPER DISPLAY LOGIC ---
-                  // If we find a transition, we look ahead to find the main activity
-                  // If we find an activity, we look behind/ahead for transitions
-                  // We assume the sequence fits roughly within the Skeleton Block
                   
                   if (act === TRANSITION_TYPE) {
-                      // It's a start transition. Find the Main Activity it leads to.
-                      // Simple heuristic: Look at the next entry in the schedule assignment map
                       const sortedEntries = Object.values(window.scheduleAssignments[bunk]).sort((a,b) => a.startMin - b.startMin);
                       const myIdx = sortedEntries.indexOf(entry);
                       const next = sortedEntries[myIdx + 1];
                       
                       if (next && next._activity !== TRANSITION_TYPE) {
                           mainActivity = next._activity;
-                          // Calculate times
                           const preMins = entry.endMin - entry.startMin;
                           const playMins = next.endMin - next.startMin;
-                          // Check for post
                           const post = sortedEntries[myIdx + 2];
                           let postMins = 0;
                           if (post && post._activity === TRANSITION_TYPE) postMins = post.endMin - post.startMin;
@@ -266,26 +262,17 @@
                                         `<span style="font-size:0.8em; color:#059669;">(${preMins}m To / ${playMins}m Play / ${postMins}m From)</span>`;
                           bg = "#e0f7fa";
                       } else {
-                          // Orphan transition
                           cellContent = "🏃 Transition";
                           bg = "#f3f4f6";
                       }
                   } 
                   else {
-                      // It's an Activity. Check if it had a pre-transition we missed?
-                      // In the Skeleton view, the row starts at 11:00. 
-                      // If the transition started at 11:00, we caught it above.
-                      // If the Activity starts at 11:00 (no transition), we catch it here.
-                      
                       mainActivity = act;
                       cellContent = formatEntry(entry);
                       bg = entry._fixed ? "#fff8e1" : "#e0f7fa";
                   }
               } else {
-                  // EMPTY
-                  // Check if there is an activity starting *mid-block*?
-                  // (e.g. Skeleton 11:00, but Activity starts 11:10)
-                  // Iterate assignment keys to find overlap
+                  // EMPTY or MID-BLOCK
                   const sched = window.scheduleAssignments[bunk] || {};
                   const midKey = Object.keys(sched).find(k => {
                       const kMin = parseInt(k);
@@ -299,17 +286,14 @@
                           mainActivity = midEntry._activity;
                           bg = "#e0f7fa";
                       } else {
-                          // Transition started late
                           cellContent = "🏃 Transition"; 
                       }
                   }
               }
 
-              // Dismissal / Snack Overrides based on Skeleton Event Name
               if (block.event.toLowerCase().includes("dismiss")) { cellContent = "Dismissal"; bg = "#ffdddd"; }
               else if (block.event.toLowerCase().includes("snack")) { cellContent = "Snacks"; bg = "#e7ffe7"; }
               else if (!entry && !cellContent) {
-                  // If truly empty, use the skeleton name as placeholder if generated
                   if (!["Activity", "Sports", "Special Activity"].includes(block.event)) {
                       cellContent = block.event;
                       bg = "#fff7cc";
