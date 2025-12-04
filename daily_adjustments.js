@@ -1676,7 +1676,7 @@ function buildMinuteTimeline() {
   return out;
 }
 
-const parseTimeToMinutes = window.SchedulerCoreUtils.parseTimeToMinutes;
+
 
 // ======================================================================
 // SMART TILE HISTORY
