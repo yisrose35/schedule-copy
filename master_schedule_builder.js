@@ -332,13 +332,50 @@ function renderGrid() {
             style="grid-row:2; grid-column:${idx + 2}; position:relative; height:${height}px; border-right:1px solid #eee;">
         `;
 
-        // disable before/after
-        if (s > earliest) {
-            html += `<div style="position:absolute;top:0;left:0;width:100%;height:${(s-earliest)*PIXELS_PER_MINUTE}px;background:#00000008;"></div>`;
-        }
-        if (e < latest) {
-            html += `<div style="position:absolute;top:${(e-earliest)*PIXELS_PER_MINUTE}px;left:0;width:100%;height:${(latest-e)*PIXELS_PER_MINUTE}px;background:#00000008;"></div>`;
-        }
+        // BEFORE START — dark grey diagonal stripes
+if (s > earliest) {
+    html += `
+    <div style="
+        position:absolute;
+        top:0;
+        left:0;
+        width:100%;
+        height:${(s-earliest)*PIXELS_PER_MINUTE}px;
+        background: repeating-linear-gradient(
+            45deg,
+            #d3d3d3 0,
+            #d3d3d3 10px,
+            #e8e8e8 10px,
+            #e8e8e8 20px
+        );
+        opacity: 0.8;
+        pointer-events:none;
+        border-bottom:1px solid #ccc;
+    "></div>`;
+}
+
+// AFTER END — dark grey diagonal stripes
+if (e < latest) {
+    html += `
+    <div style="
+        position:absolute;
+        top:${(e-earliest)*PIXELS_PER_MINUTE}px;
+        left:0;
+        width:100%;
+        height:${(latest-e)*PIXELS_PER_MINUTE}px;
+        background: repeating-linear-gradient(
+            45deg,
+            #d3d3d3 0,
+            #d3d3d3 10px,
+            #e8e8e8 10px,
+            #e8e8e8 20px
+        );
+        opacity: 0.8;
+        pointer-events:none;
+        border-top:1px solid #ccc;
+    "></div>`;
+}
+
 
         // events
         dailySkeleton.filter(ev => ev.division === divName).forEach(ev => {
