@@ -231,14 +231,20 @@
                     overflow: hidden;
                     transition: box-shadow 0.2s, transform 0.1s;
                     z-index: 10;
-                    border-width: 1px;
-                    border-style: solid;
                     font-family: inherit;
+                    /* Ensure text truncates properly in narrow columns */
+                    display: flex;
+                    flex-direction: column;
                 }
                 .mb-event-card:hover {
                     box-shadow: 0 8px 16px -4px rgba(15, 23, 42, 0.2);
                     z-index: 20;
                     transform: scale(1.01);
+                }
+                .mb-event-card > div {
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
                 }
             </style>
         `;
@@ -396,6 +402,8 @@
             el.style.borderColor = tile.border;
             el.style.color = tile.text || "#333";
             if (tile.dash) el.style.borderStyle = "dashed";
+            // Ensure border width is correct for palette items too
+            el.style.borderWidth = "2px";
 
             el.draggable = true;
             el.ondragstart = e =>
@@ -630,18 +638,54 @@
             // -----------------------------------------------------
             // EVENT BLOCKS (Render all events for this division)
             // -----------------------------------------------------
-            dailySkeleton
+            // 1. Prepare and sort events
+            const divEvents = dailySkeleton
                 .filter(ev => ev.division === divName)
-                .forEach(ev => {
-                    const startM = parseTimeToMinutes(ev.startTime);
-                    const endM = parseTimeToMinutes(ev.endTime);
-                    if (startM == null || endM == null || endM <= startM) return;
+                .map(ev => ({
+                    original: ev,
+                    startM: parseTimeToMinutes(ev.startTime),
+                    endM: parseTimeToMinutes(ev.endTime)
+                }))
+                .filter(ev => ev.startM != null && ev.endM != null && ev.endM > ev.startM)
+                .sort((a, b) => a.startM - b.startM);
 
-                    const top = (startM - earliest) * PIXELS_PER_MINUTE;
-                    const h = (endM - startM) * PIXELS_PER_MINUTE;
+            // 2. Basic layout algorithm to avoid overlap (column packing)
+            const columns = [];
+            divEvents.forEach(ev => {
+                let placed = false;
+                for (let i = 0; i < columns.length; i++) {
+                    const col = columns[i];
+                    const lastEv = col[col.length - 1];
+                    // Check if event fits in this column (starts after or at the same time the last one ends)
+                    if (ev.startM >= lastEv.endM) {
+                        col.push(ev);
+                        ev.colIndex = i;
+                        placed = true;
+                        break;
+                    }
+                }
+                if (!placed) {
+                    columns.push([ev]);
+                    ev.colIndex = columns.length - 1;
+                }
+            });
 
-                    html += renderEventTile(ev, top, h);
-                });
+            // 3. Calculate dimensions and render
+            const totalColumns = columns.length || 1;
+            const colWidth = 100 / totalColumns;
+
+            divEvents.forEach(ev => {
+                const top = (ev.startM - earliest) * PIXELS_PER_MINUTE;
+                const h = (ev.endM - ev.startM) * PIXELS_PER_MINUTE;
+                // Calculate horizontal position and width
+                const left = ev.colIndex * colWidth;
+                // Use slightly less than full column width for gaps (e.g., 2% total gap)
+                const width = colWidth * 0.98; 
+                // Add a small left offset for spacing within the column (e.g., 1%)
+                const leftOffset = left + 1;
+
+                html += renderEventTile(ev.original, top, h, leftOffset, width);
+            });
 
             html += `</div>`;
         });
@@ -660,15 +704,18 @@
     // ============================================================================
     // EVENT TILE RENDERER (Google Calendar-round style)
     // ============================================================================
-    function renderEventTile(ev, top, height) {
+    function renderEventTile(ev, top, height, leftPct = 2, widthPct = 96) {
         const tile = TILES.find(t => t.name === ev.event) ||
             TILES.find(t => t.type === ev.type);
 
-        // Fallback colors
-        const base = tile?.base || "#f3f4f6";
-        const border = tile?.border || "#9ca3af";
-        const text = tile?.text || "#1f2937";
+        // Fallback colors - use cleaner neutrals if tile type not found
+        const base = tile?.base || "#ffffff";
+        const border = tile?.border || "#e2e8f0";
+        const text = tile?.text || "#475569";
         const borderStyle = tile?.dash ? "dashed" : "solid";
+        
+        // Ensure border width is prominently visible for the pastel colors
+        const borderWidth = tile ? "2px" : "1px";
 
         return `
         <div class="mb-event-card"
@@ -677,13 +724,14 @@
              style="
                 position:absolute;
                 top:${top}px;
-                left:2%;
-                width:96%;
+                left:${leftPct}%;
+                width:${widthPct}%;
                 height:${height}px;
                 background-color: ${base};
-                border-color: ${border};
-                border-style: ${borderStyle};
+                border: ${borderWidth} ${borderStyle} ${border};
                 color: ${text};
+                /* Add z-index to ensure they stack correctly above grid lines */
+                z-index: 15; 
              ">
             <div style="font-weight:700; margin-bottom:2px;">${ev.event}</div>
             <div style="font-size:0.75rem; opacity:0.85;">${ev.startTime} – ${ev.endTime}</div>
