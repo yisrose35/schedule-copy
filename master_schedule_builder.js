@@ -40,20 +40,21 @@
     // =========================================
     // TILE DEFINITIONS
     // =========================================
-    // Updated colors for a more professional pastel palette
+    // Updated colors for distinct, professional contrast
+    // Using a "Modern SaaS" palette: bold borders, distinct pastel backgrounds
     const TILES = [
-        { type: "activity", name: "Activity", base: "#e3f2fd", border: "#1565c0", text: "#0d47a1" },
-        { type: "sports", name: "Sports", base: "#e8f5e9", border: "#2e7d32", text: "#1b5e20" },
-        { type: "special", name: "Special Activity", base: "#f3e5f5", border: "#7b1fa2", text: "#4a148c" },
-        { type: "smart", name: "Smart Tile", base: "#fff8e1", border: "#fbc02d", text: "#f57f17", dash: true },
-        { type: "split", name: "Split Activity", base: "#fff3e0", border: "#ef6c00", text: "#e65100" },
-        { type: "league", name: "League Game", base: "#ede7f6", border: "#512da8", text: "#311b92" },
-        { type: "specialty_league", name: "Specialty League", base: "#fce4ec", border: "#c2185b", text: "#880e4f" },
-        { type: "swim", name: "Swim", base: "#e0f7fa", border: "#0097a7", text: "#006064" },
-        { type: "lunch", name: "Lunch", base: "#ffebee", border: "#d32f2f", text: "#b71c1c" },
-        { type: "snacks", name: "Snacks", base: "#fffde7", border: "#fbc02d", text: "#f57f17" },
-        { type: "dismissal", name: "Dismissal", base: "#ffebee", border: "#b71c1c", text: "#b71c1c" },
-        { type: "custom", name: "Custom Event", base: "#f5f5f5", border: "#616161", text: "#212121" }
+        { type: "activity", name: "Activity", base: "#ffffff", border: "#64748b", text: "#334155" }, // Neutral White/Slate
+        { type: "sports", name: "Sports", base: "#dcfce7", border: "#16a34a", text: "#14532d" }, // Distinct Green
+        { type: "special", name: "Special Activity", base: "#f3e8ff", border: "#9333ea", text: "#581c87" }, // Purple
+        { type: "smart", name: "Smart Tile", base: "#fffbeb", border: "#f59e0b", text: "#b45309", dash: true }, // Amber
+        { type: "split", name: "Split Activity", base: "#ffedd5", border: "#ea580c", text: "#7c2d12" }, // Orange
+        { type: "league", name: "League Game", base: "#e0f2fe", border: "#0284c7", text: "#0c4a6e" }, // Sky Blue
+        { type: "specialty_league", name: "Specialty League", base: "#fae8ff", border: "#d946ef", text: "#701a75" }, // Fuchsia
+        { type: "swim", name: "Swim", base: "#ecfeff", border: "#06b6d4", text: "#155e75" }, // Cyan
+        { type: "lunch", name: "Lunch", base: "#fee2e2", border: "#ef4444", text: "#7f1d1d" }, // Red
+        { type: "snacks", name: "Snacks", base: "#fef9c3", border: "#eab308", text: "#713f12" }, // Yellow
+        { type: "dismissal", name: "Dismissal", base: "#1e293b", border: "#0f172a", text: "#ffffff" }, // Dark Slate (Inverted)
+        { type: "custom", name: "Custom Event", base: "#f1f5f9", border: "#334155", text: "#0f172a" } // Grey
     ];
 
     // ============================================================================
@@ -93,8 +94,8 @@
                 /* ========================= */
                 .mb-app {
                     font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-                    background: #f5f5f7;
-                    color: #111827;
+                    background: #f8fafc;
+                    color: #1e293b;
                     padding: 20px;
                 }
 
@@ -103,18 +104,18 @@
                     font-family: inherit;
                     font-size: 0.85rem;
                     border-radius: 999px;
-                    border: 1px solid #d1d5db;
+                    border: 1px solid #cbd5e1;
                     padding: 6px 14px;
                     background: #ffffff;
-                    color: #111827;
+                    color: #1e293b;
                     cursor: pointer;
                     transition: all 0.15s ease;
                     box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+                    font-weight: 500;
                 }
                 .mb-app button:hover {
-                    background: #f3f4f6;
-                    border-color: #9ca3af;
-                    box-shadow: 0 4px 8px rgba(15, 23, 42, 0.08);
+                    background: #f1f5f9;
+                    border-color: #94a3b8;
                     transform: translateY(-0.5px);
                 }
                 .mb-app button.mb-btn-primary { background: #2563eb; color: white; border-color: #2563eb; }
@@ -133,26 +134,26 @@
                     font-size: 0.85rem;
                     padding: 6px 12px;
                     border-radius: 999px;
-                    border: 1px solid #d1d5db;
+                    border: 1px solid #cbd5e1;
                     background: #ffffff;
-                    color: #111827;
+                    color: #1e293b;
                     box-sizing: border-box;
                     outline: none;
                     transition: all 0.2s;
                 }
                 .mb-app input[type="text"]:focus,
                 .mb-app select:focus {
-                    border-color: #2563eb;
-                    box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.35);
+                    border-color: #3b82f6;
+                    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
                 }
 
                 /* Layout Containers (Cards) */
                 .mb-toolbar, .mb-palette-area {
                     background: #ffffff;
-                    border-radius: 12px;
-                    border: 1px solid #e5e7eb;
+                    border-radius: 16px;
+                    border: 1px solid #e2e8f0;
                     padding: 1rem 1.25rem;
-                    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
                     margin-bottom: 24px;
                 }
 
@@ -161,9 +162,9 @@
                     font-size: 0.75rem;
                     text-transform: uppercase;
                     letter-spacing: 0.05em;
-                    color: #6b7280;
+                    color: #64748b;
                     margin-bottom: 6px;
-                    font-weight: 600;
+                    font-weight: 700;
                 }
 
                 /* Palette Items */
@@ -178,7 +179,7 @@
                     cursor: grab;
                     font-size: 0.85rem;
                     font-weight: 600;
-                    box-shadow: 0 3px 6px rgba(15, 23, 42, 0.08);
+                    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
                     transition: all 0.2s ease;
                     user-select: none;
                     display: flex;
@@ -189,7 +190,7 @@
                 }
                 .mb-tile-item:hover {
                     transform: translateY(-2px);
-                    box-shadow: 0 8px 16px rgba(15, 23, 42, 0.12);
+                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
                 }
                 .mb-tile-item:active {
                     cursor: grabbing;
@@ -197,10 +198,10 @@
 
                 /* Grid Container */
                 .mb-grid-container {
-                    border: 1px solid #e5e7eb;
-                    border-radius: 12px;
+                    border: 1px solid #e2e8f0;
+                    border-radius: 16px;
                     background: #ffffff;
-                    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+                    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
                     overflow: hidden;
                 }
 
@@ -210,14 +211,14 @@
                     width: 10px;
                 }
                 .mb-grid-container::-webkit-scrollbar-track {
-                    background: #f1f1f1;
+                    background: #f8fafc;
                 }
                 .mb-grid-container::-webkit-scrollbar-thumb {
-                    background: #c1c1c1;
+                    background: #cbd5e1;
                     border-radius: 5px;
                 }
                 .mb-grid-container::-webkit-scrollbar-thumb:hover {
-                    background: #a8a8a8;
+                    background: #94a3b8;
                 }
 
                 /* Event Card on Grid */
@@ -225,21 +226,20 @@
                     border-radius: 6px;
                     padding: 4px 8px;
                     font-size: 0.8rem;
-                    line-height: 1.2;
-                    box-shadow: 0 2px 4px rgba(15, 23, 42, 0.1);
+                    line-height: 1.25;
+                    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
                     cursor: grab;
                     overflow: hidden;
-                    transition: box-shadow 0.2s, transform 0.1s;
+                    transition: box-shadow 0.2s, transform 0.1s, z-index 0s;
                     z-index: 10;
                     font-family: inherit;
-                    /* Ensure text truncates properly in narrow columns */
                     display: flex;
                     flex-direction: column;
                 }
                 .mb-event-card:hover {
-                    box-shadow: 0 8px 16px -4px rgba(15, 23, 42, 0.2);
-                    z-index: 20;
-                    transform: scale(1.01);
+                    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+                    z-index: 50 !important; /* Ensure hovered item pops to very top */
+                    transform: scale(1.02);
                 }
                 .mb-event-card > div {
                     white-space: nowrap;
@@ -302,10 +302,10 @@
             </div>
         </div>
 
-        <details style="margin-top:20px; border-top: 1px solid #f3f4f6; padding-top: 15px;">
+        <details style="margin-top:20px; border-top: 1px solid #f1f5f9; padding-top: 15px;">
             <summary style="cursor:pointer;color:#2563eb;font-weight:600;font-size:0.9rem;">Advanced: Assignments & Delete</summary>
 
-            <div style="padding:15px;background:#f9fafb;border-radius:12px;margin-top:15px;border:1px solid #e5e7eb;">
+            <div style="padding:15px;background:#f8fafc;border-radius:12px;margin-top:15px;border:1px solid #e2e8f0;">
                 <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap:15px;">
                     ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Default"]
                 .map(day => `
@@ -403,7 +403,7 @@
             el.style.color = tile.text || "#333";
             if (tile.dash) el.style.borderStyle = "dashed";
             // Ensure border width is correct for palette items too
-            el.style.borderWidth = "2px";
+            el.style.borderWidth = "2px"; // Bold borders for professional look
 
             el.draggable = true;
             el.ondragstart = e =>
@@ -422,7 +422,7 @@
 
         if (!available.length) {
             grid.innerHTML = `
-            <div style="padding:40px;text-align:center;color:#9ca3af;font-style:italic;">
+            <div style="padding:40px;text-align:center;color:#94a3b8;font-style:italic;">
                 No divisions found. Please set them up first.
             </div>`;
             return;
@@ -475,17 +475,17 @@
         html += `
         <div style="
             grid-row:1;
-            background:#f9fafb;
+            background:#f8fafc;
             padding:12px;
-            border-bottom:1px solid #e5e7eb;
+            border-bottom:1px solid #e2e8f0;
             font-weight:600;
-            color: #4b5563;
+            color: #64748b;
             font-size: 0.8rem;
             position:sticky;
             top:0;
             z-index:30;
             text-align: right;
-            border-right: 1px solid #e5e7eb;
+            border-right: 1px solid #e2e8f0;
         ">Time</div>
     `;
 
@@ -495,12 +495,12 @@
         <div style="
             grid-row:1;
             grid-column:${idx + 2};
-            background:#f9fafb;
-            border-top: 3px solid ${color};
-            color:#1f2937;
+            background:#f8fafc;
+            border-top: 4px solid ${color}; /* Thicker top border for clear division coding */
+            color:#334155;
             padding:12px;
-            border-bottom:1px solid #e5e7eb;
-            border-right: 1px solid #f3f4f6;
+            border-bottom:1px solid #e2e8f0;
+            border-right: 1px solid #f1f5f9;
             font-weight:700;
             text-align:center;
             position:sticky;
@@ -523,7 +523,7 @@
             position:relative;
             height:${totalHeight}px;
             background:#ffffff;
-            border-right:1px solid #e5e7eb;
+            border-right:1px solid #e2e8f0;
         ">
     `;
 
@@ -533,7 +533,7 @@
             const isHour = m % 60 === 0;
             const isHalf = m % 30 === 0;
             const label = isHalf ? minutesToTime(m) : "";
-            const borderColor = isHour ? "#e5e7eb" : "#f3f4f6";
+            const borderColor = isHour ? "#e2e8f0" : "#f8fafc"; // Subtle differentiation
 
             html += `
             <div style="
@@ -542,7 +542,7 @@
                 width:100%;
                 border-top:1px solid ${borderColor};
                 font-size:10px;
-                color:#9ca3af;
+                color:#94a3b8;
                 padding-right:8px;
                 text-align:right;
                 transform: translateY(-50%);
@@ -571,7 +571,7 @@
                 grid-column:${idx + 2};
                 position:relative;
                 height:${totalHeight}px;
-                border-right:1px solid #f3f4f6;
+                border-right:1px solid #f1f5f9;
                 background:white;
              ">
         `;
@@ -580,7 +580,7 @@
             for (let m = earliest; m < latest; m += SNAP_MINUTES) {
                 const top = (m - earliest) * PIXELS_PER_MINUTE;
                 const isHour = m % 60 === 0;
-                const borderColor = isHour ? "#e5e7eb" : "#f9fafb";
+                const borderColor = isHour ? "#e2e8f0" : "#f8fafc";
                 html += `
                     <div style="position:absolute;top:${top}px;width:100%;border-top:1px solid ${borderColor};pointer-events:none;"></div>
                 `;
@@ -599,13 +599,13 @@
                     height:${h}px;
                     background: repeating-linear-gradient(
                         45deg,
-                        #f9fafb,
-                        #f9fafb 10px,
-                        #f3f4f6 10px,
-                        #f3f4f6 20px
+                        #f8fafc,
+                        #f8fafc 10px,
+                        #f1f5f9 10px,
+                        #f1f5f9 20px
                     );
                     pointer-events:none;
-                    opacity: 0.6;
+                    opacity: 0.8;
                 "></div>
             `;
             }
@@ -624,13 +624,13 @@
                     height:${h}px;
                     background: repeating-linear-gradient(
                         45deg,
-                        #f9fafb,
-                        #f9fafb 10px,
-                        #f3f4f6 10px,
-                        #f3f4f6 20px
+                        #f8fafc,
+                        #f8fafc 10px,
+                        #f1f5f9 10px,
+                        #f1f5f9 20px
                     );
                     pointer-events:none;
-                    opacity: 0.6;
+                    opacity: 0.8;
                 "></div>
             `;
             }
@@ -638,7 +638,10 @@
             // -----------------------------------------------------
             // EVENT BLOCKS (Render all events for this division)
             // -----------------------------------------------------
-            // 1. Prepare and sort events
+            // "Cluster-based Layout Algorithm"
+            // This groups events that touch each other and layouts them in columns
+            // just for that group, ensuring max width for non-overlapping events.
+            
             const divEvents = dailySkeleton
                 .filter(ev => ev.division === divName)
                 .map(ev => ({
@@ -649,43 +652,63 @@
                 .filter(ev => ev.startM != null && ev.endM != null && ev.endM > ev.startM)
                 .sort((a, b) => a.startM - b.startM);
 
-            // 2. Basic layout algorithm to avoid overlap (column packing)
-            const columns = [];
-            divEvents.forEach(ev => {
-                let placed = false;
-                for (let i = 0; i < columns.length; i++) {
-                    const col = columns[i];
-                    const lastEv = col[col.length - 1];
-                    // Check if event fits in this column (starts after or at the same time the last one ends)
-                    if (ev.startM >= lastEv.endM) {
-                        col.push(ev);
-                        ev.colIndex = i;
-                        placed = true;
-                        break;
+            if (divEvents.length > 0) {
+                // Step 1: Group intersecting events into clusters
+                const clusters = [];
+                let currentCluster = [divEvents[0]];
+                let clusterEnd = divEvents[0].endM;
+
+                for (let i = 1; i < divEvents.length; i++) {
+                    const ev = divEvents[i];
+                    if (ev.startM < clusterEnd) {
+                        // Overlaps with current cluster
+                        currentCluster.push(ev);
+                        if (ev.endM > clusterEnd) clusterEnd = ev.endM;
+                    } else {
+                        // New cluster
+                        clusters.push(currentCluster);
+                        currentCluster = [ev];
+                        clusterEnd = ev.endM;
                     }
                 }
-                if (!placed) {
-                    columns.push([ev]);
-                    ev.colIndex = columns.length - 1;
-                }
-            });
+                clusters.push(currentCluster);
 
-            // 3. Calculate dimensions and render
-            const totalColumns = columns.length || 1;
-            const colWidth = 100 / totalColumns;
+                // Step 2: Layout each cluster
+                clusters.forEach(cluster => {
+                    const columns = [];
+                    cluster.forEach(ev => {
+                        let placed = false;
+                        for (let i = 0; i < columns.length; i++) {
+                            const col = columns[i];
+                            const lastEv = col[col.length - 1];
+                            // Check overlap in this column
+                            if (ev.startM >= lastEv.endM) {
+                                col.push(ev);
+                                ev.colIndex = i;
+                                placed = true;
+                                break;
+                            }
+                        }
+                        if (!placed) {
+                            columns.push([ev]);
+                            ev.colIndex = columns.length - 1;
+                        }
+                    });
 
-            divEvents.forEach(ev => {
-                const top = (ev.startM - earliest) * PIXELS_PER_MINUTE;
-                const h = (ev.endM - ev.startM) * PIXELS_PER_MINUTE;
-                // Calculate horizontal position and width
-                const left = ev.colIndex * colWidth;
-                // Use slightly less than full column width for gaps (e.g., 2% total gap)
-                const width = colWidth * 0.98; 
-                // Add a small left offset for spacing within the column (e.g., 1%)
-                const leftOffset = left + 1;
+                    // Render events in this cluster
+                    const totalCols = columns.length;
+                    const colWidth = 100 / totalCols;
 
-                html += renderEventTile(ev.original, top, h, leftOffset, width);
-            });
+                    cluster.forEach(ev => {
+                        const top = (ev.startM - earliest) * PIXELS_PER_MINUTE;
+                        const h = (ev.endM - ev.startM) * PIXELS_PER_MINUTE;
+                        const left = ev.colIndex * colWidth;
+                        const width = colWidth - 1; // 1% gap for visual separation
+
+                        html += renderEventTile(ev.original, top, h, left, width);
+                    });
+                });
+            }
 
             html += `</div>`;
         });
@@ -704,18 +727,18 @@
     // ============================================================================
     // EVENT TILE RENDERER (Google Calendar-round style)
     // ============================================================================
-    function renderEventTile(ev, top, height, leftPct = 2, widthPct = 96) {
+    function renderEventTile(ev, top, height, leftPct, widthPct) {
         const tile = TILES.find(t => t.name === ev.event) ||
             TILES.find(t => t.type === ev.type);
 
         // Fallback colors - use cleaner neutrals if tile type not found
         const base = tile?.base || "#ffffff";
-        const border = tile?.border || "#e2e8f0";
-        const text = tile?.text || "#475569";
+        const border = tile?.border || "#cbd5e1";
+        const text = tile?.text || "#334155";
         const borderStyle = tile?.dash ? "dashed" : "solid";
         
         // Ensure border width is prominently visible for the pastel colors
-        const borderWidth = tile ? "2px" : "1px";
+        const borderWidth = "2px"; 
 
         return `
         <div class="mb-event-card"
@@ -730,11 +753,10 @@
                 background-color: ${base};
                 border: ${borderWidth} ${borderStyle} ${border};
                 color: ${text};
-                /* Add z-index to ensure they stack correctly above grid lines */
-                z-index: 15; 
+                z-index: 10;
              ">
-            <div style="font-weight:700; margin-bottom:2px;">${ev.event}</div>
-            <div style="font-size:0.75rem; opacity:0.85;">${ev.startTime} – ${ev.endTime}</div>
+            <div style="font-weight:700; margin-bottom:2px; font-size: 0.85rem;">${ev.event}</div>
+            <div style="font-size:0.75rem; opacity:0.9;">${ev.startTime} – ${ev.endTime}</div>
         </div>
     `;
     }
