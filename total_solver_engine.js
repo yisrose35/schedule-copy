@@ -28,6 +28,10 @@ function isLeagueActivity(pick) {
     return pick && pick._isLeague;
 }
 
+function isSameActivity(a, b) {
+    return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+}
+
 // Fisher-Yates Shuffle to randomize picks
 function shuffleArray(array) {
     for (let i = array.length - 1; i > 0; i--) {
@@ -49,8 +53,9 @@ function calculatePenaltyCost(block, pick) {
     // Count how many times this activity is already scheduled TODAY
     let todayCount = 0;
     entries.forEach(e => {
+        const existingAct = e._activity || e.activity || e.field;
         // Count exact matches (Same Activity Name), excluding current slot
-        if (e._activity === activityName && e.startMin !== block.startTime) {
+        if (isSameActivity(existingAct, activityName) && e.startMin !== block.startTime) {
             todayCount++;
         }
     });
@@ -63,7 +68,7 @@ function calculatePenaltyCost(block, pick) {
     }
 
     // 3. CHECK MAX USAGE (Specific Special Limits)
-    const specialRule = globalConfig.masterSpecials?.find(s => s.name === activityName);
+    const specialRule = globalConfig.masterSpecials?.find(s => isSameActivity(s.name, activityName));
     if (specialRule && specialRule.maxUsage > 0) {
         const histCount = globalConfig.historicalCounts?.[bunk]?.[activityName] || 0;
         if (histCount + todayCount >= specialRule.maxUsage) {
@@ -76,7 +81,8 @@ function calculatePenaltyCost(block, pick) {
     const isAdjacent = entries.some(e => {
         const touchesPrev = Math.abs(e.endMin - block.startTime) <= 15;
         const touchesNext = Math.abs(e.startMin - block.endTime) <= 15;
-        return (touchesPrev || touchesNext) && e._activity === activityName;
+        const existingAct = e._activity || e.activity || e.field;
+        return (touchesPrev || touchesNext) && isSameActivity(existingAct, activityName);
     });
 
     if (isAdjacent) {
@@ -85,7 +91,10 @@ function calculatePenaltyCost(block, pick) {
 
     // 5. YESTERDAY REPEAT (ROTATION)
     const yesterdaySched = globalConfig.yesterdayHistory?.schedule?.[bunk] || {};
-    const playedYesterday = Object.values(yesterdaySched).some(e => e._activity === activityName);
+    const playedYesterday = Object.values(yesterdaySched).some(e => {
+        const act = e._activity || e.activity;
+        return isSameActivity(act, activityName);
+    });
     if (playedYesterday) {
         penalty += 300; // Strong preference for new things
     }
