@@ -349,146 +349,151 @@ const minutesToTime =
   }
 
   // =====================================================================
-  // RENDER GRID
-  // =====================================================================
-  function renderGrid() {
-    const divisions = window.divisions || {};
-    const availableDivisions = window.availableDivisions || [];
+// RENDER GRID
+// =====================================================================
+function renderGrid() {
 
-    if (availableDivisions.length === 0) {
-      grid.innerHTML =
-        `<div style="padding:20px;text-align:center;color:#666;">No divisions found. Please go to Setup to create divisions.</div>`;
-      return;
-    }
+  // Pull divisions from global settings (App1 format)
+  const gs = window.loadGlobalSettings?.() || {};
+  const app1 = gs.app1 || {};
 
-    let earliestMin = null,
-      latestMin = null;
+  const divisions = app1.divisions || {};
+  const availableDivisions = app1.availableDivisions || [];
 
-    Object.values(divisions).forEach((div) => {
-      const s = parseTimeToMinutes(div.startTime);
-      const e = parseTimeToMinutes(div.endTime);
-      if (s !== null && (earliestMin === null || s < earliestMin)) earliestMin = s;
-      if (e !== null && (latestMin === null || e > latestMin)) latestMin = e;
-    });
-
-    if (earliestMin === null) earliestMin = 540;
-    if (latestMin === null) latestMin = 960;
-
-    const latestPinned = Math.max(
-      -Infinity,
-      ...dailySkeleton.map((ev) => parseTimeToMinutes(ev.endTime) || -Infinity)
-    );
-    if (latestPinned > -Infinity) latestMin = Math.max(latestMin, latestPinned);
-    if (latestMin <= earliestMin) latestMin = earliestMin + 60;
-
-    const totalHeight = (latestMin - earliestMin) * PIXELS_PER_MINUTE;
-
-    const TIME_LABEL_INCREMENT = 30;
-
-    const timeLabels = [];
-    for (let min = earliestMin; min < latestMin; min += TIME_LABEL_INCREMENT) {
-      timeLabels.push({
-        start: min,
-        end: Math.min(min + TIME_LABEL_INCREMENT, latestMin),
-      });
-    }
-
-    let html = `<div style="display:grid; grid-template-columns:60px repeat(${availableDivisions.length}, 1fr); position:relative; min-width:800px;">`;
-
-    // Header row
-    html += `
-      <div style="grid-row:1; position:sticky; top:0; background:#fff; z-index:10; border-bottom:1px solid #999; padding:8px; font-weight:bold;">Time</div>
-    `;
-
-    availableDivisions.forEach((divName, i) => {
-      const color = divisions[divName]?.color || "#444";
-      html += `
-        <div style="
-          grid-row:1;
-          grid-column:${i + 2};
-          position:sticky; top:0;
-          background:${color};
-          color:#fff; z-index:10;
-          border-bottom:1px solid #999;
-          padding:8px; text-align:center; font-weight:bold;">
-          ${divName}
-        </div>`;
-    });
-
-    // Time column
-    html += `
-      <div style="grid-row:2; grid-column:1; height:${totalHeight}px; position:relative; background:#f9f9f9; border-right:1px solid #ccc;">
-    `;
-
-    timeLabels.forEach(({ start, end }) => {
-      const top = (start - earliestMin) * PIXELS_PER_MINUTE;
-      const height = (end - start) * PIXELS_PER_MINUTE;
-
-      html += `
-        <div style="
-          position:absolute;
-          top:${top}px;
-          left:0;
-          width:100%;
-          height:${height}px;
-          border-bottom:1px dashed #ddd;
-          font-size:10px; color:#666; padding:2px;">
-          ${minutesToTime(start)}
-        </div>
-      `;
-    });
-
-    html += `</div>`;
-
-    // Division columns
-    availableDivisions.forEach((divName, i) => {
-      const div = divisions[divName];
-      const s = parseTimeToMinutes(div?.startTime);
-      const e = parseTimeToMinutes(div?.endTime);
-
-      html += `
-        <div class="grid-cell"
-             data-div="${divName}"
-             data-start-min="${earliestMin}"
-             style="grid-row:2; grid-column:${i + 2}; height:${totalHeight}px;">
-      `;
-
-      if (s !== null && s > earliestMin) {
-        html += `
-          <div class="grid-disabled"
-               style="top:0; height:${(s - earliestMin) * PIXELS_PER_MINUTE}px;"></div>
-        `;
-      }
-
-      if (e !== null && e < latestMin) {
-        html += `
-          <div class="grid-disabled"
-               style="top:${(e - earliestMin) * PIXELS_PER_MINUTE}px;
-                      height:${(latestMin - e) * PIXELS_PER_MINUTE}px;"></div>
-        `;
-      }
-
-      dailySkeleton
-        .filter((ev) => ev.division === divName)
-        .forEach((ev) => {
-          const start = parseTimeToMinutes(ev.startTime);
-          const end = parseTimeToMinutes(ev.endTime);
-          if (start != null && end != null && end > start) {
-            const top = (start - earliestMin) * PIXELS_PER_MINUTE;
-            const height = (end - start) * PIXELS_PER_MINUTE;
-            html += renderEventTile(ev, top, height);
-          }
-        });
-
-      html += `</div>`;
-    });
-
-    html += `</div>`;
-    grid.innerHTML = html;
-
-    addDropListeners(".grid-cell");
-    addRemoveListeners(".grid-event");
+  if (availableDivisions.length === 0) {
+    grid.innerHTML =
+      `<div style="padding:20px;text-align:center;color:#666;">No divisions found. Please go to Setup to create divisions.</div>`;
+    return;
   }
+
+  let earliestMin = null,
+    latestMin = null;
+
+  Object.values(divisions).forEach((div) => {
+    const s = parseTimeToMinutes(div.startTime);
+    const e = parseTimeToMinutes(div.endTime);
+    if (s !== null && (earliestMin === null || s < earliestMin)) earliestMin = s;
+    if (e !== null && (latestMin === null || e > latestMin)) latestMin = e;
+  });
+
+  if (earliestMin === null) earliestMin = 540;
+  if (latestMin === null) latestMin = 960;
+
+  const latestPinned = Math.max(
+    -Infinity,
+    ...dailySkeleton.map((ev) => parseTimeToMinutes(ev.endTime) || -Infinity)
+  );
+  if (latestPinned > -Infinity) latestMin = Math.max(latestMin, latestPinned);
+  if (latestMin <= earliestMin) latestMin = earliestMin + 60;
+
+  const totalHeight = (latestMin - earliestMin) * PIXELS_PER_MINUTE;
+
+  const TIME_LABEL_INCREMENT = 30;
+
+  const timeLabels = [];
+  for (let min = earliestMin; min < latestMin; min += TIME_LABEL_INCREMENT) {
+    timeLabels.push({
+      start: min,
+      end: Math.min(min + TIME_LABEL_INCREMENT, latestMin),
+    });
+  }
+
+  let html = `<div style="display:grid; grid-template-columns:60px repeat(${availableDivisions.length}, 1fr); position:relative; min-width:800px;">`;
+
+  // Header row
+  html += `
+    <div style="grid-row:1; position:sticky; top:0; background:#fff; z-index:10; border-bottom:1px solid #999; padding:8px; font-weight:bold;">Time</div>
+  `;
+
+  availableDivisions.forEach((divName, i) => {
+    const color = divisions[divName]?.color || "#444";
+    html += `
+      <div style="
+        grid-row:1;
+        grid-column:${i + 2};
+        position:sticky; top:0;
+        background:${color};
+        color:#fff; z-index:10;
+        border-bottom:1px solid #999;
+        padding:8px; text-align:center; font-weight:bold;">
+        ${divName}
+      </div>`;
+  });
+
+  // Time column
+  html += `
+    <div style="grid-row:2; grid-column:1; height:${totalHeight}px; position:relative; background:#f9f9f9; border-right:1px solid #ccc;">
+  `;
+
+  timeLabels.forEach(({ start, end }) => {
+    const top = (start - earliestMin) * PIXELS_PER_MINUTE;
+    const height = (end - start) * PIXELS_PER_MINUTE;
+
+    html += `
+      <div style="
+        position:absolute;
+        top:${top}px;
+        left:0;
+        width:100%;
+        height:${height}px;
+        border-bottom:1px dashed #ddd;
+        font-size:10px; color:#666; padding:2px;">
+        ${minutesToTime(start)}
+      </div>
+    `;
+  });
+
+  html += `</div>`;
+
+  // Division columns
+  availableDivisions.forEach((divName, i) => {
+    const div = divisions[divName];
+    const s = parseTimeToMinutes(div?.startTime);
+    const e = parseTimeToMinutes(div?.endTime);
+
+    html += `
+      <div class="grid-cell"
+           data-div="${divName}"
+           data-start-min="${earliestMin}"
+           style="grid-row:2; grid-column:${i + 2}; height:${totalHeight}px;">
+    `;
+
+    if (s !== null && s > earliestMin) {
+      html += `
+        <div class="grid-disabled"
+             style="top:0; height:${(s - earliestMin) * PIXELS_PER_MINUTE}px;"></div>
+      `;
+    }
+
+    if (e !== null && e < latestMin) {
+      html += `
+        <div class="grid-disabled"
+             style="top:${(e - earliestMin) * PIXELS_PER_MINUTE}px;
+                    height:${(latestMin - e) * PIXELS_PER_MINUTE}px;"></div>
+      `;
+    }
+
+    dailySkeleton
+      .filter((ev) => ev.division === divName)
+      .forEach((ev) => {
+        const start = parseTimeToMinutes(ev.startTime);
+        const end = parseTimeToMinutes(ev.endTime);
+        if (start != null && end != null && end > start) {
+          const top = (start - earliestMin) * PIXELS_PER_MINUTE;
+          const height = (end - start) * PIXELS_PER_MINUTE;
+          html += renderEventTile(ev, top, height);
+        }
+      });
+
+    html += `</div>`;
+  });
+
+  html += `</div>`;
+  grid.innerHTML = html;
+
+  addDropListeners(".grid-cell");
+  addRemoveListeners(".grid-event");
+}
 
   // =====================================================================
   // RENDER EVENT TILE
