@@ -2,7 +2,8 @@
 // total_solver_engine.js
 // (NEW CORE UTILITY: Backtracking Constraint Solver — Option 1)
 //
-// UPDATED: DYNAMIC LEAGUE GENERATOR
+// UPDATED: DYNAMIC LEAGUE GENERATOR & BUG FIXES
+// - Fixed ReferenceError: availableSpecials is not defined
 // - No pre-set schedule. Matchups are created daily based on availability.
 // - Enforces Round Robin (A vs B only once per cycle).
 // - Enforces Sport Rotation (A vs B never play same sport twice in a row).
@@ -20,6 +21,8 @@ let globalConfig = null;
 let activityProperties = {};
 let currentScorecard = null;
 let allCandidateOptions = []; 
+let availableSports = [];   // Added to module scope
+let availableSpecials = []; // Added to module scope
 
 // ============================================================================
 // HELPERS
@@ -156,12 +159,12 @@ Solver.generateDailyMatchups = function(league, availableFields) {
         // 4. Select Sport
         // Pick a sport they haven't played against each other recently
         const history = state.matchupSports?.[pair.key] || [];
-        const availableSports = league.sports || ["General Sport"];
+        const leagueAvailableSports = league.sports || ["General Sport"];
         
         let chosenSport = null;
         
         // Try to find a sport not in their history
-        for (const s of availableSports) {
+        for (const s of leagueAvailableSports) {
             if (!history.includes(s)) {
                 chosenSport = s;
                 break;
@@ -169,7 +172,7 @@ Solver.generateDailyMatchups = function(league, availableFields) {
         }
         // If they played everything, reset/cycle sports (pick least recent)
         if (!chosenSport) {
-            chosenSport = availableSports[0]; 
+            chosenSport = leagueAvailableSports[0]; 
         }
 
         // 5. Verify Field Availability for Sport
@@ -230,7 +233,6 @@ Solver.solveLeagueSchedule = function(leagueBlocks) {
         const formattedMatchups = matches.map(m => `${m.teamA} vs ${m.teamB} (${m.sport})`);
         
         // Update State (Optimistic save - assumes schedule will be kept)
-        // Ideally we only save on "Final Save", but for now we track generation
         if (!window.leagueRoundState[league.name]) window.leagueRoundState[league.name] = {};
         const state = window.leagueRoundState[league.name];
         
@@ -344,6 +346,13 @@ Solver.undoTentativePick = function(res) {
 Solver.solveSchedule = function(allBlocks, config) {
     globalConfig = config;
     activityProperties = config.activityProperties || {};
+
+    // Populate module-level globals for use in helpers
+    availableSports = config.allActivities
+        .filter(a => a.type === 'field' && a.sport)
+        .map(a => a.field);
+    
+    availableSpecials = config.masterSpecials.map(s => s.name);
 
     // Prepare Candidates
     allCandidateOptions = [];
