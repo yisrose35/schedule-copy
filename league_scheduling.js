@@ -1,24 +1,33 @@
 /**
  * =============================================================
- * LEAGUE SCHEDULING CORE (league_scheduling.js)
- * (UPDATED: Global Persistence & Infinite Game Counter — FIXED)
+ * LEAGUE SCHEDULING FACADE (league_scheduling.js)
+ * UPDATED: Safe season persistence + correct round numbering +
+ *          delegation to Total Solver Engine.
  * =============================================================
  */
 
 (function () {
   'use strict';
 
-  // GLOBAL SEASON STATE (PERSISTED cross-day)
-  let leagueRoundState = {};   // { "League Name": { currentRound: 0 } }
+  // ============================================================
+  // GLOBAL SEASON-LEVEL STATE (NOT PER DAY)
+  // ============================================================
+  let leagueRoundState = {}; // { leagueName: { currentRound: number } }
   window.leagueRoundState = leagueRoundState;
 
-  /**
-   * Load SEASON PERSISTENCE (never from daily!)
-   */
+  // ============================================================
+  // PERSISTENCE HELPERS (SAFE, NON-DESTRUCTIVE)
+  // ============================================================
+
   function loadRoundState() {
     try {
       const global = window.loadGlobalSettings?.() || {};
-      leagueRoundState = global.leagueRoundState || {};
+      const stored = global.leagueRoundState;
+
+      leagueRoundState = (stored && typeof stored === "object")
+        ? stored
+        : {};
+
       window.leagueRoundState = leagueRoundState;
     } catch (e) {
       console.error("Failed to load league state:", e);
@@ -27,111 +36,89 @@
     }
   }
 
-  /**
-   * Save SEASON PERSISTENCE (never to daily!)
-   */
   function saveRoundState() {
     try {
-      window.saveGlobalSettings?.("leagueRoundState", leagueRoundState);
+      const global = window.loadGlobalSettings?.() || {};
+      global.leagueRoundState = leagueRoundState;
+      localStorage.setItem("campGlobalSettings_v1", JSON.stringify(global));
     } catch (e) {
       console.error("Failed to save league state:", e);
     }
   }
 
-  /**
-   * Standard round-robin generator
-   */
-  function generateRoundRobin(teamList) {
-    if (!teamList || teamList.length < 2) return [];
-
-    const teams = [...teamList];
-    let hasBye = false;
-
-    if (teams.length % 2 !== 0) {
-      teams.push("BYE");
-      hasBye = true;
-    }
-
-    const schedule = [];
-    const numRounds = teams.length - 1;
-
-    const fixed = teams[0];
-    const rotating = teams.slice(1);
-
-    for (let r = 0; r < numRounds; r++) {
-      const round = [];
-      round.push([fixed, rotating[0]]);
-
-      for (let i = 1; i < teams.length / 2; i++) {
-        const t1 = rotating[i];
-        const t2 = rotating[rotating.length - i];
-        round.push([t1, t2]);
-      }
-
-      schedule.push(round);
-      rotating.unshift(rotating.pop());
-    }
-
-    if (!hasBye) return schedule;
-
-    return schedule.map(round =>
-      round.filter(m => m[0] !== "BYE" && m[1] !== "BYE")
-    );
-  }
+  // ============================================================
+  // MAIN API — Delegated to Solver
+  // ============================================================
 
   /**
-   * === MAIN API ===
-   * Get TODAY'S matchups, automatically increments counter.
+   * Generate today's matchups for a league.
    */
   function getLeagueMatchups(leagueName, teams) {
     if (!leagueName || !teams || teams.length < 2) return [];
 
-    // ensure season state is loaded
+    if (!window.totalSolverEngine ||
+        typeof window.totalSolverEngine.solveLeagueMatchups !== 'function') {
+      console.error("Total Solver Engine not loaded. Cannot generate league matchups.");
+      return [];
+    }
+
+    // 1. Load persistent state
     loadRoundState();
 
     const state = leagueRoundState[leagueName] || { currentRound: 0 };
-    const fullSchedule = generateRoundRobin(teams);
+    const nextRoundToTry = state.currentRound + 1;
 
-    if (fullSchedule.length === 0) return [];
+    // 2. Delegate generation
+    const matchups = window.totalSolverEngine.solveLeagueMatchups(
+      leagueName,
+      teams,
+      nextRoundToTry
+    );
 
-    // choose today's round using modulo
-    const roundIndex = state.currentRound % fullSchedule.length;
-    const matchups = fullSchedule[roundIndex];
-
-    // increment absolute counter
-    leagueRoundState[leagueName] = { currentRound: state.currentRound + 1 };
-    saveRoundState();
+    // 3. Only commit a round increment on successful generation
+    if (Array.isArray(matchups) && matchups.length > 0) {
+      leagueRoundState[leagueName] = { currentRound: nextRoundToTry };
+      saveRoundState();
+    } else {
+      console.warn(`Solver returned no matchups for ${leagueName}.`);
+    }
 
     return matchups;
   }
 
   /**
-   * Returns CURRENT absolute game number (Game X)
+   * Get "Game X" — which number is *up next* for this league
    */
   function getLeagueCurrentRound(leagueName) {
+    loadRoundState();
     const state = leagueRoundState[leagueName];
-    const val = state ? state.currentRound : 0;
-    return val === 0 ? 1 : val;
+    const lastCompleted = state?.currentRound || 0;
+    return lastCompleted + 1; // NEXT upcoming game number
   }
 
   /**
-   * Get matchups for **specific round index**
-   * without affecting the global season counter.
+   * Fetch matchups for an absolute round index without changing season state
    */
   function getMatchupsForRound(teams, roundIndex) {
     if (!teams || teams.length < 2) return [];
-    const schedule = generateRoundRobin(teams);
-    if (schedule.length === 0) return [];
 
-    return schedule[roundIndex % schedule.length] || [];
+    if (!window.totalSolverEngine ||
+        typeof window.totalSolverEngine.getSpecificRoundMatchups !== 'function') {
+      console.error("Total Solver Engine not loaded. Cannot fetch specific round matchups.");
+      return [];
+    }
+
+    return window.totalSolverEngine.getSpecificRoundMatchups(teams, roundIndex);
   }
 
-  // expose API
+  // ============================================================
+  // EXPORT API
+  // ============================================================
   window.getLeagueMatchups = getLeagueMatchups;
   window.getLeagueCurrentRound = getLeagueCurrentRound;
   window.getMatchupsForRound = getMatchupsForRound;
 
-  // load season state on script load
+  // Load state immediately
   loadRoundState();
 
 })();
