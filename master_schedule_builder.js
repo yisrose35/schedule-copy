@@ -40,19 +40,20 @@
     // =========================================
     // TILE DEFINITIONS
     // =========================================
+    // Updated colors for a more professional pastel palette
     const TILES = [
-        { type: "activity", name: "Activity", base: "#e0f7fa", border: "#007bff" },
-        { type: "sports", name: "Sports", base: "#dcedc8", border: "#689f38" },
-        { type: "special", name: "Special Activity", base: "#e8f5e9", border: "#43a047" },
-        { type: "smart", name: "Smart Tile", base: "#e3f2fd", border: "#0288d1", dash: true },
-        { type: "split", name: "Split Activity", base: "#fff3e0", border: "#f57c00" },
-        { type: "league", name: "League Game", base: "#d1c4e9", border: "#5e35b1" },
-        { type: "specialty_league", name: "Specialty League", base: "#fff8e1", border: "#f9a825" },
-        { type: "swim", name: "Swim", base: "#bbdefb", border: "#1976d2" },
-        { type: "lunch", name: "Lunch", base: "#fbe9e7", border: "#d84315" },
-        { type: "snacks", name: "Snacks", base: "#fff9c4", border: "#fbc02d" },
-        { type: "dismissal", name: "Dismissal", base: "#f44336", border: "#b71c1c", text: "#fff" },
-        { type: "custom", name: "Custom Event", base: "#eee", border: "#616161" }
+        { type: "activity", name: "Activity", base: "#e3f2fd", border: "#1565c0", text: "#0d47a1" },
+        { type: "sports", name: "Sports", base: "#e8f5e9", border: "#2e7d32", text: "#1b5e20" },
+        { type: "special", name: "Special Activity", base: "#f3e5f5", border: "#7b1fa2", text: "#4a148c" },
+        { type: "smart", name: "Smart Tile", base: "#fff8e1", border: "#fbc02d", text: "#f57f17", dash: true },
+        { type: "split", name: "Split Activity", base: "#fff3e0", border: "#ef6c00", text: "#e65100" },
+        { type: "league", name: "League Game", base: "#ede7f6", border: "#512da8", text: "#311b92" },
+        { type: "specialty_league", name: "Specialty League", base: "#fce4ec", border: "#c2185b", text: "#880e4f" },
+        { type: "swim", name: "Swim", base: "#e0f7fa", border: "#0097a7", text: "#006064" },
+        { type: "lunch", name: "Lunch", base: "#ffebee", border: "#d32f2f", text: "#b71c1c" },
+        { type: "snacks", name: "Snacks", base: "#fffde7", border: "#fbc02d", text: "#f57f17" },
+        { type: "dismissal", name: "Dismissal", base: "#ffebee", border: "#b71c1c", text: "#b71c1c" },
+        { type: "custom", name: "Custom Event", base: "#f5f5f5", border: "#616161", text: "#212121" }
     ];
 
     // ============================================================================
@@ -84,20 +85,157 @@
     // BUILD UI WRAPPER
     // ============================================================================
     function buildUI() {
+        // Inject CSS Styles
+        const style = `
+            <style>
+                .mb-app {
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                    color: #333;
+                    max-width: 100%;
+                }
+                .mb-toolbar {
+                    background: #ffffff;
+                    padding: 20px;
+                    border: 1px solid #e5e7eb;
+                    border-radius: 12px;
+                    margin-bottom: 24px;
+                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+                }
+                .mb-label {
+                    display: block;
+                    font-size: 0.75rem;
+                    text-transform: uppercase;
+                    letter-spacing: 0.05em;
+                    color: #6b7280;
+                    margin-bottom: 6px;
+                    font-weight: 600;
+                }
+                .mb-select, .mb-input {
+                    padding: 8px 12px;
+                    border: 1px solid #d1d5db;
+                    border-radius: 6px;
+                    font-size: 0.9rem;
+                    width: 100%;
+                    box-sizing: border-box;
+                    transition: all 0.2s;
+                    background-color: #f9fafb;
+                }
+                .mb-select:focus, .mb-input:focus {
+                    outline: none;
+                    border-color: #3b82f6;
+                    background-color: #fff;
+                    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+                }
+                .mb-btn {
+                    padding: 8px 16px;
+                    border: none;
+                    border-radius: 6px;
+                    font-size: 0.9rem;
+                    font-weight: 500;
+                    cursor: pointer;
+                    transition: transform 0.1s, box-shadow 0.1s;
+                    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+                }
+                .mb-btn:hover {
+                    transform: translateY(-1px);
+                    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+                }
+                .mb-btn:active {
+                    transform: translateY(0);
+                }
+                .mb-btn-primary { background: #2563eb; color: white; }
+                .mb-btn-secondary { background: #f59e0b; color: white; }
+                .mb-btn-success { background: #10b981; color: white; }
+                .mb-btn-danger { background: #ef4444; color: white; }
+
+                .mb-palette-area {
+                    background: #ffffff;
+                    padding: 16px;
+                    border-radius: 12px;
+                    border: 1px solid #e5e7eb;
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 12px;
+                    margin-bottom: 24px;
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+                }
+                
+                .mb-tile-item {
+                    padding: 10px 16px;
+                    border-radius: 8px;
+                    cursor: grab;
+                    font-size: 0.85rem;
+                    font-weight: 600;
+                    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+                    transition: all 0.2s ease;
+                    user-select: none;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    border-width: 1px;
+                    border-style: solid;
+                }
+                .mb-tile-item:hover {
+                    transform: translateY(-2px);
+                    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+                }
+                .mb-tile-item:active {
+                    cursor: grabbing;
+                }
+
+                .mb-grid-container {
+                    border: 1px solid #e5e7eb;
+                    border-radius: 12px;
+                    background: #ffffff;
+                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+                    overflow: hidden; /* Contains the scrollbar nicer */
+                }
+                
+                .mb-event-card {
+                    border-radius: 6px;
+                    padding: 6px 8px;
+                    font-size: 0.8rem;
+                    line-height: 1.2;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+                    cursor: grab;
+                    overflow: hidden;
+                    transition: box-shadow 0.2s, transform 0.1s;
+                    z-index: 10;
+                    border-width: 1px;
+                    border-style: solid;
+                }
+                .mb-event-card:hover {
+                    box-shadow: 0 8px 16px -4px rgba(0,0,0,0.15);
+                    z-index: 20;
+                    transform: scale(1.01);
+                }
+                
+                /* Scrollbar styling */
+                #mb-grid-wrapper::-webkit-scrollbar {
+                    height: 10px;
+                    width: 10px;
+                }
+                #mb-grid-wrapper::-webkit-scrollbar-track {
+                    background: #f1f1f1;
+                }
+                #mb-grid-wrapper::-webkit-scrollbar-thumb {
+                    background: #c1c1c1;
+                    border-radius: 5px;
+                }
+                #mb-grid-wrapper::-webkit-scrollbar-thumb:hover {
+                    background: #a8a8a8;
+                }
+            </style>
+        `;
+
         container.innerHTML = `
-        <div id="mb-template-bar" style="padding:15px;background:#f7f9fa;
-            border:1px solid #d0d0d0;border-radius:8px;margin-bottom:20px;"></div>
-
-        <div id="mb-palette"
-            style="padding:10px;background:white;border-radius:8px;
-            border:1px solid #d9d9d9;display:flex;flex-wrap:wrap;
-            gap:10px;margin-bottom:18px;box-shadow:0 1px 2px rgba(0,0,0,0.1);">
-        </div>
-
-        <div id="mb-grid-wrapper"
-            style="overflow-x:auto;border:1px solid #bfc4c9;border-radius:8px;
-            background:white;box-shadow:0 1px 3px rgba(0,0,0,0.12);">
-            <div id="mb-grid"></div>
+        ${style}
+        <div class="mb-app">
+            <div id="mb-template-bar" class="mb-toolbar"></div>
+            <div id="mb-palette" class="mb-palette-area"></div>
+            <div id="mb-grid-wrapper" style="overflow-x:auto;" class="mb-grid-container">
+                <div id="mb-grid"></div>
+            </div>
         </div>
     `;
 
@@ -120,48 +258,39 @@
 
         bar.innerHTML = `
         <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-end;">
-
-            <div>
-                <label>Load Template</label>
-
-                <select id="mb-load-select" style="padding:6px;min-width:180px">
-                    <option value="">-- Select --</option>
-                    ${opts}
-                </select>
+            <div style="flex:1; min-width: 200px;">
+                <label class="mb-label">Load Template</label>
+                <div style="display:flex; gap:8px;">
+                    <select id="mb-load-select" class="mb-select">
+                        <option value="">-- Select --</option>
+                        ${opts}
+                    </select>
+                </div>
             </div>
 
-            <div>
-                <label>Save As</label>
-
-                <input id="mb-save-name" type="text" placeholder="Template Name"
-                    style="padding:6px;min-width:180px">
+            <div style="flex:1; min-width: 200px;">
+                <label class="mb-label">Save As</label>
+                <div style="display:flex; gap:8px;">
+                    <input id="mb-save-name" type="text" placeholder="New Template Name" class="mb-input">
+                </div>
             </div>
 
-            <div>
-                <button id="mb-save-btn"
-                    style="background:#007bff;color:white;padding:6px 12px;border-radius:6px;">
-                    Save
-                </button>
-
-                <button id="mb-new-btn"
-                    style="background:#ff9800;color:white;padding:6px 12px;border-radius:6px;margin-left:6px;">
-                    New
-                </button>
+            <div style="display:flex; gap:8px;">
+                <button id="mb-save-btn" class="mb-btn mb-btn-primary">Save Template</button>
+                <button id="mb-new-btn" class="mb-btn mb-btn-secondary">New Sheet</button>
             </div>
         </div>
 
-        <details style="margin-top:10px;">
-            <summary style="cursor:pointer;color:#007bff;font-weight:600;">Assignments & Delete</summary>
+        <details style="margin-top:20px; border-top: 1px solid #f3f4f6; padding-top: 15px;">
+            <summary style="cursor:pointer;color:#2563eb;font-weight:600;font-size:0.9rem;">Advanced: Assignments & Delete</summary>
 
-            <div style="padding:10px;border:1px solid #dcdcdc;border-radius:6px;margin-top:10px;">
-
-                <div style="display:flex;flex-wrap:wrap;gap:15px;">
+            <div style="padding:15px;background:#f9fafb;border-radius:8px;margin-top:15px;border:1px solid #e5e7eb;">
+                <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap:15px;">
                     ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Default"]
                 .map(day => `
                             <div>
-                                <label>${day}</label>
-
-                                <select data-day="${day}" style="padding:5px;min-width:140px;">
+                                <label class="mb-label">${day}</label>
+                                <select data-day="${day}" class="mb-select" style="padding:4px 8px; font-size:0.8rem;">
                                     <option value="">-- None --</option>
                                     ${opts}
                                 </select>
@@ -169,17 +298,15 @@
                         `).join("")}
                 </div>
 
-                <button id="mb-assign-save"
-                    style="margin-top:10px;background:#28a745;color:white;padding:6px 12px;border-radius:6px;">
-                    Save Assignments
-                </button>
-
-                <hr style="margin:15px 0">
-
-                <button id="mb-delete-btn"
-                    style="background:#c0392b;color:white;padding:6px 12px;border-radius:6px;">
-                    Delete Selected Template
-                </button>
+                <div style="margin-top:20px; display:flex; justify-content:space-between; align-items:center;">
+                    <button id="mb-assign-save" class="mb-btn mb-btn-success">
+                        Save Assignments
+                    </button>
+                    
+                    <button id="mb-delete-btn" class="mb-btn mb-btn-danger">
+                        Delete Loaded Template
+                    </button>
+                </div>
             </div>
         </details>
     `;
@@ -246,18 +373,14 @@
 
         TILES.forEach(tile => {
             const el = document.createElement("div");
-            el.className = "mb-tile";
+            el.className = "mb-tile-item"; // New class
             el.textContent = tile.name;
 
-            el.style.cssText = `
-            background:${tile.base};
-            border:1px solid ${tile.border};
-            padding:8px 12px;
-            border-radius:6px;
-            cursor:grab;
-            font-size:0.9rem;
-            ${tile.dash ? "border-style:dashed;" : ""}
-        `;
+            // Updated to strictly match the tile definition
+            el.style.backgroundColor = tile.base;
+            el.style.borderColor = tile.border;
+            el.style.color = tile.text || "#333";
+            if (tile.dash) el.style.borderStyle = "dashed";
 
             el.draggable = true;
             el.ondragstart = e =>
@@ -276,7 +399,7 @@
 
         if (!available.length) {
             grid.innerHTML = `
-            <div style="padding:20px;text-align:center;color:#666;">
+            <div style="padding:40px;text-align:center;color:#9ca3af;font-style:italic;">
                 No divisions found. Please set them up first.
             </div>`;
             return;
@@ -321,6 +444,7 @@
         grid-template-columns:60px repeat(${available.length}, 1fr);
         min-width:1000px;
         position:relative;
+        background: #fff;
     ">
     `;
 
@@ -328,31 +452,39 @@
         html += `
         <div style="
             grid-row:1;
-            background:white;
-            padding:10px;
-            border-bottom:1px solid #ccc;
+            background:#f9fafb;
+            padding:12px;
+            border-bottom:1px solid #e5e7eb;
             font-weight:600;
+            color: #4b5563;
+            font-size: 0.8rem;
             position:sticky;
             top:0;
-            z-index:20;
+            z-index:30;
+            text-align: right;
+            border-right: 1px solid #e5e7eb;
         ">Time</div>
     `;
 
         available.forEach((divName, idx) => {
-            const color = divisions[divName]?.color || "#5078d5";
+            const color = divisions[divName]?.color || "#3b82f6";
             html += `
         <div style="
             grid-row:1;
             grid-column:${idx + 2};
-            background:${color};
-            color:white;
-            padding:10px;
-            border-bottom:1px solid #ccc;
-            font-weight:600;
+            background:#f9fafb;
+            border-top: 3px solid ${color};
+            color:#1f2937;
+            padding:12px;
+            border-bottom:1px solid #e5e7eb;
+            border-right: 1px solid #f3f4f6;
+            font-weight:700;
             text-align:center;
             position:sticky;
             top:0;
-            z-index:20;
+            z-index:30;
+            font-size: 0.9rem;
+            letter-spacing: 0.02em;
         ">
             ${divName}
         </div>`;
@@ -367,24 +499,33 @@
             grid-column:1;
             position:relative;
             height:${totalHeight}px;
-            background:#fafafa;
-            border-right:1px solid #ddd;
+            background:#ffffff;
+            border-right:1px solid #e5e7eb;
         ">
     `;
 
         for (let m = earliest; m < latest; m += SNAP_MINUTES) {
             const top = (m - earliest) * PIXELS_PER_MINUTE;
+            // Only show time label on hours or 30 mins to reduce clutter
+            const isHour = m % 60 === 0;
+            const isHalf = m % 30 === 0;
+            const label = isHalf ? minutesToTime(m) : "";
+            const borderColor = isHour ? "#e5e7eb" : "#f3f4f6";
+
             html += `
             <div style="
                 position:absolute;
                 top:${top}px;
                 width:100%;
-                border-top:1px solid #f0f0f0;
+                border-top:1px solid ${borderColor};
                 font-size:10px;
-                color:#777;
-                padding-left:4px;
+                color:#9ca3af;
+                padding-right:8px;
+                text-align:right;
+                transform: translateY(-50%);
+                font-weight: ${isHour ? "600" : "400"};
             ">
-                ${minutesToTime(m)}
+                ${label}
             </div>
         `;
         }
@@ -407,10 +548,21 @@
                 grid-column:${idx + 2};
                 position:relative;
                 height:${totalHeight}px;
-                border-right:1px solid #eee;
+                border-right:1px solid #f3f4f6;
                 background:white;
              ">
         `;
+
+            // Render grid lines inside columns too
+            for (let m = earliest; m < latest; m += SNAP_MINUTES) {
+                const top = (m - earliest) * PIXELS_PER_MINUTE;
+                const isHour = m % 60 === 0;
+                const borderColor = isHour ? "#e5e7eb" : "#f9fafb";
+                html += `
+                    <div style="position:absolute;top:${top}px;width:100%;border-top:1px solid ${borderColor};pointer-events:none;"></div>
+                `;
+            }
+
 
             // Grey out BEFORE start time
             if (s > earliest) {
@@ -422,8 +574,15 @@
                     left:0;
                     width:100%;
                     height:${h}px;
-                    background:rgba(0,0,0,0.05);
+                    background: repeating-linear-gradient(
+                        45deg,
+                        #f9fafb,
+                        #f9fafb 10px,
+                        #f3f4f6 10px,
+                        #f3f4f6 20px
+                    );
                     pointer-events:none;
+                    opacity: 0.6;
                 "></div>
             `;
             }
@@ -440,8 +599,15 @@
                     left:0;
                     width:100%;
                     height:${h}px;
-                    background:rgba(0,0,0,0.05);
+                    background: repeating-linear-gradient(
+                        45deg,
+                        #f9fafb,
+                        #f9fafb 10px,
+                        #f3f4f6 10px,
+                        #f3f4f6 20px
+                    );
                     pointer-events:none;
+                    opacity: 0.6;
                 "></div>
             `;
             }
@@ -483,36 +649,29 @@
         const tile = TILES.find(t => t.name === ev.event) ||
             TILES.find(t => t.type === ev.type);
 
-        const base = tile?.base || "#e0e0e0";
-        const border = tile?.border || "#555";
-        const color = tile?.text || "#000";
-        const dashed = tile?.dash ? "dashed" : "solid";
+        // Fallback colors
+        const base = tile?.base || "#f3f4f6";
+        const border = tile?.border || "#9ca3af";
+        const text = tile?.text || "#1f2937";
+        const borderStyle = tile?.dash ? "dashed" : "solid";
 
         return `
-        <div class="mb-event"
+        <div class="mb-event-card"
              data-id="${ev.id}"
              draggable="true"
              style="
                 position:absolute;
                 top:${top}px;
-                left:4%;
-                width:92%;
+                left:2%;
+                width:96%;
                 height:${height}px;
-
-                background:${base};
-                border:2px ${dashed} ${border};
-                color:${color};
-
-                border-radius:6px;
-                padding:6px;
-                font-size:0.83rem;
-                line-height:1.1;
-                box-shadow:0 2px 4px rgba(0,0,0,0.15);
-                cursor:grab;
-                overflow:hidden;
+                background-color: ${base};
+                border-color: ${border};
+                border-style: ${borderStyle};
+                color: ${text};
              ">
-            <div style="font-weight:bold;">${ev.event}</div>
-            <div style="font-size:0.75rem;">${ev.startTime} – ${ev.endTime}</div>
+            <div style="font-weight:700; margin-bottom:2px;">${ev.event}</div>
+            <div style="font-size:0.75rem; opacity:0.85;">${ev.startTime} – ${ev.endTime}</div>
         </div>
     `;
     }
@@ -521,7 +680,7 @@
     // DRAG-TO-MOVE EVENTS
     // ============================================================================
     function bindMoveEvents() {
-        grid.querySelectorAll(".mb-event").forEach(evEl => {
+        grid.querySelectorAll(".mb-event-card").forEach(evEl => {
             evEl.ondragstart = (e) => {
                 const id = evEl.dataset.id;
                 const ev = dailySkeleton.find(x => x.id === id);
@@ -539,7 +698,7 @@
     // COPY / PASTE SUPPORT
     // ============================================================================
     function bindCopyPaste() {
-        grid.querySelectorAll(".mb-event").forEach(evEl => {
+        grid.querySelectorAll(".mb-event-card").forEach(evEl => {
             // COPY (CTRL + C)
             evEl.onkeydown = (e) => {
                 if (e.ctrlKey && e.key === "c") {
@@ -611,7 +770,7 @@
         grid.querySelectorAll(".mb-grid-col").forEach(col => {
             col.ondragover = e => {
                 e.preventDefault();
-                col.style.background = "#e6f7ff";
+                col.style.background = "#eff6ff"; // Light blue drag highlight
             };
 
             col.ondragleave = () => {
@@ -778,7 +937,7 @@
     // DELETE EVENTS (click)
     // ============================================================================
     function bindDeleteEvents() {
-        grid.querySelectorAll(".mb-event").forEach(evEl => {
+        grid.querySelectorAll(".mb-event-card").forEach(evEl => {
             evEl.onclick = (e) => {
                 if (e.shiftKey) { // Shift-Click = delete
                     const id = evEl.dataset.id;
