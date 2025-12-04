@@ -253,6 +253,22 @@ Solver.solveLeagueSchedule = function(leagueBlocks) {
             };
 
             window.fillBlock(b, pick, globalConfig.yesterdayHistory, true, activityProperties);
+            // ------------------------------------------------------------
+// MAKE FIELD 100% EXCLUSIVE DURING THIS LEAGUE BLOCK
+// ------------------------------------------------------------
+window.fieldReservationLog = window.fieldReservationLog || {};
+if (!window.fieldReservationLog[selectedField]) {
+    window.fieldReservationLog[selectedField] = [];
+}
+
+window.fieldReservationLog[selectedField].push({
+    bunk: "__LEAGUE_EXCLUSIVE__",   // special marker
+    startMin: b.startTime,
+    endMin: b.endTime,
+    exclusive: true,
+    reason: "League Unshareable Field"
+});
+
             output.push({ block: b, solution: pick });
         }
     }
