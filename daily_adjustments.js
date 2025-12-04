@@ -1,16 +1,18 @@
 // =================================================================
-// daily_adjustments.js  (UPDATED for CONTINUOUS MINUTE TIMELINE)
-//
-// - Removed local minutesToTime() — now fully uses SchedulerCoreUtils.
-// - Updated grid rendering to use continuous minute ranges.
-// - Removed obsolete Smart Tile pre-processor.
-// - Cleaned all formatting artifacts.
+// daily_adjustments.js
+// FIXED: Scope issues for container variables resolved.
 // =================================================================
 
 (function() {
 'use strict';
 
+// --- 1. Module-Level Variables (Accessible by all functions) ---
 let container = null;
+let skeletonContainer = null;
+let tripsFormContainer = null;
+let bunkOverridesContainer = null;
+let resourceOverridesContainer = null;
+
 let masterSettings = {};
 let currentOverrides = {
   dailyFieldAvailability: {},
@@ -22,7 +24,7 @@ let currentOverrides = {
   bunkActivityOverrides: []
 };
 
-// Legacy Smart Tile history kept only for backwards compatibility
+// Legacy Smart Tile history
 let smartTileHistory = null;
 const SMART_TILE_HISTORY_KEY = "smartTileHistory_v1";
 
@@ -30,18 +32,12 @@ function loadSmartTileHistory() {
   return { byBunk: {} };
 }
 
-function saveSmartTileHistory(history) {
-  // intentionally blank (deprecated)
-}
-
 // --- Global helpers referencing SchedulerCoreUtils ---
 const parseTimeToMinutes = window.SchedulerCoreUtils?.parseTimeToMinutes;
 const minutesToTime = window.SchedulerCoreUtils?.minutesToTime;
 
-// Rendering multiplier
+// Rendering settings
 const PIXELS_PER_MINUTE = 2;
-
-// Skeleton array
 let dailyOverrideSkeleton = [];
 
 // --- Palette Tile Definitions ---
@@ -49,10 +45,7 @@ const TILES = [
   { type: 'activity', name: 'Activity', style: 'background:#e0f7fa;border:1px solid #007bff;', description: 'Flexible slot (Sport or Special).' },
   { type: 'sports', name: 'Sports', style: 'background:#dcedc8;border:1px solid #689f38;', description: 'Sports slot only.' },
   { type: 'special', name: 'Special Activity', style: 'background:#e8f5f9;border:1px solid #43a047;', description: 'Special Activity slot only.' },
-
-  // Smart Tile
-  { type:'smart', name:'Smart Tile', style:'background:#e3f2fd;border:2px dashed #0288d1;color:#01579b;', description:'Balances 2 activities with fallbacks.' },
-
+  { type: 'smart', name: 'Smart Tile', style: 'background:#e3f2fd;border:2px dashed #0288d1;color:#01579b;', description: 'Balances 2 activities with fallbacks.' },
   { type: 'split', name: 'Split Activity', style: 'background:#fff3e0;border:1px solid #f57c00;', description: 'Two activities share the block.' },
   { type: 'league', name: 'League Game', style: 'background:#d1c4e9;border:1px solid #5e35b1;', description: 'Regular League slot.' },
   { type: 'specialty_league', name: 'Specialty League', style: 'background:#fff8e1;border:1px solid #f9a825;', description: 'Specialty League slot.' },
@@ -78,6 +71,7 @@ function mapEventNameForOptimizer(name) {
 // PALETTE RENDERING
 // ----------------------------------------------------------------------
 function renderPalette(paletteContainer) {
+  if (!paletteContainer) return;
   paletteContainer.innerHTML = '<span style="font-weight:600;align-self:center;">Drag tiles onto the grid:</span>';
   TILES.forEach(tile => {
     const el = document.createElement('div');
@@ -107,6 +101,8 @@ function renderPalette(paletteContainer) {
 // GRID RENDERING
 // ----------------------------------------------------------------------
 function renderGrid(gridContainer) {
+  if (!gridContainer) return;
+  
   const divisions = window.divisions || {};
   const availableDivisions = window.availableDivisions || [];
 
@@ -519,9 +515,9 @@ function renderEventTile(event, top, height) {
   let inner = `<strong>${event.event}</strong><br><div style="font-size:.85em;">${event.startTime} - ${event.endTime}</div>`;
   
   if (event.type === 'smart' && event.smartData) {
-    inner += `
+    inner += `<br>
       <div style="font-size:0.75em;border-top:1px dotted #01579b;margin-top:2px;padding-top:1px;">
-        Fallback: ${event.smartData.fallbackActivity}<br>
+        Fallback: ${event.smartData.fallbackActivity}
         For: ${event.smartData.fallbackFor}
       </div>`;
   }
@@ -596,9 +592,6 @@ function runOptimizer() {
   }
 }
 
-function uid() {
-  return `id_${Math.random().toString(36).slice(2,9)}`;
-}
 // =================================================================
 // BEGIN: DAILY ADJUSTMENTS MAIN UI
 // =================================================================
@@ -754,6 +747,7 @@ function init() {
     };
   });
 
+  // ASSIGN CONTAINERS AFTER HTML INJECTION (CRITICAL FIX)
   skeletonContainer = document.getElementById("override-scheduler-content");
   tripsFormContainer = document.getElementById("trips-form-container");
   bunkOverridesContainer = document.getElementById("bunk-overrides-container");
@@ -769,9 +763,7 @@ function init() {
 // SKELETON TAB UI
 // ----------------------------------------------------------------------
 function initDailySkeletonUI() {
-  // ADD THIS LINE:
-    // Make sure 'skeleton-container' matches the ID in your HTML file
-    const skeletonContainer = document.getElementById('skeleton-container');
+  if (!skeletonContainer) return;
   loadDailySkeleton();
   skeletonContainer.innerHTML = `
     <div id="daily-skeleton-palette"
@@ -789,6 +781,7 @@ function initDailySkeletonUI() {
 // TRIPS TAB UI
 // ----------------------------------------------------------------------
 function renderTripsForm() {
+  if (!tripsFormContainer) return;
   tripsFormContainer.innerHTML = "";
   const form = document.createElement('div');
   form.style.border = '1px solid #ccc';
@@ -876,6 +869,7 @@ function renderTripsForm() {
 
     saveDailySkeleton();
 
+    // Re-render if grid is currently visible
     const grid = skeletonContainer.querySelector('#daily-skeleton-grid');
     if (grid) renderGrid(grid);
 
@@ -893,6 +887,7 @@ function renderTripsForm() {
 // BUNK-SPECIFIC TAB UI
 // ----------------------------------------------------------------------
 function renderBunkOverridesUI() {
+  if (!bunkOverridesContainer) return;
   bunkOverridesContainer.innerHTML = "";
 
   const divisions = masterSettings.app1.divisions || {};
@@ -1032,10 +1027,12 @@ function renderBunkOverridesUI() {
 
   bunkOverridesContainer.appendChild(listContainer);
 }
+
 // ----------------------------------------------------------------------
 // RESOURCE AVAILABILITY TAB UI
 // ----------------------------------------------------------------------
 function renderResourceOverridesUI() {
+  if (!resourceOverridesContainer) return;
   resourceOverridesContainer.innerHTML = `
     <div style="display:flex;flex-wrap:wrap;gap:20px;">
       <div style="flex:1;min-width:300px;">
@@ -1151,582 +1148,4 @@ function renderResourceOverridesUI() {
   }
 
   specialtyNames.forEach(name => {
-    const enabled = !currentOverrides.disabledSpecialtyLeagues.includes(name);
-    const onToggle = (isEnabled) => {
-      if (isEnabled)
-        currentOverrides.disabledSpecialtyLeagues =
-          currentOverrides.disabledSpecialtyLeagues.filter(n => n !== name);
-      else if (!currentOverrides.disabledSpecialtyLeagues.includes(name))
-        currentOverrides.disabledSpecialtyLeagues.push(name);
-
-      window.saveCurrentDailyData("disabledSpecialtyLeagues", currentOverrides.disabledSpecialtyLeagues);
-    };
-
-    specialtyListEl.appendChild(
-      createOverrideMasterListItem('specialty_league', name, enabled, onToggle)
-    );
-  });
-
-  renderOverrideDetailPane();
-}
-
-// -----------------------------------------------------------
-// MASTER LIST ITEM (Fields / Specials / Leagues)
-// -----------------------------------------------------------
-let selectedOverrideId = null;
-
-function createOverrideMasterListItem(type, name, isEnabled, onToggle) {
-  const el = document.createElement('div');
-  el.className = 'list-item';
-
-  const id = `${type}-${name}`;
-  if (id === selectedOverrideId) el.classList.add('selected');
-
-  const nameEl = document.createElement('span');
-  nameEl.className = 'list-item-name';
-  nameEl.textContent = name;
-
-  nameEl.onclick = () => {
-    selectedOverrideId = id;
-    renderResourceOverridesUI();
-    renderOverrideDetailPane();
-  };
-
-  const tog = document.createElement("label");
-  tog.className = "switch";
-  tog.title = isEnabled ? "Disable for today" : "Enable for today";
-  tog.onclick = (e) => e.stopPropagation();
-
-  const cb = document.createElement("input");
-  cb.type = "checkbox";
-  cb.checked = isEnabled;
-
-  cb.onchange = () => {
-    onToggle(cb.checked);
-    tog.title = cb.checked ? "Disable for today" : "Enable for today";
-  };
-
-  const slider = document.createElement("span");
-  slider.className = "slider";
-
-  tog.appendChild(cb);
-  tog.appendChild(slider);
-
-  el.appendChild(nameEl);
-  el.appendChild(tog);
-
-  return el;
-}
-
-// -----------------------------------------------------------
-// DETAIL PANE (Time Rules, Sports rules)
-// -----------------------------------------------------------
-function renderOverrideDetailPane() {
-  const pane = document.getElementById("override-detail-pane");
-  if (!pane) return;
-
-  if (!selectedOverrideId) {
-    pane.innerHTML = `<p class="muted">Select an item from the left.</p>`;
-    return;
-  }
-
-  pane.innerHTML = "";
-
-  const [type, name] = selectedOverrideId.split(/-(.+)/);
-
-  // FIELD or SPECIAL
-  if (type === 'field' || type === 'special') {
-    const fields = masterSettings.app1.fields || [];
-    const specials = masterSettings.app1.specialActivities || [];
-
-    const item = (type === 'field')
-      ? fields.find(f => f.name === name)
-      : specials.find(s => s.name === name);
-
-    if (!item) {
-      pane.innerHTML = `<p style="color:red;">Error: Item not found.</p>`;
-      return;
-    }
-
-    const globalRules = item.timeRules || [];
-
-    if (!currentOverrides.dailyFieldAvailability[name]) {
-      currentOverrides.dailyFieldAvailability[name] = [];
-    }
-
-    const dailyRules = currentOverrides.dailyFieldAvailability[name];
-
-    const onSave = () => {
-      currentOverrides.dailyFieldAvailability[name] = dailyRules;
-      window.saveCurrentDailyData("dailyFieldAvailability", currentOverrides.dailyFieldAvailability);
-      renderOverrideDetailPane();
-    };
-
-    pane.appendChild(
-      renderTimeRulesUI(name, globalRules, dailyRules, onSave)
-    );
-
-    // Additional sports override if FIELD
-    if (type === 'field') {
-      const sports = item.activities || [];
-      const disabledToday = currentOverrides.dailyDisabledSportsByField[name] || [];
-
-      const sportList = document.createElement('div');
-      sportList.className = 'sport-override-list';
-      sportList.innerHTML = `<strong>Daily Sport Availability for ${name}</strong>`;
-
-      if (sports.length === 0) {
-        sportList.innerHTML += `<p class="muted" style="margin:5px 0 0 10px;">No sports are assigned in Fields tab.</p>`;
-      }
-
-      sports.forEach(sport => {
-        const isEnabled = !disabledToday.includes(sport);
-        const { wrapper, checkbox } = createCheckbox(sport, isEnabled);
-
-        checkbox.onchange = () => {
-          let list = currentOverrides.dailyDisabledSportsByField[name] || [];
-          if (checkbox.checked)
-            list = list.filter(s => s !== sport);
-          else if (!list.includes(sport))
-            list.push(sport);
-
-          currentOverrides.dailyDisabledSportsByField[name] = list;
-          window.saveCurrentDailyData("dailyDisabledSportsByField", currentOverrides.dailyDisabledSportsByField);
-        };
-
-        sportList.appendChild(wrapper);
-      });
-
-      pane.appendChild(sportList);
-    }
-
-    return;
-  }
-
-  // LEAGUE / SPECIALTY LEAGUE
-  if (type === 'league' || type === 'specialty_league') {
-    pane.innerHTML = `<p class="muted">Enable or disable this league with the toggle on the left.</p>`;
-    return;
-  }
-
-  pane.innerHTML = `<p class="muted">No details available.</p>`;
-}
-
-// -----------------------------------------------------------
-// TIME RULES UI COMPONENT
-// -----------------------------------------------------------
-function renderTimeRulesUI(itemName, globalRules, dailyRules, onSave) {
-  const container = document.createElement("div");
-
-  // Global Rules
-  const g = document.createElement("div");
-  g.innerHTML = `<strong>Global Rules (from Setup):</strong>`;
-  if (globalRules.length === 0) {
-    g.innerHTML += `<p class="muted">Available all day</p>`;
-  }
-  globalRules.forEach(rule => {
-    const r = document.createElement("div");
-    r.style.margin = "2px 0";
-    r.style.fontSize = "0.9em";
-    r.innerHTML = `
-      • <span style="color:${rule.type === 'Available' ? 'green' : 'red'};">
-        ${rule.type}
-      </span> from ${rule.start} to ${rule.end}
-    `;
-    g.appendChild(r);
-  });
-
-  // Daily Overrides
-  const d = document.createElement("div");
-  d.style.marginTop = "10px";
-  d.innerHTML = `<strong>Daily Override Rules (replace global rules):</strong>`;
-
-  const list = document.createElement("div");
-
-  if (dailyRules.length === 0) {
-    list.innerHTML = `<p class="muted">No daily rules. Using global rules.</p>`;
-  }
-
-  dailyRules.forEach((rule, idx) => {
-    const row = document.createElement("div");
-    row.style.margin = "3px 0";
-    row.style.padding = "4px";
-    row.style.background = "#fff8e1";
-    row.style.borderRadius = "4px";
-
-    const type = document.createElement("strong");
-    type.style.color = rule.type === "Available" ? "green" : "red";
-    type.textContent = rule.type;
-
-    const text = document.createElement("span");
-    text.textContent = ` from ${rule.start} to ${rule.end}`;
-
-    const rm = document.createElement("button");
-    rm.textContent = "✖";
-    rm.style.marginLeft = "8px";
-    rm.style.background = "transparent";
-    rm.style.border = "none";
-    rm.style.cursor = "pointer";
-
-    rm.onclick = () => {
-      dailyRules.splice(idx, 1);
-      onSave();
-    };
-
-    row.appendChild(type);
-    row.appendChild(text);
-    row.appendChild(rm);
-    list.appendChild(row);
-  });
-
-  d.appendChild(list);
-
-  // Add new rule
-  const addBox = document.createElement("div");
-  addBox.style.marginTop = "10px";
-
-  const sel = document.createElement("select");
-  sel.innerHTML = `
-    <option value="Available">Available</option>
-    <option value="Unavailable">Unavailable</option>
-  `;
-
-  const sIn = document.createElement("input");
-  sIn.placeholder = "9:00am";
-  sIn.style.width = "100px";
-  sIn.style.marginLeft = "5px";
-
-  const to = document.createElement("span");
-  to.textContent = " to ";
-  to.style.margin = "0 5px";
-
-  const eIn = document.createElement("input");
-  eIn.placeholder = "10:00am";
-  eIn.style.width = "100px";
-
-  const addBtn = document.createElement("button");
-  addBtn.textContent = "Add Rule";
-  addBtn.style.marginLeft = "8px";
-
-  addBtn.onclick = () => {
-    const type = sel.value;
-    const s = sIn.value;
-    const e = eIn.value;
-
-    if (!s || !e) { alert("Enter both times"); return; }
-    if (parseTimeToMinutes(s) == null || parseTimeToMinutes(e) == null) {
-      alert("Invalid time format."); return;
-    }
-    if (parseTimeToMinutes(s) >= parseTimeToMinutes(e)) {
-      alert("End must be after start."); return;
-    }
-
-    dailyRules.push({ type, start:s, end:e });
-    onSave();
-  };
-
-  addBox.appendChild(sel);
-  addBox.appendChild(sIn);
-  addBox.appendChild(to);
-  addBox.appendChild(eIn);
-  addBox.appendChild(addBtn);
-
-  container.appendChild(g);
-  container.appendChild(d);
-  container.appendChild(addBox);
-
-  return container;
-}
-
-// -------------------------------------------------------
-// COMMON HELPERS
-// -------------------------------------------------------
-function createCheckbox(name, isChecked) {
-  const wrapper = document.createElement('label');
-  wrapper.className = 'override-checkbox';
-
-  const cb = document.createElement('input');
-  cb.type = 'checkbox';
-  cb.checked = isChecked;
-
-  const text = document.createElement('span');
-  text.textContent = name;
-
-  wrapper.appendChild(cb);
-  wrapper.appendChild(text);
-
-  return { wrapper, checkbox: cb };
-}
-
-function createChip(name, color = '#007BFF', isDivision=false) {
-  const el = document.createElement('span');
-  el.className = 'bunk-button';
-  el.textContent = name;
-  el.dataset.value = name;
-
-  const defaultBorder = isDivision ? color : '#ccc';
-
-  el.style.borderColor = defaultBorder;
-  el.style.backgroundColor = 'white';
-  el.style.color = 'black';
-
-  el.onclick = () => {
-    const sel = el.classList.toggle('selected');
-    el.style.backgroundColor = sel ? color : 'white';
-    el.style.color = sel ? 'white' : 'black';
-    el.style.borderColor = sel ? color : defaultBorder;
-  };
-
-  return el;
-}
-
-function uid() {
-  return `id_${Math.random().toString(36).slice(2, 9)}`;
-}
-// ======================================================================
-// DAILY OVERRIDE: SKELETON EDITOR + RUN OPTIMIZER
-// ======================================================================
-
-// Draggable skeleton grid references
-let skeletonGridContainer = null;
-
-let skeletonSelectedBlockId = null;
-
-// -----------------------------------------------------------
-// LOAD / SAVE DAILY SKELETON
-// -----------------------------------------------------------
-function loadDailySkeleton() {
-  const dailyData = window.loadCurrentDailyData?.() || {};
-  dailyOverrideSkeleton = dailyData.manualSkeleton || [];
-}
-
-function saveDailySkeleton() {
-  window.saveCurrentDailyData?.("manualSkeleton", dailyOverrideSkeleton);
-}
-
-// -----------------------------------------------------------
-// RENDER SKELETON UI
-// -----------------------------------------------------------
-function renderSkeletonOverridesUI() {
-  skeletonGridContainer.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-      <h3 style="margin:0;font-size:1.1rem;">Daily Skeleton Editor</h3>
-      <button id="clear-skeleton-btn" style="background:#FFE5E5;color:#B91C1C;font-weight:600;border:1px solid #FECACA;padding:6px 14px;border-radius:999px;">
-        Clear All
-      </button>
-    </div>
-
-    <div id="skeleton-grid" class="skeleton-grid"></div>
-
-    <div style="margin-top:20px;display:flex;justify-content:flex-end;">
-      <button id="save-skeleton-btn" style="background:#00C896;color:white;font-weight:600;border-color:#00C896;padding:8px 16px;border-radius:999px;">
-        Save Overrides
-      </button>
-    </div>
-  `;
-
-  const grid = document.getElementById("skeleton-grid");
-  renderSkeletonGrid(grid);
-
-  document.getElementById("clear-skeleton-btn").onclick = () => {
-    if (confirm("Clear all skeleton entries for today?")) {
-      dailyOverrideSkeleton = [];
-      saveDailySkeleton();
-      renderSkeletonOverridesUI();
-    }
-  };
-
-  document.getElementById("save-skeleton-btn").onclick = () => {
-    saveDailySkeleton();
-    alert("Daily skeleton saved!");
-  };
-}
-
-// -----------------------------------------------------------
-// RENDER SKELETON GRID
-// -----------------------------------------------------------
-function renderSkeletonGrid(grid) {
-  grid.innerHTML = '';
-
-  const divisions = window.availableDivisions || [];
-  const times = buildMinuteTimeline();
-
-  // Header row
-  const headerRow = document.createElement("div");
-  headerRow.className = "skeleton-row header-row";
-
-  const timeHeader = document.createElement("div");
-  timeHeader.className = "skeleton-cell time-col";
-  timeHeader.textContent = "Time";
-  headerRow.appendChild(timeHeader);
-
-  divisions.forEach(div => {
-    const d = document.createElement("div");
-    d.className = "skeleton-cell header-cell";
-    d.textContent = div;
-    headerRow.appendChild(d);
-  });
-
-  grid.appendChild(headerRow);
-
-  // Time rows
-  times.forEach(timeMin => {
-    const row = document.createElement("div");
-    row.className = "skeleton-row";
-
-    const timeCell = document.createElement("div");
-    timeCell.className = "skeleton-cell time-col";
-    timeCell.textContent = window.SchedulerCoreUtils.minutesToTime(timeMin);
-    row.appendChild(timeCell);
-
-    divisions.forEach(div => {
-      const cell = document.createElement("div");
-      cell.className = "skeleton-cell drop-cell";
-      cell.dataset.division = div;
-      cell.dataset.start = timeMin;
-
-      // Find block in this slot
-      const block = dailyOverrideSkeleton.find(b =>
-        b.division === div && parseTimeToMinutes(b.startTime) === timeMin
-      );
-
-      if (block) {
-        const el = createSkeletonBlockElement(block);
-        cell.appendChild(el);
-      }
-
-      // Enable dropping
-      enableDrop(cell);
-
-      row.appendChild(cell);
-    });
-
-    grid.appendChild(row);
-  });
-}
-
-// -----------------------------------------------------------
-// SKELETON BLOCK ELEMENT
-// -----------------------------------------------------------
-function createSkeletonBlockElement(block) {
-  const el = document.createElement("div");
-  el.className = "skeleton-block";
-  el.draggable = true;
-  el.dataset.blockId = block.id;
-
-  el.textContent = block.event;
-
-  // Drag start
-  el.ondragstart = (e) => {
-    e.dataTransfer.setData("text/plain", block.id);
-    skeletonSelectedBlockId = block.id;
-  };
-
-  // Click to highlight
-  el.onclick = () => {
-    skeletonSelectedBlockId = block.id;
-    highlightSelectedBlock();
-  };
-
-  return el;
-}
-
-function highlightSelectedBlock() {
-  document.querySelectorAll(".skeleton-block").forEach(el => {
-    el.classList.remove("selected");
-    if (el.dataset.blockId === skeletonSelectedBlockId) {
-      el.classList.add("selected");
-    }
-  });
-}
-
-// -----------------------------------------------------------
-// DRAG / DROP SUPPORT
-// -----------------------------------------------------------
-function enableDrop(cell) {
-  cell.ondragover = (e) => e.preventDefault();
-
-  cell.ondrop = (e) => {
-    e.preventDefault();
-    const blockId = e.dataTransfer.getData("text/plain");
-    moveBlockToCell(blockId, cell);
-  };
-}
-
-function moveBlockToCell(blockId, cell) {
-  const block = dailyOverrideSkeleton.find(b => b.id === blockId);
-  if (!block) return;
-
-  block.division = cell.dataset.division;
-  block.startTime = window.SchedulerCoreUtils.minutesToTime(
-    parseInt(cell.dataset.start, 10)
-  );
-
-  saveDailySkeleton();
-  renderSkeletonOverridesUI();
-}
-
-// -----------------------------------------------------------
-// TIME UTILITIES (using core minute system)
-// -----------------------------------------------------------
-function buildMinuteTimeline() {
-  const start = window.masterSettings?.app1?.startMinutes || 9 * 60;
-  const end = window.masterSettings?.app1?.endMinutes || 17 * 60;
-  const inc = window.INCREMENT_MINS || 30;
-
-  const out = [];
-  for (let t = start; t < end; t += inc) out.push(t);
-  return out;
-}
-
-
-
-// ======================================================================
-// SMART TILE HISTORY
-// ======================================================================
-function saveSmartTileHistory(historyObj) {
-  if (!window.localStorage) return;
-  localStorage.setItem(SMART_TILE_HISTORY_KEY, JSON.stringify(historyObj));
-}
-
-// ======================================================================
-// RUN OPTIMIZER (FINAL CLEAN VERSION)
-// ======================================================================
-window.runOptimizer = function () {
-  if (!window.runSkeletonOptimizer) {
-    alert("Error: 'runSkeletonOptimizer' function not found.");
-    return;
-  }
-
-  if (dailyOverrideSkeleton.length === 0) {
-    alert("Skeleton is empty. Add blocks before running the optimizer.");
-    return;
-  }
-
-  // Save manually edited skeleton
-  saveDailySkeleton();
-
-  // Smart Tiles — applied here, not pre-injected into skeleton
-  try {
-    applySmartTileOverridesForToday();
-  } catch (e) {
-    console.error("Smart Tile override error:", e);
-  }
-
-  const success = window.runSkeletonOptimizer(dailyOverrideSkeleton, currentOverrides);
-
-  if (success) {
-    alert("Schedule generated successfully!");
-    window.showTab?.('schedule');
-  } else {
-    alert("Error during schedule generation. Check console.");
-  }
-};
-
-// ======================================================================
-// EXPORT OBJECT
-// ======================================================================
-// Add this line right before the final })();
-window.initDailyAdjustments = init;
-
-})();
+    const enabled = !current
