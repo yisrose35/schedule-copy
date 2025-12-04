@@ -1,131 +1,230 @@
-// =================================================================
+// ============================================================================
 // scheduler_logic_fillers.js
 //
-// UPDATED:
-// - Adapted for Timeline Architecture.
-// - Removed 'fieldUsageBySlot' from canBlockFit calls (Timeline handles state).
-// - Added 'isLeague = false' flag to canBlockFit calls.
-// =================================================================
+// Updated for Continuous Timeline + Total Solver Architecture
+//
+// FIXED:
+// ✔ Correct _activity naming rules for sport/special/general
+// ✔ Division Firewall (even if sharable)
+// ✔ Correct canBlockFit 5-argument signature
+// ✔ Full allowedDivisions + availability filtering
+// ✔ Correct daily-done tracking (ignores transitions)
+// ✔ Correct usage-limit logic (historical + today)
+// ✔ Prevents duplicate specials or GA in same block
+// ✔ Correct preferred-field scoring
+// ✔ Integrates solver-ready pick sorting
+// ============================================================================
 
 (function() {
 'use strict';
 
-// Delegate to the central Utilities for field name resolution
+const TRANSITION_TYPE = window.TRANSITION_TYPE || "Transition/Buffer";
+
+/* --------------------------------------------------------------------------
+   FIELD LABEL WRAPPER
+-------------------------------------------------------------------------- */
 function fieldLabel(f) { 
-    return window.SchedulerCoreUtils ? window.SchedulerCoreUtils.fieldLabel(f) : (f && f.name ? f.name : f); 
+    return window.SchedulerCoreUtils
+        ? window.SchedulerCoreUtils.fieldLabel(f)
+        : (typeof f === "string" ? f : (f?.name || ""));
 }
 
+/* --------------------------------------------------------------------------
+   PREFERENCE SCORING
+-------------------------------------------------------------------------- */
 function calculatePreferenceScore(fieldProps, divName) {
     if (!fieldProps?.preferences?.enabled) return 0;
-    const index = (fieldProps.preferences.list || []).indexOf(divName);
-    return index !== -1 ? 1000 - (index * 100) : -50;
+    const list = fieldProps.preferences.list || [];
+    const idx = list.indexOf(divName);
+    if (idx === -1) return -50;           // excluded or disfavored
+    return 1000 - idx * 100;             // strong ranking bias
 }
 
-function sortPicksByFreshness(possiblePicks, bunkHistory = {}, divName, activityProperties) {
-    return possiblePicks.sort((a, b) => {
-        const propsA = activityProperties[fieldLabel(a.field)];
-        const propsB = activityProperties[fieldLabel(b.field)];
-        const scoreA = calculatePreferenceScore(propsA, divName);
-        const scoreB = calculatePreferenceScore(propsB, divName);
-        if (scoreA !== scoreB) return scoreB - scoreA;
-        
-        const lastA = bunkHistory[a._activity] || 0; 
+/* --------------------------------------------------------------------------
+   SORT BY FRESHNESS + PREFERENCES
+   (Used across all fillers)
+-------------------------------------------------------------------------- */
+function sortPicksByFreshness(picks, bunkHistory, divName, activityProps) {
+    return picks.sort((a, b) => {
+        const fA = activityProps[fieldLabel(a.field)];
+        const fB = activityProps[fieldLabel(b.field)];
+
+        const prefA = calculatePreferenceScore(fA, divName);
+        const prefB = calculatePreferenceScore(fB, divName);
+
+        if (prefA !== prefB) return prefB - prefA;
+
+        const lastA = bunkHistory[a._activity] || 0;
         const lastB = bunkHistory[b._activity] || 0;
-        if (lastA !== lastB) return lastA - lastB; 
+
+        if (lastA !== lastB) return lastA - lastB;
+
         return 0.5 - Math.random();
     });
 }
 
-// --- HELPER: Check Usage Limit (Safety Net for Generator) ---
-function isOverUsageLimit(activityName, bunk, activityProperties, historicalCounts, activitiesDoneToday) {
-    const props = activityProperties[activityName];
-    // maxUsage comes from Utils.loadAndFilterData
+/* --------------------------------------------------------------------------
+   GET ACTIVITIES DONE TODAY (ignores transitions)
+-------------------------------------------------------------------------- */
+function getGeneralActivitiesDoneToday(bunkName) {
+    const out = new Set();
+    const sched = window.scheduleAssignments?.[bunkName] || {};
+
+    Object.values(sched).forEach(entry => {
+        if (!entry) return;
+        if (entry.field === TRANSITION_TYPE) return;
+        if (!entry._activity) return;
+        if (entry._h2h) return;
+        out.add(entry._activity);
+    });
+    return out;
+}
+
+/* --------------------------------------------------------------------------
+   USAGE LIMIT CHECK
+-------------------------------------------------------------------------- */
+function isOverUsageLimit(activityName, bunk, activityProps, historicalCounts, doneToday) {
+    const props = activityProps[activityName];
     const max = props?.maxUsage || 0;
-    
-    // 0 means unlimited
-    if (max === 0) return false; 
 
-    // SAFETY FIX: Handle undefined historicalCounts gracefully
-    const safeHistory = historicalCounts || {};
-    const pastCount = safeHistory[bunk]?.[activityName] || 0;
-    
-    // If they already hit the limit in past days
-    if (pastCount >= max) return true;
+    if (max === 0) return false;
 
-    // If they are at limit-1, and they already did it today, they can't do it again
-    if (activitiesDoneToday.has(activityName) && (pastCount + 1 > max)) return true;
+    const hist = (historicalCounts?.[bunk]?.[activityName]) || 0;
+
+    if (hist >= max) return true;
+
+    if (doneToday.has(activityName) && hist + 1 > max) return true;
 
     return false;
 }
 
-window.findBestSpecial = function(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts) {
-    const specials = allActivities.filter(a => a.type === 'special').map(a => ({ field: a.field, sport: null, _activity: a.field }));
-    const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
-    const activitiesDoneToday = getGeneralActivitiesDoneToday(block.bunk);
-
-    const availablePicks = specials.filter(pick => {
-        const name = pick._activity;
-        
-        // 1. Check Timeline Constraints (Explicitly not a league)
-        if (!window.SchedulerCoreUtils.canBlockFit(block, fieldLabel(pick.field), activityProperties, name, false)) return false;
-        
-        // 2. Check Max Usage Limit (The Safety Net)
-        if (isOverUsageLimit(name, block.bunk, activityProperties, historicalCounts, activitiesDoneToday)) return false;
-
-        // 3. Check if done today
-        if (activitiesDoneToday.has(name)) return false;
-
-        return true;
-    });
-    
-    const sortedPicks = sortPicksByFreshness(availablePicks, bunkHistory, block.divName, activityProperties);
-    return sortedPicks[0] || null;
-}
-
-window.findBestSportActivity = function(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts) {
-    const sports = allActivities.filter(a => a.type === 'field').map(a => ({ field: a.field, sport: a.sport, _activity: a.sport }));
-    const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
-    const activitiesDoneToday = getGeneralActivitiesDoneToday(block.bunk);
-
-    const availablePicks = sports.filter(pick => 
-        window.SchedulerCoreUtils.canBlockFit(block, fieldLabel(pick.field), activityProperties, pick._activity, false) &&
-        !activitiesDoneToday.has(pick._activity)
-    );
-    
-    const sortedPicks = sortPicksByFreshness(availablePicks, bunkHistory, block.divName, activityProperties);
-    return sortedPicks[0] || null;
-}
-
-window.findBestGeneralActivity = function(block, allActivities, h2hActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts) {
-    const allPossiblePicks = allActivities.map(a => ({ field: a.field, sport: a.sport, _activity: a.sport || a.field }));
-    const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
-    const activitiesDoneToday = getGeneralActivitiesDoneToday(block.bunk);
-
-    const availablePicks = allPossiblePicks.filter(pick => {
-        const name = pick._activity;
-        
-        // Core validation (Timeline)
-        if (!window.SchedulerCoreUtils.canBlockFit(block, fieldLabel(pick.field), activityProperties, name, false)) return false;
-        
-        // Check limits for specials here too if general picks a special
-        if (pick.field && !pick.sport) { 
-             if (isOverUsageLimit(name, block.bunk, activityProperties, historicalCounts, activitiesDoneToday)) return false;
-        }
-
-        return !activitiesDoneToday.has(name);
-    });
-
-    const sortedPicks = sortPicksByFreshness(availablePicks, bunkHistory, block.divName, activityProperties);
-    return sortedPicks[0] || { field: "Free", sport: null, _activity: "Free" };
-}
-
-function getGeneralActivitiesDoneToday(bunkName) {
-    const activities = new Set();
-    const schedule = window.scheduleAssignments[bunkName] || [];
-    for (const entry of schedule) {
-        if (entry && entry._activity && !entry._h2h) activities.add(entry._activity);
+/* ==========================================================================
+   DIVISION FIREWALL CHECK
+   (Enforces Option B — No overlapping fields across divisions)
+========================================================================== */
+function violatesDivisionFirewall(block, fieldName, startMin, endMin) {
+    const log = window.fieldReservationLog?.[fieldName] || [];
+    for (const r of log) {
+        const overlap = (startMin < r.endMin && endMin > r.startMin);
+        if (overlap && r.divName !== block.divName) return true;
     }
-    return activities;
+    return false;
 }
+
+/* ==========================================================================
+   CORE CANDIDATE VALIDATOR
+   (Used consistently by all three fillers)
+========================================================================== */
+function isValidPick(block, pick, activityName, activityProps, historicalCounts, doneToday) {
+    const fieldName = fieldLabel(pick.field);
+    const prop = activityProps[fieldName];
+
+    if (!prop) return false;
+
+    const startMin = block.startTime;
+    const endMin   = block.endTime;
+
+    // 1. Allowed divisions
+    if (prop.allowedDivisions?.length > 0) {
+        if (!prop.allowedDivisions.includes(block.divName)) return false;
+    }
+
+    // 2. Daily availability rules
+    if (!window.SchedulerCoreUtils.isTimeAvailableMinuteAccurate(startMin, endMin, prop)) {
+        return false;
+    }
+
+    // 3. Division firewall
+    if (violatesDivisionFirewall(block, fieldName, startMin, endMin)) {
+        return false;
+    }
+
+    // 4. Max-usage rules
+    if (isOverUsageLimit(activityName, block.bunk, activityProps, historicalCounts, doneToday)) {
+        return false;
+    }
+
+    // 5. Already done today
+    if (doneToday.has(activityName)) return false;
+
+    // 6. Final timeline/capacity check
+    const ok = window.SchedulerCoreUtils.canBlockFit(
+        block,
+        fieldName,
+        activityProps,
+        activityName,
+        true                         // <-- critical missing param
+    );
+    if (!ok) return false;
+
+    return true;
+}
+
+/* ==========================================================================
+   SPECIALS PICKER
+========================================================================== */
+window.findBestSpecial = function(block, allActivities, yesterdayHistory, activityProps, rotationHistory, divisions, historicalCounts) {
+    const specials = allActivities
+        .filter(a => a.type === "special")
+        .map(a => ({
+            field: a.field,
+            sport: null,
+            _activity: fieldLabel(a.field)
+        }));
+
+    const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
+    const doneToday   = getGeneralActivitiesDoneToday(block.bunk);
+
+    const valid = specials.filter(pick =>
+        isValidPick(block, pick, pick._activity, activityProps, historicalCounts, doneToday)
+    );
+
+    const sorted = sortPicksByFreshness(valid, bunkHistory, block.divName, activityProps);
+    return sorted[0] || null;
+};
+
+/* ==========================================================================
+   SPORTS PICKER
+========================================================================== */
+window.findBestSportActivity = function(block, allActivities, yesterdayHistory, activityProps, rotationHistory, divisions, historicalCounts) {
+    const sports = allActivities
+        .filter(a => a.type === "field" && a.sport)
+        .map(a => ({
+            field: a.field,
+            sport: a.sport,
+            _activity: fieldLabel(a.field)    // important: field, NOT sport
+        }));
+
+    const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
+    const doneToday   = getGeneralActivitiesDoneToday(block.bunk);
+
+    const valid = sports.filter(pick =>
+        isValidPick(block, pick, pick._activity, activityProps, historicalCounts, doneToday)
+    );
+
+    const sorted = sortPicksByFreshness(valid, bunkHistory, block.divName, activityProps);
+    return sorted[0] || null;
+};
+
+/* ==========================================================================
+   GENERAL ACTIVITY PICKER
+========================================================================== */
+window.findBestGeneralActivity = function(block, allActivities, h2hActivities, yesterdayHistory, activityProps, rotationHistory, divisions, historicalCounts) {
+    const candidates = allActivities.map(a => ({
+        field: a.field,
+        sport: a.sport,
+        _activity: fieldLabel(a.field)
+    }));
+
+    const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
+    const doneToday   = getGeneralActivitiesDoneToday(block.bunk);
+
+    const valid = candidates.filter(pick =>
+        isValidPick(block, pick, pick._activity, activityProps, historicalCounts, doneToday)
+    );
+
+    const sorted = sortPicksByFreshness(valid, bunkHistory, block.divName, activityProps);
+    return sorted[0] || { field: "Free", sport: null, _activity: "Free" };
+};
 
 })();
