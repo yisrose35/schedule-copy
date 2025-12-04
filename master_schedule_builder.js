@@ -403,40 +403,54 @@ if (e < latest) {
 // RENDER EVENT TILE
 // ============================================================================
 function renderEventTile(ev, top, height) {
-    const tile = TILES.find(t => t.name === ev.event) || TILES.find(t => t.type === ev.type);
-    const base = tile ? tile.style : "background:#ececec;border:1px solid #999;";
+
+    // Find tile by type FIRST (safe for Smart / Split / League etc)
+    let tile = TILES.find(t => t.type === ev.type);
+
+    // If no type match, fallback to name (rare)
+    if (!tile) {
+        tile = TILES.find(t => t.name === ev.event);
+    }
+
+    // If still no match — fallback generic
+    const style = tile ? tile.style : "background:#ddd;border:1px solid #999;";
 
     let label = `
-        <div style="font-weight:bold">${ev.event}</div>
-        <div style="font-size:0.75rem">${ev.startTime} — ${ev.endTime}</div>
+        <div style="font-weight:600; margin-bottom:2px;">
+            ${ev.event}
+        </div>
+        <div style="font-size:0.75rem; opacity:0.75;">
+            ${ev.startTime} – ${ev.endTime}
+        </div>
     `;
 
+    // Smart Tile Label Add-on
     if (ev.type === "smart" && ev.smartData) {
         label += `
-        <div style="font-size:0.7rem;margin-top:2px;">
-            Fallback: ${ev.smartData.fallbackActivity}
-        </div>`;
+            <div style="font-size:0.7rem; margin-top:3px; font-style:italic;">
+                Fallback → ${ev.smartData.fallbackActivity}
+            </div>
+        `;
     }
 
     return `
-    <div class="mb-event" data-id="${ev.id}" style="
-        ${base};
-        position:absolute;
-        top:${top}px;
-        left:3%;
-        width:94%;
-        height:${height}px;
-        padding:4px;
-        border-radius:6px;
-        overflow:hidden;
-        font-size:0.85rem;
-        line-height:1.15;
-        cursor:pointer;
-        box-shadow:0 1px 2px rgba(0,0,0,0.2);
-    ">
-        ${label}
-    </div>
-    `;
+        <div class="mb-event" data-id="${ev.id}"
+             style="${style};
+                    position:absolute;
+                    top:${top}px;
+                    left:3%;
+                    width:94%;
+                    height:${height}px;
+                    padding:4px 6px;
+                    border-radius:6px;
+                    overflow:hidden;
+                    cursor:pointer;
+                    font-size:0.85rem;
+                    line-height:1.1;
+                    box-shadow:0 1px 2px rgba(0,0,0,0.15);
+             ">
+            ${label}
+        </div>`;
 }
 
 // ============================================================================
