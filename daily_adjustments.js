@@ -1723,60 +1723,7 @@ window.runOptimizer = function () {
 // ======================================================================
 // EXPORT OBJECT
 // ======================================================================
-window.DailyAdjustments = {
-  init: (master) => {
-    masterSettings = master || {};
-    loadSmartTileHistory();
-    loadDailySkeleton();
-    loadRoundState();
-
-    container = document.getElementById("daily_adjustments");
-    if (!container) return;
-
-    container.style.padding = "10px";
-    container.innerHTML = `
-      <div class="setup-tabs">
-        <button id="tab-tiles" class="active">Smart Tile Assignments</button>
-        <button id="tab-skeleton">Skeleton</button>
-        <button id="tab-resources">Field & Activity Overrides</button>
-      </div>
-
-      <div id="panel-tiles"></div>
-      <div id="panel-skeleton" style="display:none;"></div>
-      <div id="panel-resources" style="display:none;"></div>
-    `;
-
-    // Panels
-    tilesPanel = document.getElementById("panel-tiles");
-    skeletonGridContainer = document.getElementById("panel-skeleton");
-    resourceOverridesContainer = document.getElementById("panel-resources");
-
-    // Tab switching
-    document.getElementById("tab-tiles").onclick = () => {
-      switchPanel("tiles");
-    };
-    document.getElementById("tab-skeleton").onclick = () => {
-      switchPanel("skeleton");
-    };
-    document.getElementById("tab-resources").onclick = () => {
-      switchPanel("resources");
-    };
-
-    // Initial load
-    renderSmartTilePanel();
-    renderSkeletonOverridesUI();
-    renderResourceOverridesUI();
-  }
-};
-
-function switchPanel(panel) {
-  document.getElementById("panel-tiles").style.display = panel === "tiles" ? "block" : "none";
-  document.getElementById("panel-skeleton").style.display = panel === "skeleton" ? "block" : "none";
-  document.getElementById("panel-resources").style.display = panel === "resources" ? "block" : "none";
-
-  document.getElementById("tab-tiles").classList.toggle("active", panel === "tiles");
-  document.getElementById("tab-skeleton").classList.toggle("active", panel === "skeleton");
-  document.getElementById("tab-resources").classList.toggle("active", panel === "resources");
-}
+// Add this line right before the final })();
+window.initDailyAdjustments = init;
 
 })();
