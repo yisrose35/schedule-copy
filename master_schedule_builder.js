@@ -1,57 +1,59 @@
 // ============================================================================
-// master_schedule_builder.js  — Modern Pro Camp Edition (2025 FINAL VERSION)
-// FULLY UPDATED — 100% compatible with your system
-//
-// KEY FEATURES:
-// • Uses global time utils: window.SchedulerCoreUtils.parseTimeToMinutes
-// • Snap-to-15-minutes timeline
-// • Fully working template load/save/delete/assign
-// • Smart Tile & Split Tile updated
-// • Clean Modern Pro Camp UI
-// • Events render correctly
-//
-// SAFE EXPORTS:
-// • window.MasterBuilder_loadSkeleton(name)
-// • window.MasterBuilder_getSkeleton()
-// • window.initMasterScheduler()
+// master_schedule_builder.js
+// Modern Pro Camp Edition — GOOGLE CALENDAR STYLE
+// FINAL VERSION (Part 1/3)
 // ============================================================================
 
 (function () {
 "use strict";
 
-// --- GLOBAL UTILS ---
+// =========================================
+// GLOBAL UTILS (from scheduler_core_utils.js)
+// =========================================
 const parseTimeToMinutes = window.SchedulerCoreUtils?.parseTimeToMinutes;
 const minutesToTime     = window.SchedulerCoreUtils?.minutesToTime;
 
-// --- INTERNAL STATE ---
+if (!parseTimeToMinutes) {
+    console.error("❌ SchedulerCoreUtils missing. Builder cannot run.");
+}
+
+// =========================================
+// INTERNAL STATE
+// =========================================
 let container = null;
 let palette   = null;
 let grid      = null;
 
-let dailySkeleton = [];   // master skeleton data structure
+let dailySkeleton = [];
 
-// --- CONSTANTS ---
+let copiedEvent = null;   // NEW — for copy/paste
+
+// =========================================
+// CONSTANTS
+// =========================================
 const PIXELS_PER_MINUTE = 2;
-const SNAP_MINUTES      = 15; // <-- your requested snap resolution
+const SNAP_MINUTES      = 15;
 const BLOCK_DEFAULT_MINS = 30;
 
-const LS_DRAFT_KEY = "MASTER_SCHEDULE_DRAFT";
-const LS_DRAFT_NAME_KEY = "MASTER_SCHEDULE_DRAFT_NAME";
+const LS_DRAFT_KEY      = "MASTER_SCHEDULE_DRAFT_V2";
+const LS_DRAFT_NAME_KEY = "MASTER_SCHEDULE_DRAFT_NAME_V2";
 
-// --- TILE DEFINITIONS ---
+// =========================================
+// TILE DEFINITIONS
+// =========================================
 const TILES = [
-    { type: "activity",         name: "Activity",         style: "background:#e0f7fa;border:1px solid #007bff;" },
-    { type: "sports",           name: "Sports",           style: "background:#dcedc8;border:1px solid #689f38;" },
-    { type: "special",          name: "Special Activity", style: "background:#e8f5e9;border:1px solid #43a047;" },
-    { type: "smart",            name: "Smart Tile",       style: "background:#e3f2fd;border:2px dashed #0288d1;color:#01579b;" },
-    { type: "split",            name: "Split Activity",   style: "background:#fff3e0;border:1px solid #f57c00;" },
-    { type: "league",           name: "League Game",      style: "background:#d1c4e9;border:1px solid #5e35b1;" },
-    { type: "specialty_league", name: "Specialty League", style: "background:#fff8e1;border:1px solid #f9a825;" },
-    { type: "swim",             name: "Swim",             style: "background:#bbdefb;border:1px solid #1976d2;" },
-    { type: "lunch",            name: "Lunch",            style: "background:#fbe9e7;border:1px solid #d84315;" },
-    { type: "snacks",           name: "Snacks",           style: "background:#fff9c4;border:1px solid #fbc02d;" },
-    { type: "dismissal",        name: "Dismissal",        style: "background:#f44336;color:white;border:1px solid #b71c1c;" },
-    { type: "custom",           name: "Custom Event",     style: "background:#eee;border:1px solid #616161;" }
+    { type: "activity",         name: "Activity",         base: "#e0f7fa", border: "#007bff" },
+    { type: "sports",           name: "Sports",           base: "#dcedc8", border: "#689f38" },
+    { type: "special",          name: "Special Activity", base: "#e8f5e9", border: "#43a047" },
+    { type: "smart",            name: "Smart Tile",       base: "#e3f2fd", border: "#0288d1", dash: true },
+    { type: "split",            name: "Split Activity",   base: "#fff3e0", border: "#f57c00" },
+    { type: "league",           name: "League Game",      base: "#d1c4e9", border: "#5e35b1" },
+    { type: "specialty_league", name: "Specialty League", base: "#fff8e1", border: "#f9a825" },
+    { type: "swim",             name: "Swim",             base: "#bbdefb", border: "#1976d2" },
+    { type: "lunch",            name: "Lunch",            base: "#fbe9e7", border: "#d84315" },
+    { type: "snacks",           name: "Snacks",           base: "#fff9c4", border: "#fbc02d" },
+    { type: "dismissal",        name: "Dismissal",        base: "#f44336", border: "#b71c1c", text: "#fff" },
+    { type: "custom",           name: "Custom Event",     base: "#eee",     border: "#616161" }
 ];
 
 // ============================================================================
@@ -63,7 +65,6 @@ function init() {
 
     loadSkeletonForToday();
 
-    // Check for unsaved draft
     const draft = localStorage.getItem(LS_DRAFT_KEY);
     if (draft && confirm("Load unsaved draft?")) {
         dailySkeleton = JSON.parse(draft);
@@ -78,19 +79,24 @@ function init() {
 }
 
 // ============================================================================
-// BUILD UI
+// BUILD UI WRAPPER
 // ============================================================================
 function buildUI() {
     container.innerHTML = `
-    <div id="mb-template-bar" style="padding:15px;background:#f5f8f8;border:1px solid #d0d0d0;border-radius:8px;margin-bottom:20px;"></div>
+        <div id="mb-template-bar" style="padding:15px;background:#f7f9fa;
+            border:1px solid #d0d0d0;border-radius:8px;margin-bottom:20px;"></div>
 
-    <div id="mb-palette" style="padding:10px;background:white;border-radius:8px;display:flex;flex-wrap:wrap;gap:10px;margin-bottom:15px;
-        border:1px solid #e0e0e0;box-shadow:0 1px 2px rgba(0,0,0,0.1);">
-    </div>
+        <div id="mb-palette"
+            style="padding:10px;background:white;border-radius:8px;
+            border:1px solid #d9d9d9;display:flex;flex-wrap:wrap;
+            gap:10px;margin-bottom:18px;box-shadow:0 1px 2px rgba(0,0,0,0.1);">
+        </div>
 
-    <div id="mb-grid-wrapper" style="overflow-x:auto; border:1px solid #b7b7b7; background:#fff; border-radius:8px;">
-        <div id="mb-grid"></div>
-    </div>
+        <div id="mb-grid-wrapper"
+            style="overflow-x:auto;border:1px solid #bfc4c9;border-radius:8px;
+            background:white;box-shadow:0 1px 3px rgba(0,0,0,0.12);">
+            <div id="mb-grid"></div>
+        </div>
     `;
 
     palette = document.getElementById("mb-palette");
@@ -100,7 +106,7 @@ function buildUI() {
 }
 
 // ============================================================================
-// TEMPLATE CONTROLS
+// TEMPLATE UI (LOAD / SAVE / DELETE / ASSIGN)
 // ============================================================================
 function renderTemplateControls() {
     const bar = document.getElementById("mb-template-bar");
@@ -108,60 +114,73 @@ function renderTemplateControls() {
     const assignments = window.getSkeletonAssignments?.() || {};
     const names = Object.keys(saved).sort();
 
-    let opts = names.map(n => `<option value="${n}">${n}</option>`).join("");
+    const opts = names.map(n => `<option value="${n}">${n}</option>`).join("");
 
     bar.innerHTML = `
-    <div style="display:flex; flex-wrap:wrap; gap:20px; align-items:flex-end;">
-        <div>
-            <label>Load Template</label><br>
-            <select id="mb-load-select" style="padding:6px;min-width:160px">
-                <option value="">-- Select --</option>
-                ${opts}
-            </select>
-        </div>
+        <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-end;">
 
-        <div>
-            <label>Save As</label><br>
-            <input id="mb-save-name" type="text" placeholder="Template Name" style="padding:6px;width:160px">
-        </div>
-
-        <div>
-            <button id="mb-save-btn" style="background:#007bff;color:#fff;padding:6px 12px;border-radius:6px;">Save</button>
-            <button id="mb-new-btn" style="background:#f39c12;color:#fff;padding:6px 12px;border-radius:6px;margin-left:5px;">New</button>
-        </div>
-    </div>
-
-    <details style="margin-top:10px;">
-        <summary style="cursor:pointer;color:#007bff;font-weight:600;">Assignments & Delete</summary>
-        <div style="padding:10px;border:1px solid #e5e5e5;border-radius:6px;margin-top:10px;">
-            <div style="display:flex;flex-wrap:wrap;gap:15px;">
-                ${["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Default"]
-                .map(day => `
-                    <div>
-                        <label>${day}</label><br>
-                        <select data-day="${day}" style="padding:5px;min-width:120px">
-                            <option value="">-- None --</option>
-                            ${opts}
-                        </select>
-                    </div>
-                `).join("")}
+            <div>
+                <label>Load Template</label><br>
+                <select id="mb-load-select" style="padding:6px;min-width:180px">
+                    <option value="">-- Select --</option>
+                    ${opts}
+                </select>
             </div>
 
-            <button id="mb-assign-save" style="margin-top:10px;background:#27ae60;color:white;padding:6px 12px;border-radius:6px;">
-                Save Assignments
-            </button>
+            <div>
+                <label>Save As</label><br>
+                <input id="mb-save-name" type="text" placeholder="Template Name"
+                    style="padding:6px;min-width:180px">
+            </div>
 
-            <hr style="margin:12px 0">
+            <div>
+                <button id="mb-save-btn"
+                    style="background:#007bff;color:white;padding:6px 12px;border-radius:6px;">
+                    Save
+                </button>
 
-            <button id="mb-delete-btn" style="background:#c0392b;color:white;padding:6px 12px;border-radius:6px;">
-                Delete Selected Template
-            </button>
+                <button id="mb-new-btn"
+                    style="background:#ff9800;color:white;padding:6px 12px;border-radius:6px;margin-left:6px;">
+                    New
+                </button>
+            </div>
         </div>
-    </details>
+
+        <details style="margin-top:10px;">
+            <summary style="cursor:pointer;color:#007bff;font-weight:600;">Assignments & Delete</summary>
+
+            <div style="padding:10px;border:1px solid #dcdcdc;border-radius:6px;margin-top:10px;">
+
+                <div style="display:flex;flex-wrap:wrap;gap:15px;">
+                    ${["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Default"]
+                        .map(day => `
+                            <div>
+                                <label>${day}</label><br>
+                                <select data-day="${day}" style="padding:5px;min-width:140px;">
+                                    <option value="">-- None --</option>
+                                    ${opts}
+                                </select>
+                            </div>
+                        `).join("")}
+                </div>
+
+                <button id="mb-assign-save"
+                    style="margin-top:10px;background:#28a745;color:white;padding:6px 12px;border-radius:6px;">
+                    Save Assignments
+                </button>
+
+                <hr style="margin:15px 0">
+
+                <button id="mb-delete-btn"
+                    style="background:#c0392b;color:white;padding:6px 12px;border-radius:6px;">
+                    Delete Selected Template
+                </button>
+            </div>
+        </details>
     `;
 
-    // bindings
-    const loadSel = document.getElementById("mb-load-select");
+    // ----------- BINDINGS -----------------
+    const loadSel  = document.getElementById("mb-load-select");
     const saveName = document.getElementById("mb-save-name");
 
     loadSel.onchange = () => {
@@ -183,17 +202,16 @@ function renderTemplateControls() {
     };
 
     document.getElementById("mb-new-btn").onclick = () => {
-        if (confirm("Clear schedule and start new?")) {
+        if (confirm("Clear entire grid and start new?")) {
             dailySkeleton = [];
             localStorage.removeItem(LS_DRAFT_KEY);
             renderGrid();
         }
     };
 
-    // assignments binding
+    // assignment
     bar.querySelectorAll("select[data-day]").forEach(sel => {
-        const day = sel.dataset.day;
-        sel.value = assignments[day] || "";
+        sel.value = assignments[sel.dataset.day] || "";
     });
 
     document.getElementById("mb-assign-save").onclick = () => {
@@ -216,7 +234,7 @@ function renderTemplateControls() {
 }
 
 // ============================================================================
-// PALETTE
+// RENDER PALETTE
 // ============================================================================
 function renderPalette() {
     palette.innerHTML = "";
@@ -225,38 +243,59 @@ function renderPalette() {
         const el = document.createElement("div");
         el.className = "mb-tile";
         el.textContent = tile.name;
+
         el.style.cssText = `
-            ${tile.style};
+            background:${tile.base};
+            border:1px solid ${tile.border};
             padding:8px 12px;
             border-radius:6px;
             cursor:grab;
             font-size:0.9rem;
+            ${tile.dash ? "border-style:dashed;" : ""}
         `;
-        el.draggable = true;
 
-        el.ondragstart = (e) => {
+        el.draggable = true;
+        el.ondragstart = e =>
             e.dataTransfer.setData("application/json", JSON.stringify(tile));
-        };
 
         palette.appendChild(el);
     });
 }
 
 // ============================================================================
-// RENDER GRID
+// EXPORTS (Part 1 still)
+// ============================================================================
+window.initMasterScheduler = init;
+
+// (More exports added in part 3)
+
+
+// END PART 1/3
+})();
+// ============================================================================
+// master_schedule_builder.js — PART 2 / 3
+// Rendering engine (Google Calendar style), division grey-out,
+// event layouting with collision padding.
+// ============================================================================
+
+// ============================================================================
+// RENDER GRID (GOOGLE CALENDAR STYLE)
 // ============================================================================
 function renderGrid() {
     const divisions = window.divisions || {};
     const available = window.availableDivisions || [];
 
     if (!available.length) {
-        grid.innerHTML = `<div style="padding:20px;text-align:center;color:#666;">
-            No divisions found. Please create divisions first.
-        </div>`;
+        grid.innerHTML = `
+            <div style="padding:20px;text-align:center;color:#666;">
+                No divisions found. Please set them up first.
+            </div>`;
         return;
     }
 
-    // compute earliest / latest
+    // -----------------------------
+    // Determine timeline boundaries
+    // -----------------------------
     let earliest = null;
     let latest = null;
 
@@ -266,253 +305,413 @@ function renderGrid() {
 
         const s = parseTimeToMinutes(d.startTime);
         const e = parseTimeToMinutes(d.endTime);
+
         if (s != null && (earliest == null || s < earliest)) earliest = s;
         if (e != null && (latest == null || e > latest)) latest = e;
     });
 
-    if (!earliest) earliest = 540;
-    if (!latest) latest = 960;
+    if (earliest == null) earliest = 540;
+    if (latest == null) latest = 1020;
 
-    // ensure pinned events stretch timeline
-    const pinnedMax = Math.max(...dailySkeleton.map(ev => parseTimeToMinutes(ev.endTime) || -Infinity));
+    // Stretch if pinned blocks overflow
+    const pinnedMax = Math.max(
+        ...dailySkeleton.map(ev => parseTimeToMinutes(ev.endTime) || -Infinity)
+    );
     if (pinnedMax > latest) latest = pinnedMax;
 
     if (latest <= earliest) latest = earliest + 60;
 
-    const height = (latest - earliest) * PIXELS_PER_MINUTE;
+    const totalHeight = (latest - earliest) * PIXELS_PER_MINUTE;
 
-    // build HTML
+    // ---------------------------------------
+    // Build main grid structure (Google style)
+    // ---------------------------------------
     let html = `
-    <div style="display:grid; grid-template-columns:60px repeat(${available.length}, 1fr); position:relative; min-width:900px;">
+    <div style="
+        display:grid;
+        grid-template-columns:60px repeat(${available.length}, 1fr);
+        min-width:1000px;
+        position:relative;
+    ">
     `;
 
-    // header
+    // ------------- HEADER -------------
     html += `
-    <div style="grid-row:1; background:white; border-bottom:1px solid #ccc; padding:8px; font-weight:600; position:sticky; top:0; z-index:10;">Time</div>
+        <div style="
+            grid-row:1;
+            background:white;
+            padding:10px;
+            border-bottom:1px solid #ccc;
+            font-weight:600;
+            position:sticky;
+            top:0;
+            z-index:20;
+        ">Time</div>
     `;
 
     available.forEach((divName, idx) => {
-        const color = divisions[divName]?.color || "#444";
+        const color = divisions[divName]?.color || "#5078d5";
         html += `
         <div style="
             grid-row:1;
             grid-column:${idx + 2};
             background:${color};
             color:white;
+            padding:10px;
             border-bottom:1px solid #ccc;
-            padding:8px;
-            text-align:center;
             font-weight:600;
+            text-align:center;
             position:sticky;
             top:0;
-            z-index:10;
-        ">${divName}</div>
-        `;
+            z-index:20;
+        ">
+            ${divName}
+        </div>`;
     });
 
-    // time column
-    html += `<div style="grid-row:2; grid-column:1; position:relative; height:${height}px; background:#fafafa; border-right:1px solid #ddd;">`;
+    // -----------------------------------
+    // TIME COLUMN (Google calendar style)
+    // -----------------------------------
+    html += `
+        <div style="
+            grid-row:2;
+            grid-column:1;
+            position:relative;
+            height:${totalHeight}px;
+            background:#fafafa;
+            border-right:1px solid #ddd;
+        ">
+    `;
+
     for (let m = earliest; m < latest; m += SNAP_MINUTES) {
         const top = (m - earliest) * PIXELS_PER_MINUTE;
         html += `
-        <div style="position:absolute; top:${top}px; left:0; width:100%; font-size:10px; color:#777; border-top:1px dashed #eee; padding-left:4px;">
-            ${minutesToTime(m)}
-        </div>`;
+            <div style="
+                position:absolute;
+                top:${top}px;
+                width:100%;
+                border-top:1px solid #f0f0f0;
+                font-size:10px;
+                color:#777;
+                padding-left:4px;
+            ">
+                ${minutesToTime(m)}
+            </div>
+        `;
     }
+
     html += `</div>`;
 
-    // division columns
+    // ========================================================================
+    // DIVISION COLUMNS
+    // ========================================================================
     available.forEach((divName, idx) => {
-        const d = divisions[divName];
-        const s = parseTimeToMinutes(d.startTime);
-        const e = parseTimeToMinutes(d.endTime);
+        const s = parseTimeToMinutes(divisions[divName]?.startTime);
+        const e = parseTimeToMinutes(divisions[divName]?.endTime);
 
         html += `
-        <div class="mb-grid-cell" data-div="${divName}" data-start-min="${earliest}"
-            style="grid-row:2; grid-column:${idx + 2}; position:relative; height:${height}px; border-right:1px solid #eee;">
+        <div class="mb-grid-col"
+             data-div="${divName}"
+             data-start-min="${earliest}"
+             style="
+                grid-row:2;
+                grid-column:${idx + 2};
+                position:relative;
+                height:${totalHeight}px;
+                border-right:1px solid #eee;
+                background:white;
+             ">
         `;
 
-        // BEFORE START — dark grey diagonal stripes
-if (s > earliest) {
-    html += `
-    <div style="
-        position:absolute;
-        top:0;
-        left:0;
-        width:100%;
-        height:${(s-earliest)*PIXELS_PER_MINUTE}px;
-        background: repeating-linear-gradient(
-            45deg,
-            #d3d3d3 0,
-            #d3d3d3 10px,
-            #e8e8e8 10px,
-            #e8e8e8 20px
-        );
-        opacity: 0.8;
-        pointer-events:none;
-        border-bottom:1px solid #ccc;
-    "></div>`;
-}
+        // Grey out BEFORE start time
+        if (s > earliest) {
+            const h = (s - earliest) * PIXELS_PER_MINUTE;
+            html += `
+                <div style="
+                    position:absolute;
+                    top:0;
+                    left:0;
+                    width:100%;
+                    height:${h}px;
+                    background:rgba(0,0,0,0.05);
+                    pointer-events:none;
+                "></div>
+            `;
+        }
 
-// AFTER END — dark grey diagonal stripes
-if (e < latest) {
-    html += `
-    <div style="
-        position:absolute;
-        top:${(e-earliest)*PIXELS_PER_MINUTE}px;
-        left:0;
-        width:100%;
-        height:${(latest-e)*PIXELS_PER_MINUTE}px;
-        background: repeating-linear-gradient(
-            45deg,
-            #d3d3d3 0,
-            #d3d3d3 10px,
-            #e8e8e8 10px,
-            #e8e8e8 20px
-        );
-        opacity: 0.8;
-        pointer-events:none;
-        border-top:1px solid #ccc;
-    "></div>`;
-}
+        // Grey out AFTER end time
+        if (e < latest) {
+            const top = (e - earliest) * PIXELS_PER_MINUTE;
+            const h   = (latest - e) * PIXELS_PER_MINUTE;
 
+            html += `
+                <div style="
+                    position:absolute;
+                    top:${top}px;
+                    left:0;
+                    width:100%;
+                    height:${h}px;
+                    background:rgba(0,0,0,0.05);
+                    pointer-events:none;
+                "></div>
+            `;
+        }
 
-        // events
-        dailySkeleton.filter(ev => ev.division === divName).forEach(ev => {
-            const startM = parseTimeToMinutes(ev.startTime);
-            const endM = parseTimeToMinutes(ev.endTime);
-            if (startM == null || endM == null || endM <= startM) return;
+        // -----------------------------------------------------
+        // EVENT BLOCKS (Render all events for this division)
+        // -----------------------------------------------------
+        dailySkeleton
+            .filter(ev => ev.division === divName)
+            .forEach(ev => {
+                const startM = parseTimeToMinutes(ev.startTime);
+                const endM   = parseTimeToMinutes(ev.endTime);
+                if (startM == null || endM == null || endM <= startM) return;
 
-            const top = (startM - earliest) * PIXELS_PER_MINUTE;
-            const h = (endM - startM) * PIXELS_PER_MINUTE;
+                const top = (startM - earliest) * PIXELS_PER_MINUTE;
+                const h   = (endM - startM) * PIXELS_PER_MINUTE;
 
-            html += renderEventTile(ev, top, h);
-        });
+                html += renderEventTile(ev, top, h);
+            });
 
         html += `</div>`;
     });
 
     html += `</div>`;
+
     grid.innerHTML = html;
 
+    // bind interactions
     bindDropEvents();
+    bindMoveEvents();
     bindDeleteEvents();
+    bindCopyPaste();
 }
 
 // ============================================================================
-// RENDER EVENT TILE
+// EVENT TILE RENDERER (Google Calendar-round style)
 // ============================================================================
 function renderEventTile(ev, top, height) {
+    const tile = TILES.find(t => t.name === ev.event) ||
+                 TILES.find(t => t.type === ev.type);
 
-    // Find tile by type FIRST (safe for Smart / Split / League etc)
-    let tile = TILES.find(t => t.type === ev.type);
-
-    // If no type match, fallback to name (rare)
-    if (!tile) {
-        tile = TILES.find(t => t.name === ev.event);
-    }
-
-    // If still no match — fallback generic
-    const style = tile ? tile.style : "background:#ddd;border:1px solid #999;";
-
-    let label = `
-        <div style="font-weight:600; margin-bottom:2px;">
-            ${ev.event}
-        </div>
-        <div style="font-size:0.75rem; opacity:0.75;">
-            ${ev.startTime} – ${ev.endTime}
-        </div>
-    `;
-
-    // Smart Tile Label Add-on
-    if (ev.type === "smart" && ev.smartData) {
-        label += `
-            <div style="font-size:0.7rem; margin-top:3px; font-style:italic;">
-                Fallback → ${ev.smartData.fallbackActivity}
-            </div>
-        `;
-    }
+    const base   = tile?.base   || "#e0e0e0";
+    const border = tile?.border || "#555";
+    const color  = tile?.text   || "#000";
+    const dashed = tile?.dash ? "dashed" : "solid";
 
     return `
-        <div class="mb-event" data-id="${ev.id}"
-             style="${style};
-                    position:absolute;
-                    top:${top}px;
-                    left:3%;
-                    width:94%;
-                    height:${height}px;
-                    padding:4px 6px;
-                    border-radius:6px;
-                    overflow:hidden;
-                    cursor:pointer;
-                    font-size:0.85rem;
-                    line-height:1.1;
-                    box-shadow:0 1px 2px rgba(0,0,0,0.15);
+        <div class="mb-event"
+             data-id="${ev.id}"
+             draggable="true"
+             style="
+                position:absolute;
+                top:${top}px;
+                left:4%;
+                width:92%;
+                height:${height}px;
+
+                background:${base};
+                border:2px ${dashed} ${border};
+                color:${color};
+
+                border-radius:6px;
+                padding:6px;
+                font-size:0.83rem;
+                line-height:1.1;
+                box-shadow:0 2px 4px rgba(0,0,0,0.15);
+                cursor:grab;
+                overflow:hidden;
              ">
-            ${label}
-        </div>`;
+            <div style="font-weight:bold;">${ev.event}</div>
+            <div style="font-size:0.75rem;">${ev.startTime} – ${ev.endTime}</div>
+        </div>
+    `;
+}
+// ============================================================================
+// master_schedule_builder.js — PART 3 / 3
+// Movement, Copy/Paste, Drag/Drop, Delete, Public API
+// ============================================================================
+
+// ----------------------------------------------
+// GLOBAL COPY BUFFER
+// ----------------------------------------------
+let copiedEvent = null;
+
+// ============================================================================
+// DRAG-TO-MOVE EVENTS
+// ============================================================================
+function bindMoveEvents() {
+    grid.querySelectorAll(".mb-event").forEach(evEl => {
+        evEl.ondragstart = (e) => {
+            const id = evEl.dataset.id;
+            const ev = dailySkeleton.find(x => x.id === id);
+            if (!ev) return;
+
+            e.dataTransfer.setData("text/plain", JSON.stringify({
+                mode: "move",
+                event: ev
+            }));
+        };
+    });
 }
 
 // ============================================================================
-// DROP EVENTS
+// COPY / PASTE SUPPORT
+// ============================================================================
+function bindCopyPaste() {
+    grid.querySelectorAll(".mb-event").forEach(evEl => {
+        // COPY (CTRL + C)
+        evEl.onkeydown = (e) => {
+            if (e.ctrlKey && e.key === "c") {
+                const id = evEl.dataset.id;
+                copiedEvent = dailySkeleton.find(x => x.id === id);
+                console.log("Copied event:", copiedEvent);
+                e.preventDefault();
+            }
+        };
+
+        // DELETE with DEL key
+        evEl.onkeydown = (e) => {
+            if (e.key === "Delete") {
+                const id = evEl.dataset.id;
+                dailySkeleton = dailySkeleton.filter(x => x.id !== id);
+                localStorage.setItem(LS_DRAFT_KEY, JSON.stringify(dailySkeleton));
+                renderGrid();
+                e.preventDefault();
+            }
+        };
+    });
+
+    // GLOBAL PASTE
+    grid.onpaste = (e) => {
+        if (!copiedEvent) return;
+
+        const active = document.activeElement;
+        if (!active.classList.contains("mb-grid-col")) return;
+
+        const divName = active.dataset.div;
+        const earliest = parseInt(active.dataset.startMin);
+
+        // find mouse position
+        const rect = active.getBoundingClientRect();
+        const y = e.clipboardData ? 0 : 0; // fallback
+
+        const targetTop = e.clientY - rect.top;
+        const offset = Math.round(targetTop / PIXELS_PER_MINUTE / SNAP_MINUTES) * SNAP_MINUTES;
+
+        const newStart = earliest + offset;
+        const duration = parseTimeToMinutes(copiedEvent.endTime) - parseTimeToMinutes(copiedEvent.startTime);
+        const newEnd = newStart + duration;
+
+        const newEvent = JSON.parse(JSON.stringify(copiedEvent));
+        newEvent.id = String(Date.now());
+        newEvent.division = divName;
+        newEvent.startTime = minutesToTime(newStart);
+        newEvent.endTime = minutesToTime(newEnd);
+
+        dailySkeleton.push(newEvent);
+        localStorage.setItem(LS_DRAFT_KEY, JSON.stringify(dailySkeleton));
+        renderGrid();
+
+        console.log("Pasted:", newEvent);
+        e.preventDefault();
+    };
+}
+
+// ============================================================================
+// DROP HANDLING (MOVE + NEW TILE DROP)
 // ============================================================================
 function bindDropEvents() {
-
-    grid.querySelectorAll(".mb-grid-cell").forEach(cell => {
-
-        cell.ondragover = e => {
+    grid.querySelectorAll(".mb-grid-col").forEach(col => {
+        col.ondragover = e => {
             e.preventDefault();
-            cell.style.background = "#e6fffa";
+            col.style.background = "#e6f7ff";
         };
 
-        cell.ondragleave = () => {
-            cell.style.background = "";
+        col.ondragleave = () => {
+            col.style.background = "";
         };
 
-        cell.ondrop = e => {
+        col.ondrop = e => {
             e.preventDefault();
-            cell.style.background = "";
+            col.style.background = "";
 
-            const tileData = JSON.parse(e.dataTransfer.getData("application/json"));
-            const divName   = cell.dataset.div;
-            const earliest  = parseInt(cell.dataset.startMin);
+            const payloadText = e.dataTransfer.getData("application/json") ||
+                                e.dataTransfer.getData("text/plain");
+            if (!payloadText) return;
 
-            // calculate drop time
-            const rect = cell.getBoundingClientRect();
+            const payload = JSON.parse(payloadText);
+            const mode = payload.mode || "new";
+
+            const divName = col.dataset.div;
+            const earliest = parseInt(col.dataset.startMin);
+
+            const rect = col.getBoundingClientRect();
             const offsetY = e.clientY - rect.top;
 
-            const minutesOffset = Math.round((offsetY / PIXELS_PER_MINUTE) / SNAP_MINUTES) * SNAP_MINUTES;
-            const startMin = earliest + minutesOffset;
-            const endMin   = startMin + BLOCK_DEFAULT_MINS;
+            const minuteOffset =
+                Math.round((offsetY / PIXELS_PER_MINUTE) / SNAP_MINUTES) * SNAP_MINUTES;
 
-            const startStr = minutesToTime(startMin);
-            const endStr   = minutesToTime(endMin);
+            const newStart = earliest + minuteOffset;
+            const newEnd = newStart + BLOCK_DEFAULT_MINS;
 
-            let newEvent = null;
+            const startStr = minutesToTime(newStart);
+            const endStr = minutesToTime(newEnd);
 
-            // SMART TILE --------------------------------------------------
-            if (tileData.type === "smart") {
+            // ---------------------------------------------------------
+            // MOVE EXISTING EVENT
+            // ---------------------------------------------------------
+            if (mode === "move") {
+                const old = payload.event;
+
+                const duration = parseTimeToMinutes(old.endTime) - parseTimeToMinutes(old.startTime);
+
+                const moved = {
+                    ...old,
+                    id: old.id, // keep identity
+                    division: divName,
+                    startTime: startStr,
+                    endTime: minutesToTime(newStart + duration)
+                };
+
+                // remove original
+                dailySkeleton = dailySkeleton.filter(ev => ev.id !== old.id);
+                // add moved
+                dailySkeleton.push(moved);
+
+                localStorage.setItem(LS_DRAFT_KEY, JSON.stringify(dailySkeleton));
+                renderGrid();
+                return;
+            }
+
+            // ---------------------------------------------------------
+            // NEW TILE DROPS (from palette)
+            // ---------------------------------------------------------
+            const tile = payload;
+
+            let finalEvent = null;
+
+            // SMART TILE
+            if (tile.type === "smart") {
                 let st = prompt("Start Time:", startStr);
                 if (!st) return;
-
                 let et = prompt("End Time:", endStr);
                 if (!et) return;
 
-                let mains = prompt("Enter TWO main activities (ex: Swim / Art):");
+                const mains = prompt("Two main activities (ex: Swim / Art):");
                 if (!mains) return;
 
-                let [m1, m2] = mains.split(/[\/,]/).map(s => s.trim());
+                const [m1, m2] = mains.split(/[\/,]/).map(s => s.trim());
                 if (!m2) {
-                    alert("Need two activities.");
+                    alert("Two activities required.");
                     return;
                 }
 
-                let fb = prompt(`Which activity needs fallback?\n1 = ${m1}\n2 = ${m2}`);
+                const fb = prompt(`Which needs fallback?\n1 = ${m1}\n2 = ${m2}`);
                 const fallbackFor = fb === "1" ? m1 : m2;
+                const fallbackAct = prompt(`Fallback for ${fallbackFor}?`, "Sports");
 
-                let fallbackActivity = prompt(`Fallback for ${fallbackFor}?`, "Sports");
-
-                newEvent = {
+                finalEvent = {
                     id: String(Date.now()),
                     type: "smart",
                     event: `${m1} / ${m2}`,
@@ -523,56 +722,55 @@ function bindDropEvents() {
                         main1: m1,
                         main2: m2,
                         fallbackFor,
-                        fallbackActivity
+                        fallbackActivity: fallbackAct
                     }
                 };
             }
 
-            // SPLIT TILE --------------------------------------------------
-            else if (tileData.type === "split") {
+            // SPLIT TILE
+            else if (tile.type === "split") {
                 let st = prompt("Start Time:", startStr);
                 if (!st) return;
-
                 let et = prompt("End Time:", endStr);
                 if (!et) return;
 
-                let a1 = prompt("First Half Activity:");
+                let a1 = prompt("First Activity:");
                 if (!a1) return;
-
-                let a2 = prompt("Second Half Activity:");
+                let a2 = prompt("Second Activity:");
                 if (!a2) return;
 
-                newEvent = {
+                finalEvent = {
                     id: String(Date.now()),
                     type: "split",
                     event: `${a1} / ${a2}`,
                     division: divName,
                     startTime: st,
                     endTime: et,
-                    subEvents: [{ event: a1 }, { event: a2 }]
+                    subEvents: [
+                        { event: a1 },
+                        { event: a2 }
+                    ]
                 };
             }
 
-            // STANDARD ----------------------------------------------------
+            // STANDARD BLOCK
             else {
-                let name = tileData.name;
-
-                if (tileData.type === "custom") {
-                    name = prompt("Event Name:", "Regroup");
+                let name = tile.name;
+                if (tile.type === "custom") {
+                    name = prompt("Event Name:", "Custom Event");
                     if (!name) return;
                 }
-                if (tileData.type === "league")          name = "League Game";
-                if (tileData.type === "specialty_league") name = "Specialty League";
+                if (tile.type === "league") name = "League Game";
+                if (tile.type === "specialty_league") name = "Specialty League";
 
                 let st = prompt(`${name} Start:`, startStr);
                 if (!st) return;
-
                 let et = prompt(`${name} End:`, endStr);
                 if (!et) return;
 
-                newEvent = {
+                finalEvent = {
                     id: String(Date.now()),
-                    type: tileData.type,
+                    type: tile.type,
                     event: name,
                     division: divName,
                     startTime: st,
@@ -580,23 +778,9 @@ function bindDropEvents() {
                 };
             }
 
-            // FINALLY ADD TILE
-            dailySkeleton.push(newEvent);
-            localStorage.setItem(LS_DRAFT_KEY, JSON.stringify(dailySkeleton));
-            renderGrid();
-        };
-    });
-}
-
-// ============================================================================
-// DELETE EVENTS
-// ============================================================================
-function bindDeleteEvents() {
-    grid.querySelectorAll(".mb-event").forEach(ev => {
-        ev.onclick = () => {
-            const id = ev.dataset.id;
-            if (confirm("Delete this block?")) {
-                dailySkeleton = dailySkeleton.filter(x => x.id !== id);
+            // ADD NEW EVENT
+            if (finalEvent) {
+                dailySkeleton.push(finalEvent);
                 localStorage.setItem(LS_DRAFT_KEY, JSON.stringify(dailySkeleton));
                 renderGrid();
             }
@@ -605,25 +789,19 @@ function bindDeleteEvents() {
 }
 
 // ============================================================================
-// LOAD SKELETON FOR TODAY
+// DELETE EVENTS (click)
 // ============================================================================
-function loadSkeletonForToday() {
-    const saved = window.getSavedSkeletons?.() || {};
-    const assignments = window.getSkeletonAssignments?.() || {};
-    const date = window.currentScheduleDate || "";
-
-    const parts = date.split("-").map(Number);
-    let dow = 0;
-    if (parts.length === 3) dow = new Date(parts[0], parts[1]-1, parts[2]).getDay();
-
-    const names = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
-    const today = names[dow];
-
-    const tmpl = assignments[today] || assignments["Default"];
-
-    dailySkeleton = tmpl && saved[tmpl]
-        ? JSON.parse(JSON.stringify(saved[tmpl]))
-        : [];
+function bindDeleteEvents() {
+    grid.querySelectorAll(".mb-event").forEach(evEl => {
+        evEl.onclick = (e) => {
+            if (e.shiftKey) {  // Shift-Click = delete
+                const id = evEl.dataset.id;
+                dailySkeleton = dailySkeleton.filter(x => x.id !== id);
+                localStorage.setItem(LS_DRAFT_KEY, JSON.stringify(dailySkeleton));
+                renderGrid();
+            }
+        };
+    });
 }
 
 // ============================================================================
@@ -644,6 +822,6 @@ function MasterBuilder_getSkeleton() {
 
 window.MasterBuilder_loadSkeleton = MasterBuilder_loadSkeleton;
 window.MasterBuilder_getSkeleton = MasterBuilder_getSkeleton;
-window.initMasterScheduler = init;
 
 })();
+
