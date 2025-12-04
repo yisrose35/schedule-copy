@@ -1,6 +1,7 @@
 // =================================================================
 // daily_adjustments.js
 // FIXED: Scope issues for container variables resolved.
+// FIXED: Lazy-load SchedulerCoreUtils to prevent startup race conditions.
 // =================================================================
 
 (function() {
@@ -33,8 +34,32 @@ function loadSmartTileHistory() {
 }
 
 // --- Global helpers referencing SchedulerCoreUtils ---
-const parseTimeToMinutes = window.SchedulerCoreUtils?.parseTimeToMinutes;
-const minutesToTime = window.SchedulerCoreUtils?.minutesToTime;
+// UPDATED: Defined as functions to allow late binding (in case this script loads before core)
+function parseTimeToMinutes(time) {
+  if (window.SchedulerCoreUtils && window.SchedulerCoreUtils.parseTimeToMinutes) {
+    return window.SchedulerCoreUtils.parseTimeToMinutes(time);
+  }
+  console.warn("SchedulerCoreUtils not found, using fallback parser");
+  // Simple fallback to prevent crash
+  if (!time) return null;
+  const d = new Date("1/1/2000 " + time);
+  if (isNaN(d.getTime())) return null;
+  return d.getHours() * 60 + d.getMinutes();
+}
+
+function minutesToTime(mins) {
+  if (window.SchedulerCoreUtils && window.SchedulerCoreUtils.minutesToTime) {
+    return window.SchedulerCoreUtils.minutesToTime(mins);
+  }
+  // Simple fallback
+  if (mins == null) return "";
+  let h = Math.floor(mins / 60);
+  let m = mins % 60;
+  let ampm = h >= 12 ? 'pm' : 'am';
+  h = h % 12;
+  if (h === 0) h = 12;
+  return `${h}:${m < 10 ? '0'+m : m}${ampm}`;
+}
 
 // Rendering settings
 const PIXELS_PER_MINUTE = 2;
