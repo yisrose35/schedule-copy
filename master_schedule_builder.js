@@ -20,10 +20,26 @@
   const SKELETON_DRAFT_NAME_KEY = "master-schedule-draft-name";
   const PIXELS_PER_MINUTE = 2;
 
-  // --- Core Helper Functions ---
-const parseTimeToMinutes = window.SchedulerCoreUtils?.parseTimeToMinutes || window.parseTimeToMinutes;
+  
+// --- Core Helper Functions ---
+const parseTimeToMinutes =
+  (window.SchedulerCoreUtils && window.SchedulerCoreUtils.parseTimeToMinutes)
+  || function (str) {
+      if (!str) return null;
+      const d = new Date("1970-01-01 " + str);
+      return isNaN(d.getTime()) ? null : d.getHours() * 60 + d.getMinutes();
+    };
 
- const minutesToTime = window.SchedulerCoreUtils?.minutesToTime || window.minutesToTime;
+const minutesToTime =
+  (window.SchedulerCoreUtils && window.SchedulerCoreUtils.minutesToTime)
+  || function (mins) {
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      const ampm = h >= 12 ? "pm" : "am";
+      const hr = ((h + 11) % 12) + 1;
+      return `${hr}:${m.toString().padStart(2, "0")}${ampm}`;
+    };
+
 
 
   // =====================================================================
