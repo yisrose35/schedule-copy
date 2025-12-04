@@ -1,5 +1,6 @@
 // ===================================================================
 // leagues.js  — THEMED VERSION (Emerald Jade Theme)
+// (UPDATED for Continuous Minute Timeline & Total Solver Integration)
 // ===================================================================
 
 (function () {
@@ -83,7 +84,7 @@
                 width: '100%',
                 boxSizing: 'border-box'
             });
-            
+
             el.replaceWith(input);
             input.focus();
 
@@ -102,32 +103,9 @@
     }
 
     // -------------------------------------------------------------
-    // TIME HELPERS
+    // TIME HELPERS (Minute-Accurate)
     // -------------------------------------------------------------
-    function parseTimeToMinutes(str) {
-        if (!str || typeof str !== "string") return null;
-        let s = str.trim().toLowerCase();
-        let mer = null;
-
-        if (s.endsWith("am") || s.endsWith("pm")) {
-            mer = s.endsWith("am") ? "am" : "pm";
-            s = s.replace(/am|pm/g, "").trim();
-        }
-
-        const m = s.match(/^(\d{1,2})\s*:\s*(\d{2})$/);
-        if (!m) return null;
-
-        let hh = parseInt(m[1], 10);
-        const mm = parseInt(m[2], 10);
-        if (Number.isNaN(hh) || Number.isNaN(mm)) return null;
-
-        if (mer) {
-            if (hh === 12) hh = mer === "am" ? 0 : 12;
-            else if (mer === "pm") hh += 12;
-        }
-
-        return hh * 60 + mm;
-    }
+    const parseTimeToMinutes = window.SchedulerCoreUtils?.parseTimeToMinutes || function(str) { return null; };
 
     function minutesToTimeLabel(min) {
         const h24 = Math.floor(min / 60);
@@ -137,35 +115,11 @@
         return `${h12}:${m} ${ap}`;
     }
 
-    function findSlotIndexForTime(targetMin) {
-        const times = window.unifiedTimes || [];
-        const INCREMENT_MINS = window.INCREMENT_MINS || 30; 
-
-        for (let i = 0; i < times.length; i++) {
-            const d = new Date(times[i].start);
-            const slotStart = d.getHours() * 60 + d.getMinutes();
-            
-            let slotEnd;
-            if (times[i].end) {
-                 const e = new Date(times[i].end);
-                 slotEnd = e.getHours() * 60 + e.getMinutes();
-            } else {
-                 slotEnd = slotStart + INCREMENT_MINS;
-            }
-
-            if (targetMin >= slotStart && targetMin < slotEnd) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
     // =================================================================
     // INIT — MOUNT ON #leagues
     // =================================================================
     window.initLeagues = function () {
         const container = document.getElementById('leagues');
-
         if (!container) return;
 
         loadLeaguesData();
@@ -192,7 +146,7 @@
 
                             <div class="setup-field-row" style="margin-top:10px;">
                                 <input id="new-league-input" placeholder="New League Name (e.g. Senior Basketball)">
-                                <button id="add-league-btn" style="background: #00C896; color: white; border-color: #00C896; font-weight:600;">Add League</button>
+                                <button id="add-league-btn" style="background:#00C896;color:white;border-color:#00C896;font-weight:600;">Add League</button>
                             </div>
 
                             <div id="league-master-list" class="master-list"
@@ -213,109 +167,6 @@
                     </div>
                 </section>
             </div>
-
-            <style>
-                .master-list {
-                    border-radius: 18px;
-                    border: 1px solid #E5E7EB;
-                    background: #F7F9FA;
-                    padding: 8px 6px;
-                    box-shadow: 0 10px 24px rgba(15,23,42,0.04);
-                }
-                .master-list .list-item {
-                    padding: 10px 10px;
-                    border-radius: 14px;
-                    margin-bottom: 6px;
-                    cursor: pointer;
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    background: #FFFFFF;
-                    border: 1px solid #E5E7EB;
-                    box-shadow: 0 4px 10px rgba(15,23,42,0.05);
-                    transition: background 0.15s, box-shadow 0.15s, transform 0.08s;
-                }
-                .master-list .list-item:hover {
-                    background: #F3F4F6;
-                    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.10);
-                    transform: translateY(-1px);
-                }
-                /* EMERALD JADE SELECTION */
-                .master-list .list-item.selected {
-                    background: radial-gradient(circle at top left, #ECFDF5 0, #FFFFFF 70%);
-                    border-color: #00C896;
-                    box-shadow: 0 0 0 1px rgba(0, 200, 150, 0.55);
-                    font-weight: 600;
-                }
-                .master-list .list-item-name {
-                    font-size: 0.88rem;
-                    font-weight: 500;
-                    color: #111827;
-                }
-                .detail-pane {
-                    border-radius: 18px;
-                    border: 1px solid #E5E7EB;
-                    padding: 18px 20px;
-                    background: linear-gradient(135deg, #F7F9FA 0%, #FFFFFF 55%, #F7F9FA 100%);
-                    box-shadow: 0 18px 40px rgba(15,23,42,0.06);
-                }
-                .league-section-card {
-                    border-radius: 16px;
-                    border: 1px solid #E5E7EB;
-                    background: #FFFFFF;
-                    padding: 12px 14px;
-                    box-shadow: 0 10px 22px rgba(15, 23, 42, 0.05);
-                    margin-bottom: 12px;
-                }
-                .league-section-header {
-                    display: flex;
-                    align-items: center;
-                    justify-content: space-between;
-                    margin-bottom: 8px;
-                    font-size: 0.78rem;
-                    text-transform: uppercase;
-                    letter-spacing: 0.06em;
-                    color: #6B7280;
-                }
-                .league-section-title { font-weight: 600; }
-                .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-                .chip {
-                    padding: 4px 10px;
-                    border-radius: 999px;
-                    border: 1px solid #d1d5db;
-                    cursor: pointer;
-                    font-size: 0.8rem;
-                    background: #f8fafc;
-                    transition: all 0.15s ease;
-                }
-                /* EMERALD JADE CHIPS */
-                .chip.active {
-                    background: #00C896;
-                    border-color: #00C896;
-                    color: #fff;
-                    box-shadow: 0 3px 8px rgba(0, 200, 150, 0.35);
-                }
-                /* EMERALD JADE HEADERS */
-                .group-header {
-                    background: #ECFDF5;
-                    padding: 8px 12px;
-                    font-weight: 700;
-                    font-size: 0.85rem;
-                    color: #064E3B;
-                    border-radius: 8px;
-                    margin-top: 15px;
-                    margin-bottom: 8px;
-                    border-left: 4px solid #00C896;
-                }
-                .match-row {
-                    transition: background 0.15s ease, transform 0.12s ease;
-                }
-                .match-row:hover {
-                    background: #F3F4F6 !important;
-                    transform: translateX(2px);
-                }
-                .muted { color: #6B7280; font-size: 0.86rem; }
-            </style>
         `;
 
         listEl = document.getElementById('league-master-list');
@@ -449,7 +300,6 @@
         btnGroup.style.display = 'flex';
         btnGroup.style.gap = '8px';
 
-        // NEUTRAL BUTTON
         const editConfigBtn = document.createElement('button');
         editConfigBtn.textContent = 'Edit Setup';
         Object.assign(editConfigBtn.style, {
@@ -462,7 +312,6 @@
             padding: '6px 14px'
         });
 
-        // DELETE BUTTON
         const delBtn = document.createElement('button');
         delBtn.textContent = 'Delete';
         Object.assign(delBtn.style, {
@@ -493,7 +342,6 @@
         header.append(title, btnGroup);
         detailPaneEl.appendChild(header);
 
-        // --- CONFIG CONTAINER (Hidden by default) ---
         const configContainer = document.createElement('div');
         Object.assign(configContainer.style, {
             display: 'none',
@@ -517,14 +365,13 @@
             }
         };
 
-        // --- MAIN CONTENT (Standings/Results) ---
         const mainContent = document.createElement('div');
         renderGameResultsUI(league, mainContent);
         detailPaneEl.appendChild(mainContent);
     }
 
     // =================================================================
-    // CONFIG SECTIONS (Cards)
+    // CONFIG SECTIONS
     // =================================================================
     function renderConfigSections(league, container) {
         container.innerHTML = '';
@@ -538,22 +385,32 @@
                 <span>Who plays?</span>
             </div>
         `;
-        
+
         const divChips = document.createElement('div');
         divChips.className = 'chips';
-        (window.availableDivisions || []).forEach((divName) => {
-            const isActive = league.divisions.includes(divName);
+
+        (window.availableDivisions || []).forEach((divNameRaw) => {
+            const divName = divNameRaw.trim();
+            const divKey = divName.toLowerCase();
+            const isActive = league.divisions.includes(divKey);
+
             const chip = document.createElement('span');
             chip.className = 'chip' + (isActive ? ' active' : '');
             chip.textContent = divName;
+
             chip.onclick = () => {
-                if (isActive) league.divisions = league.divisions.filter(d => d !== divName);
-                else league.divisions.push(divName);
+                if (isActive) {
+                    league.divisions = league.divisions.filter(d => d !== divKey);
+                } else {
+                    league.divisions.push(divKey);
+                }
                 saveLeaguesData();
                 renderConfigSections(league, container);
             };
+
             divChips.appendChild(chip);
         });
+
         divCard.appendChild(divChips);
         container.appendChild(divCard);
 
@@ -566,21 +423,27 @@
                 <span>Activity Type</span>
             </div>
         `;
+
         const sportChips = document.createElement('div');
         sportChips.className = 'chips';
+
         (window.getAllGlobalSports?.() || []).forEach((act) => {
             const isActive = league.sports.includes(act);
+
             const chip = document.createElement('span');
             chip.className = 'chip' + (isActive ? ' active' : '');
             chip.textContent = act;
+
             chip.onclick = () => {
                 if (isActive) league.sports = league.sports.filter(s => s !== act);
                 else league.sports.push(act);
                 saveLeaguesData();
                 renderConfigSections(league, container);
             };
+
             sportChips.appendChild(chip);
         });
+
         sportCard.appendChild(sportChips);
         container.appendChild(sportCard);
 
@@ -593,26 +456,32 @@
                 <span>Roster</span>
             </div>
         `;
+
         const teamList = document.createElement('div');
         teamList.className = 'chips';
+
         league.teams.forEach(team => {
             const chip = document.createElement('span');
             chip.className = 'chip active';
-            chip.innerHTML = `${team} <span style="opacity:0.6; margin-left:4px;">&times;</span>`;
+            chip.innerHTML = `${team} <span style="opacity:0.6; margin-left:4px;">×</span>`;
+
             chip.onclick = () => {
                 league.teams = league.teams.filter(t => t !== team);
                 delete league.standings[team];
                 saveLeaguesData();
                 renderConfigSections(league, container);
             };
+
             teamList.appendChild(chip);
         });
+
         teamCard.appendChild(teamList);
 
         const teamInput = document.createElement('input');
         teamInput.placeholder = 'Type team name & press Enter...';
         teamInput.style.marginTop = '10px';
         teamInput.style.width = '100%';
+
         teamInput.onkeyup = e => {
             if (e.key === 'Enter' && teamInput.value.trim()) {
                 const t = teamInput.value.trim();
@@ -621,11 +490,10 @@
                     league.standings[t] = { w: 0, l: 0, t: 0 };
                     saveLeaguesData();
                     renderConfigSections(league, container);
-                    const newInput = container.querySelectorAll('input');
-                    if(newInput.length) newInput[newInput.length - 1].focus();
                 }
             }
         };
+
         teamCard.appendChild(teamInput);
         container.appendChild(teamCard);
     }
@@ -658,29 +526,26 @@
         const btnStd = tabNav.querySelector('#tab-standings');
         const btnGms = tabNav.querySelector('#tab-games');
 
-        // Style helper: Jade / Emerald Theme
         const setTab = (activeBtn, inactiveBtn) => {
-            // Active: Emerald Jade
-            Object.assign(activeBtn.style, { 
-                background: '#00C896', 
-                color: 'white', 
+            Object.assign(activeBtn.style, {
+                background: '#00C896',
+                color: 'white',
                 borderColor: '#00C896',
                 borderRadius: '999px',
                 padding: '8px 16px',
-                boxShadow: '0 3px 8px rgba(0, 200, 150, 0.35)'
+                boxShadow: '0 3px 8px rgba(0,200,150,0.35)'
             });
-            // Inactive
-            Object.assign(inactiveBtn.style, { 
-                background: '#F3F4F6', 
-                color: '#111827', 
+
+            Object.assign(inactiveBtn.style, {
+                background: '#F3F4F6',
+                color: '#111827',
                 borderColor: '#D1D5DB',
                 borderRadius: '999px',
                 padding: '8px 16px',
                 boxShadow: 'none'
             });
         };
-        
-        // Initial State
+
         setTab(btnStd, btnGms);
 
         btnStd.onclick = () => {
@@ -723,7 +588,6 @@
             return a.localeCompare(b);
         });
 
-        // Use a clean table style
         let html = `
             <table style="width:100%; border-collapse:separate; border-spacing:0; border:1px solid #E5E7EB; border-radius:12px; overflow:hidden;">
                 <thead style="background:#F9FAFB;">
@@ -741,6 +605,7 @@
         sortedTeams.forEach((team, idx) => {
             const stats = league.standings[team] || { w: 0, l: 0, t: 0 };
             const borderBottom = idx < sortedTeams.length - 1 ? '1px solid #F3F4F6' : 'none';
+
             html += `
                 <tr>
                     <td style="padding:12px 16px; border-bottom:${borderBottom}; font-weight:600; color:#111827;">${idx + 1}${getPlaceSuffix(idx + 1)}</td>
@@ -757,7 +622,7 @@
     }
 
     // =================================================================
-    // GAME ENTRY + IMPORT
+    // GAME ENTRY UI
     // =================================================================
     function renderGameEntryUI(league, container) {
         container.innerHTML = '';
@@ -786,12 +651,11 @@
 
         const importBtn = document.createElement('button');
         importBtn.textContent = "Import Today's Schedule";
-        // EMERALD JADE BUTTON
         Object.assign(importBtn.style, {
             background: '#00C896',
             color: 'white',
             borderColor: '#00C896',
-            boxShadow: '0 2px 4px rgba(0, 200, 150, 0.3)',
+            boxShadow: '0 2px 4px rgba(0,200,150,0.3)',
             fontWeight: '600'
         });
 
@@ -808,7 +672,6 @@
 
         const saveBtn = document.createElement('button');
         saveBtn.textContent = 'Save Game Results';
-        // EMERALD JADE BUTTON
         Object.assign(saveBtn.style, {
             marginTop: '15px',
             width: '100%',
@@ -817,7 +680,7 @@
             borderColor: '#00C896',
             display: 'none',
             fontWeight: '600',
-            boxShadow: '0 3px 8px rgba(0, 200, 150, 0.35)'
+            boxShadow: '0 3px 8px rgba(0,200,150,0.35)'
         });
         saveBtn.dataset.role = 'save-game-results';
         saveBtn.onclick = () => saveGameResults(league, select.value, matchContainer);
@@ -825,6 +688,7 @@
         container.appendChild(saveBtn);
 
         importBtn.onclick = () => importGamesFromSchedule(league, matchContainer);
+
         select.onchange = () => {
             matchContainer.innerHTML = '';
             if (select.value === 'new') {
@@ -865,6 +729,9 @@
         }
     }
 
+    // =================================================================
+    // ADD A MATCH ROW
+    // =================================================================
     function addMatchRow(target, teamA, teamB, scoreA = '', scoreB = '', saveButton, timeLabel = '') {
         const row = document.createElement('div');
         row.className = 'match-row';
@@ -901,86 +768,80 @@
     }
 
     // =================================================================
-    // IMPORT FROM SCHEDULE
+    // IMPORT FROM SCHEDULE (Minute Timeline FIXED)
     // =================================================================
     function importGamesFromSchedule(league, target) {
         target.innerHTML = '';
-        
+
         const daily = window.loadCurrentDailyData?.() || {};
         const skeleton = daily.manualSkeleton || [];
         const assignments = daily.scheduleAssignments || {};
-        const divisions = window.divisions || {};
-        
+
         const saveButton = target.parentElement.querySelector('[data-role="save-game-results"]');
 
         if (!league.teams || league.teams.length === 0) {
             target.innerHTML = `<p class="muted" style="text-align:center; margin-top:20px;">Add teams to this league first.</p>`;
             return;
         }
-        
+
+        // --- FIX 1: Robust League Block Detection
+        const isLeagueBlock = (block) => {
+            const ev = (block.event || "").trim().toLowerCase();
+            return (
+                /^league\s*game/.test(ev) ||
+                /^game\s*\d+/.test(ev) ||
+                /league/.test(ev)
+            );
+        };
+
+        // --- FIX 2: Division normalization
         const relevantBlocks = skeleton.filter(block => {
-            return league.divisions.includes(block.division) &&
-                   block.event.toLowerCase().includes("league game");
+            const divKey = (block.division || "").trim().toLowerCase();
+            return (
+                league.divisions.includes(divKey) &&
+                isLeagueBlock(block)
+            );
         });
 
         if (relevantBlocks.length === 0) {
-             target.innerHTML = `<p class="muted" style="text-align:center; margin-top:20px;">No "League Game" blocks found for: ${league.divisions.join(", ")}.</p>`;
-             return;
+            target.innerHTML = `<p class="muted" style="text-align:center; margin-top:20px;">No League Games found today for: ${league.divisions.join(", ")}.</p>`;
+            return;
         }
 
-        const gamesFound = {}; 
+        const gamesFound = {};
 
         relevantBlocks.forEach(block => {
             const startMin = parseTimeToMinutes(block.startTime);
-            const slotIdx = findSlotIndexForTime(startMin);
+            if (startMin === null) return;
 
-            if (slotIdx === -1) return;
+            const divKey = (block.division || "").trim().toLowerCase();
+            const representativeBunk = (window.divisions[divKey]?.bunks || [])[0];
+            if (!representativeBunk) return;
 
-            const divBunks = divisions[block.division]?.bunks || [];
-            if (divBunks.length === 0) return;
-            const representativeBunk = divBunks[0];
-            const entry = assignments[representativeBunk]?.[slotIdx];
+            const entry = assignments[representativeBunk]?.[startMin];
+            if (!entry || !entry._h2h || !entry._allMatchups || entry._activity !== "League Game")
+                return;
 
-            if (!entry) return;
+            // --- FIX 3: Improved header labeling
+            let headerLabel = entry._gameLabel ||
+                `${block.event} (${minutesToTimeLabel(startMin)})`;
 
-            let headerLabel = block.event; 
-            const rawText = (typeof entry.field === 'string') ? entry.field : (entry.sport || "");
-            const textMatch = rawText.match(/(?:Game|Match)\s*(\d+)/i) || headerLabel.match(/(?:Game|Match)\s*(\d+)/i);
-            const hiddenMatch = entry._gameLabel || entry.gameLabel;
-
-            if (textMatch) {
-                headerLabel = `League Game ${textMatch[1]}`;
-            } else if (hiddenMatch) {
-                headerLabel = `League Game ${hiddenMatch.replace(/^\D+/g, '')}`; 
-            } else {
-                if (headerLabel.trim().toLowerCase() === "league game") {
-                    headerLabel = `${headerLabel} (${minutesToTimeLabel(startMin)})`;
-                }
-            }
-
-            let linesToScan = [];
-            if (entry._allMatchups && Array.isArray(entry._allMatchups) && entry._allMatchups.length > 0) {
-                linesToScan = entry._allMatchups;
-            } else if (typeof entry.field === 'string') {
-                linesToScan = entry.field.split('\n');
-            } else if (entry.sport) {
-                linesToScan = [entry.sport];
-            }
+            const linesToScan = entry._allMatchups;
 
             linesToScan.forEach(line => {
-                const m = line.match(/^(.*?)\s+vs\.?\s+(.*?)(?:\s*[@\(]|$)/i); 
+                const m = line.match(/^(.*?)\s+vs\.?\s+(.*?)(?:\s*[@\(]|$)/i);
                 if (m) {
                     const tA = m[1].trim();
                     const tB = m[2].trim();
 
                     if (league.teams.includes(tA) && league.teams.includes(tB)) {
                         if (!gamesFound[headerLabel]) gamesFound[headerLabel] = [];
-                        
-                        const exists = gamesFound[headerLabel].some(g => 
-                            (g.teamA === tA && g.teamB === tB) || 
+
+                        const exists = gamesFound[headerLabel].some(g =>
+                            (g.teamA === tA && g.teamB === tB) ||
                             (g.teamA === tB && g.teamB === tA)
                         );
-                        
+
                         if (!exists) {
                             gamesFound[headerLabel].push({ teamA: tA, teamB: tB });
                         }
@@ -989,12 +850,12 @@
             });
         });
 
-        const groupNames = Object.keys(gamesFound).sort((a,b) => 
-            a.localeCompare(b, undefined, {numeric: true})
+        const groupNames = Object.keys(gamesFound).sort((a, b) =>
+            a.localeCompare(b, undefined, { numeric: true })
         );
 
         if (groupNames.length === 0) {
-            target.innerHTML = `<p class="muted" style="text-align:center; padding:10px;">Found League blocks, but no valid matchups (Team A vs Team B) matching your roster.</p>`;
+            target.innerHTML = `<p class="muted" style="text-align:center; padding:10px;">Found League blocks, but no valid matchups matching your roster.</p>`;
             return;
         }
 
