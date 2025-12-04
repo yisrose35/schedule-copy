@@ -769,6 +769,9 @@ function init() {
 // SKELETON TAB UI
 // ----------------------------------------------------------------------
 function initDailySkeletonUI() {
+  // ADD THIS LINE:
+    // Make sure 'skeleton-container' matches the ID in your HTML file
+    const skeletonContainer = document.getElementById('skeleton-container');
   loadDailySkeleton();
   skeletonContainer.innerHTML = `
     <div id="daily-skeleton-palette"
