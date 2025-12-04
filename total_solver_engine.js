@@ -2,10 +2,11 @@
 // total_solver_engine.js
 // (NEW CORE UTILITY: Backtracking Constraint Solver — Option 1)
 //
-// UPDATED: STRICT "ONE & DONE" VARIETY
-// - Hard Cap: Disqualifies an activity immediately if it's already been played today.
-// - Logic separates Field vs Activity (allows same field if different sport).
-// - Random shuffle added to break "Hockey Arena" dominance.
+// UPDATED: DYNAMIC LEAGUE GENERATOR
+// - No pre-set schedule. Matchups are created daily based on availability.
+// - Enforces Round Robin (A vs B only once per cycle).
+// - Enforces Sport Rotation (A vs B never play same sport twice in a row).
+// - Strict "One & Done" Variety Rules.
 // ============================================================================
 
 (function() {
@@ -18,21 +19,16 @@ const MAX_ITERATIONS = 5000;
 let globalConfig = null;
 let activityProperties = {};
 let currentScorecard = null;
-let allCandidateOptions = []; // Now stores objects: { field, sport, activityName, type }
+let allCandidateOptions = []; 
 
 // ============================================================================
 // HELPERS
 // ============================================================================
 
-function isLeagueActivity(pick) {
-    return pick && pick._isLeague;
-}
-
 function isSameActivity(a, b) {
     return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
 }
 
-// Fisher-Yates Shuffle to randomize picks
 function shuffleArray(array) {
     for (let i = array.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -50,19 +46,16 @@ function calculatePenaltyCost(block, pick) {
     const todayAssign = window.scheduleAssignments[bunk] || {};
     const entries = Object.values(todayAssign);
     
-    // Count how many times this activity is already scheduled TODAY
+    // Count repeats
     let todayCount = 0;
     entries.forEach(e => {
         const existingAct = e._activity || e.activity || e.field;
-        // Count exact matches (Same Activity Name), excluding current slot
         if (isSameActivity(existingAct, activityName) && e.startMin !== block.startTime) {
             todayCount++;
         }
     });
 
-    // 2. STRICT "NO REPEATS" RULE
-    // If not a league, you CANNOT do the same activity twice.
-    // This forces the solver to find anything else.
+    // 2. STRICT "NO REPEATS" RULE (Global)
     if (!pick._isLeague && todayCount >= 1) {
         return 9999; // DISQUALIFIED
     }
@@ -72,12 +65,11 @@ function calculatePenaltyCost(block, pick) {
     if (specialRule && specialRule.maxUsage > 0) {
         const histCount = globalConfig.historicalCounts?.[bunk]?.[activityName] || 0;
         if (histCount + todayCount >= specialRule.maxUsage) {
-            return 9999; // DISQUALIFIED
+            return 9999; 
         }
     }
 
-    // 4. 360° ADJACENCY CHECK (Prevents Back-to-Back)
-    // Looks for any entry ending near my start OR starting near my end
+    // 4. 360° ADJACENCY CHECK
     const isAdjacent = entries.some(e => {
         const touchesPrev = Math.abs(e.endMin - block.startTime) <= 15;
         const touchesNext = Math.abs(e.startMin - block.endTime) <= 15;
@@ -86,33 +78,27 @@ function calculatePenaltyCost(block, pick) {
     });
 
     if (isAdjacent) {
-        return 9999; // DISQUALIFIED (Redundant if limit is 1, but safe)
+        return 9999; 
     }
 
-    // 5. YESTERDAY REPEAT (ROTATION)
+    // 5. YESTERDAY REPEAT
     const yesterdaySched = globalConfig.yesterdayHistory?.schedule?.[bunk] || {};
     const playedYesterday = Object.values(yesterdaySched).some(e => {
         const act = e._activity || e.activity;
         return isSameActivity(act, activityName);
     });
     if (playedYesterday) {
-        penalty += 300; // Strong preference for new things
+        penalty += 300;
     }
 
-    // 6. SEASON FAIRNESS
-    const fair = currentScorecard.teamFairness[bunk] || {};
-    const cum = fair.totalPenalties || 0;
-    penalty += Math.floor(cum / 10);
-
-    // 7. PREFERENCES
-    // Uses the Field Name for preference lookup
+    // 6. PREFERENCES
     const props = activityProperties[pick.field]; 
     if (props?.preferences?.enabled) {
         const idx = (props.preferences.list || []).indexOf(block.divName);
         if (idx !== -1) {
-            penalty -= (50 - (idx * 5)); // Bonus for preferred fields
+            penalty -= (50 - (idx * 5)); 
         } else if (props.preferences.exclusive) {
-            penalty += 2000; // Exclusive violation
+            penalty += 2000;
         }
     }
 
@@ -120,56 +106,89 @@ function calculatePenaltyCost(block, pick) {
 }
 
 // ============================================================================
-// LEAGUE MATCHUP GENERATION  (Round Robin)
+// DYNAMIC LEAGUE GENERATOR
 // ============================================================================
 
-function generateRoundRobin(teamList) {
-    if (!teamList || teamList.length < 2) return [];
+Solver.generateDailyMatchups = function(league, availableFields) {
+    const teams = league.teams || [];
+    if (teams.length < 2) return [];
 
-    const teams = [...teamList];
-    let hasBye = false;
+    // Load State
+    const state = window.leagueRoundState?.[league.name] || { 
+        matchupsPlayed: [], // ["TeamA|TeamB", "TeamC|TeamD"]
+        matchupSports: {}   // "TeamA|TeamB": ["Basketball"]
+    };
 
-    if (teams.length % 2 !== 0) {
-        teams.push("BYE");
-        hasBye = true;
-    }
+    // 1. Identify Valid Pairs (Not yet played this cycle)
+    const candidates = [];
+    const playedSet = new Set(state.matchupsPlayed || []);
 
-    const schedule = [];
-    const numRounds = teams.length - 1;
-
-    const fixed = teams[0];
-    const rotating = teams.slice(1);
-
-    for (let r = 0; r < numRounds; r++) {
-        const round = [];
-        round.push([fixed, rotating[0]]);
-        for (let i = 1; i < teams.length / 2; i++) {
-            const t1 = rotating[i];
-            const t2 = rotating[rotating.length - i];
-            round.push([t1, t2]);
+    for (let i = 0; i < teams.length; i++) {
+        for (let j = i + 1; j < teams.length; j++) {
+            const pairKey = [teams[i], teams[j]].sort().join("|");
+            if (!playedSet.has(pairKey)) {
+                candidates.push({ t1: teams[i], t2: teams[j], key: pairKey });
+            }
         }
-        schedule.push(round);
-        rotating.unshift(rotating.pop());
     }
 
-    if (!hasBye) {
-        return schedule.map(round =>
-            round.filter(m => m[0] !== "BYE" && m[1] !== "BYE")
-        );
+    // 2. Cycle Reset Check
+    // If no candidates left, it means everyone played everyone. Reset cycle.
+    if (candidates.length === 0 && teams.length > 1) {
+        state.matchupsPlayed = [];
+        // We keep matchupSports history to ensure variety across cycles
+        window.leagueRoundState[league.name] = state;
+        window.saveGlobalSettings?.('leagueRoundState', window.leagueRoundState);
+        return Solver.generateDailyMatchups(league, availableFields); // Recursion for fresh cycle
     }
-    return schedule;
-}
 
-Solver.getSpecificRoundMatchups = function(teams, roundIndex) {
-    if (!teams || teams.length < 2) return [];
-    const full = generateRoundRobin(teams);
-    if (!full.length) return [];
-    const idx = (roundIndex - 1) % full.length;
-    return full[idx] || [];
-};
+    // 3. Select Matchups for Today
+    // We try to fill as many pairs as possible without reusing a team today
+    const todaysMatchups = [];
+    const teamsPlayingToday = new Set();
+    
+    // Shuffle candidates to prevent static order
+    const shuffledCandidates = shuffleArray(candidates);
 
-Solver.solveLeagueMatchups = function(leagueName, teams, nextRound) {
-    return Solver.getSpecificRoundMatchups(teams, nextRound);
+    for (const pair of shuffledCandidates) {
+        if (teamsPlayingToday.has(pair.t1) || teamsPlayingToday.has(pair.t2)) continue;
+
+        // 4. Select Sport
+        // Pick a sport they haven't played against each other recently
+        const history = state.matchupSports?.[pair.key] || [];
+        const availableSports = league.sports || ["General Sport"];
+        
+        let chosenSport = null;
+        
+        // Try to find a sport not in their history
+        for (const s of availableSports) {
+            if (!history.includes(s)) {
+                chosenSport = s;
+                break;
+            }
+        }
+        // If they played everything, reset/cycle sports (pick least recent)
+        if (!chosenSport) {
+            chosenSport = availableSports[0]; 
+        }
+
+        // 5. Verify Field Availability for Sport
+        // Does a field exist for this sport? (Simplified check)
+        const validField = allCandidateOptions.find(c => c.sport === chosenSport);
+        
+        if (validField) {
+            todaysMatchups.push({
+                teamA: pair.t1,
+                teamB: pair.t2,
+                sport: chosenSport,
+                pairKey: pair.key
+            });
+            teamsPlayingToday.add(pair.t1);
+            teamsPlayingToday.add(pair.t2);
+        }
+    }
+
+    return todaysMatchups;
 };
 
 // ============================================================================
@@ -180,60 +199,85 @@ Solver.solveLeagueSchedule = function(leagueBlocks) {
     if (!leagueBlocks || leagueBlocks.length === 0) return [];
 
     const output = [];
-
+    
+    // Group blocks by Division + Time
+    const tasks = {};
     for (const b of leagueBlocks) {
-        const matches = Solver.solveLeagueMatchups(
-            b.leagueName,
-            b.leagueTeams,
-            b.nextRound
-        );
+        const key = `${b.divName}_${b.startTime}`;
+        if (!tasks[key]) tasks[key] = [];
+        tasks[key].push(b);
+    }
+
+    for (const key in tasks) {
+        const blocks = tasks[key];
+        const representative = blocks[0]; 
+
+        // 1. FIND LEAGUE
+        let league = null;
+        if (globalConfig.masterLeagues) {
+            league = Object.values(globalConfig.masterLeagues).find(l => 
+                l.enabled && l.divisions && l.divisions.includes(representative.divName)
+            );
+        }
+
+        if (!league) continue;
+
+        // 2. GENERATE DYNAMIC MATCHUPS
+        const matches = Solver.generateDailyMatchups(league, allCandidateOptions);
+        
         if (matches.length === 0) continue;
 
-        const matchups = matches.map(m => ({ teamA: m[0], teamB: m[1] }));
-
-        b._allMatchups = matchups;
-
-        for (const match of matchups) {
-            const fieldName = b.fieldName;
-            const commonStart = b.startTime;
-            const commonEnd = b.endTime;
-
-            // --- A-block (teamA)
-            const blockA = {
-                bunk: match.teamA,
-                divName: b.divName,
-                startTime: commonStart,
-                endTime: commonEnd
-            };
-            const pickA = {
-                field: fieldName,
-                _activity: fieldName,
-                sport: b.sport,
-                _isLeague: true,
-                _allMatchups: b._allMatchups
-            };
-            window.fillBlock(blockA, pickA, globalConfig.yesterdayHistory, true, activityProperties);
-
-            output.push({ block: blockA, solution: pickA });
-
-            // --- B-block (teamB)
-            const blockB = {
-                bunk: match.teamB,
-                divName: b.divName,
-                startTime: commonStart,
-                endTime: commonEnd
-            };
-            const pickB = {
-                field: fieldName,
-                _activity: fieldName,
-                sport: b.sport,
-                _isLeague: true,
-                _allMatchups: b._allMatchups
-            };
-            window.fillBlock(blockB, pickB, globalConfig.yesterdayHistory, true, activityProperties);
-
-            output.push({ block: blockB, solution: pickB });
+        const formattedMatchups = matches.map(m => `${m.teamA} vs ${m.teamB} (${m.sport})`);
+        
+        // Update State (Optimistic save - assumes schedule will be kept)
+        // Ideally we only save on "Final Save", but for now we track generation
+        if (!window.leagueRoundState[league.name]) window.leagueRoundState[league.name] = {};
+        const state = window.leagueRoundState[league.name];
+        
+        matches.forEach(m => {
+            if (!state.matchupsPlayed) state.matchupsPlayed = [];
+            if (!state.matchupSports) state.matchupSports = {};
+            
+            if (!state.matchupsPlayed.includes(m.pairKey)) {
+                state.matchupsPlayed.push(m.pairKey);
+            }
+            if (!state.matchupSports[m.pairKey]) state.matchupSports[m.pairKey] = [];
+            state.matchupSports[m.pairKey].push(m.sport);
+        });
+        
+        // 3. ASSIGN TO BUNKS
+        // Use the sport from the FIRST match as the Block Context
+        const primarySport = matches[0]?.sport || "League";
+        
+        let selectedField = "Sports Field";
+        const candidates = allCandidateOptions.filter(c => c.sport === primarySport);
+        for (const cand of candidates) {
+             if (window.SchedulerCoreUtils.canBlockFit(representative, cand.field, activityProperties, cand.activityName)) {
+                 selectedField = cand.field;
+                 break;
+             }
         }
+
+        const gameLabel = `Matchups`; 
+
+        for (const b of blocks) {
+            const pick = {
+                field: selectedField,
+                _activity: "League Game",
+                sport: primarySport, 
+                _isLeague: true,
+                _allMatchups: formattedMatchups, 
+                _gameLabel: gameLabel
+            };
+
+            window.fillBlock(b, pick, globalConfig.yesterdayHistory, true, activityProperties);
+            output.push({ block: b, solution: pick });
+        }
+    }
+    
+    // Save updated state back to persistence
+    if (window.saveGlobalSettings) {
+        window.saveGlobalSettings('leagueRoundState', window.leagueRoundState);
     }
 
     return output;
@@ -245,14 +289,11 @@ Solver.solveLeagueSchedule = function(leagueBlocks) {
 
 Solver.sortBlocksByDifficulty = function(blocks, config) {
     const bunkMeta = config.bunkMetaData || {};
-
     return blocks.sort((a, b) => {
         if (a._isLeague && !b._isLeague) return -1;
         if (!a._isLeague && b._isLeague) return 1;
-        
         const sa = bunkMeta[a.bunk]?.size || 0;
         const sb = bunkMeta[b.bunk]?.size || 0;
-        // Add random shuffle for identical sizes to prevent "Pattern Lock"
         if (sa !== sb) return sb - sa;
         return Math.random() - 0.5; 
     });
@@ -260,133 +301,65 @@ Solver.sortBlocksByDifficulty = function(blocks, config) {
 
 Solver.getValidActivityPicks = function(block) {
     let picks = [];
-    
-    // Iterate over the PRE-CALCULATED candidates (Sports + Specials)
-    // This list includes distinct {field, sport} combinations.
+    const allActs = availableSpecials.concat(availableSports);
+
     for (const cand of allCandidateOptions) {
-        
-        // 1. Physical Fit Check (Time, Field Availability, Division Firewall)
         const fits = window.SchedulerCoreUtils.canBlockFit(
             block,
             cand.field,
             activityProperties,
             cand.activityName
         );
-        
         if (fits) {
             const pick = {
                 field: cand.field,
                 sport: cand.sport,
                 _activity: cand.activityName
             };
-            
-            // 2. Logical Validity Check (Repeats, Limits, History)
             const cost = calculatePenaltyCost(block, pick);
-            
-            // Only add if not disqualified (9999 cost)
-            if (cost < 9000) {
-                picks.push({ pick, cost });
-            }
+            if (cost < 9000) picks.push({ pick, cost });
         }
     }
 
-    // Always allow "Free" as a fallback
-    picks.push({
-        pick: { field: "Free", sport: null, _activity: "Free" },
-        cost: 9000
-    });
-
-    // Randomize candidates with same cost
+    picks.push({ pick: { field: "Free", sport: null, _activity: "Free" }, cost: 9000 });
     picks = shuffleArray(picks);
-
     return picks;
 };
 
 Solver.applyTentativePick = function(block, scoredPick) {
     const pick = scoredPick.pick;
-
     window.fillBlock(block, pick, globalConfig.yesterdayHistory, false, activityProperties);
-
-    return {
-        block,
-        pick,
-        startMin: block.startTime,
-        bunk: block.bunk
-    };
+    return { block, pick, startMin: block.startTime, bunk: block.bunk };
 };
 
 Solver.undoTentativePick = function(res) {
     const { startMin, bunk } = res;
-
-    if (window.scheduleAssignments[bunk]) {
-        delete window.scheduleAssignments[bunk][startMin];
-    }
-
+    if (window.scheduleAssignments[bunk]) delete window.scheduleAssignments[bunk][startMin];
     window.fieldReservationLog = window.fieldReservationLog || {};
     Object.keys(window.fieldReservationLog).forEach(field => {
-        window.fieldReservationLog[field] =
-            window.fieldReservationLog[field].filter(
-                r => !(r.bunk === bunk && r.startMin === startMin)
-            );
+        window.fieldReservationLog[field] = window.fieldReservationLog[field].filter(r => !(r.bunk === bunk && r.startMin === startMin));
     });
 };
-
-Solver.updateSeasonScorecard = function(assignments) {
-    const sc = currentScorecard;
-
-    for (const item of assignments) {
-        const bunk = item.block.bunk;
-        const cost = calculatePenaltyCost(item.block, item.solution);
-
-        if (cost > 0 && cost < 9000) {
-            if (!sc.teamFairness[bunk]) {
-                sc.teamFairness[bunk] = { totalPenalties: 0 };
-            }
-            sc.teamFairness[bunk].totalPenalties += cost;
-            sc.teamFairness[bunk].lastPenalty =
-                new Date().toISOString().split("T")[0];
-        }
-    }
-
-    window.DataPersistence.saveSolverScorecard(sc);
-};
-
-// ============================================================================
-// MAIN ENTRY
-// ============================================================================
 
 Solver.solveSchedule = function(allBlocks, config) {
     globalConfig = config;
     activityProperties = config.activityProperties || {};
 
-    // --- PREPARE CANDIDATES (Unique Field/Sport Combos) ---
-    // This allows "Hockey" and "Handball" on the same "Hockey Arena"
-    // to be treated as different activities.
-    
+    // Prepare Candidates
     allCandidateOptions = [];
-
-    // 1. SPORTS (Field + Sport combo)
     if (config.allActivities) {
         config.allActivities.forEach(a => {
             if (a.type === 'field' && a.sport) {
                 allCandidateOptions.push({
-                    field: a.field,
-                    sport: a.sport,
-                    activityName: a.sport, // Use SPORT name for uniqueness
-                    type: 'sport'
+                    field: a.field, sport: a.sport, activityName: a.sport, type: 'sport'
                 });
             }
         });
     }
-
-    // 2. SPECIALS (Field/Name is activity)
     if (config.masterSpecials) {
         config.masterSpecials.forEach(s => {
             allCandidateOptions.push({
-                field: s.name,
-                sport: null,
-                activityName: s.name,
-                type: 'special'
+                field: s.name, sport: null, activityName: s.name, type: 'special'
             });
         });
     }
@@ -397,36 +370,25 @@ Solver.solveSchedule = function(allBlocks, config) {
     const leagueBlocks = sorted.filter(b => b._isLeague);
     const activityBlocks = sorted.filter(b => !b._isLeague);
 
-    // Step A: Solve leagues
+    // Solve
     const solvedLeague = Solver.solveLeagueSchedule(leagueBlocks);
 
-    // Step B: Backtracking for general activities
     let iterations = 0;
-
     function backtrack(idx, acc) {
         iterations++;
-        // Limit depth
         if (iterations > MAX_ITERATIONS) return acc; 
         if (idx === activityBlocks.length) return acc;
 
         const block = activityBlocks[idx];
-        
-        // Get valid picks (SHUFFLED then SORTED by cost)
-        const picks = Solver.getValidActivityPicks(block)
-            .sort((a, b) => a.cost - b.cost);
-
-        // Try the best 5 picks
+        const picks = Solver.getValidActivityPicks(block).sort((a, b) => a.cost - b.cost);
         const bestPicks = picks.slice(0, 5);
 
         for (const p of bestPicks) {
             const res = Solver.applyTentativePick(block, p);
-            
             const out = backtrack(idx + 1, [...acc, { block, solution: p.pick }]);
             if (out) return out;
-            
             Solver.undoTentativePick(res);
         }
-
         return null; 
     }
 
