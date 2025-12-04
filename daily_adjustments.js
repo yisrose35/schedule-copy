@@ -1,7 +1,10 @@
 // =================================================================
-// daily_adjustments.js  (UPDATED for CAPACITY FIX AND BUFFERS)
-// - Updated bunk overrides to be Buffer-Aware (Issue 15).
-// - Ensures core logic remains intact while preparing data for buffer processing.
+// daily_adjustments.js  (UPDATED for CONTINUOUS MINUTE TIMELINE)
+//
+// - Removed local minutesToTime() — now fully uses SchedulerCoreUtils.
+// - Updated grid rendering to use continuous minute ranges.
+// - Removed obsolete Smart Tile pre-processor.
+// - Cleaned all formatting artifacts.
 // =================================================================
 
 (function() {
@@ -19,60 +22,36 @@ let currentOverrides = {
   bunkActivityOverrides: []
 };
 
-// --- Smart Tile history (cross-day fairness) ---
+// Legacy Smart Tile history kept only for backwards compatibility
 let smartTileHistory = null;
 const SMART_TILE_HISTORY_KEY = "smartTileHistory_v1";
 
 function loadSmartTileHistory() {
-  try {
-    if (!window.localStorage) return { byBunk: {} };
-    const raw = localStorage.getItem(SMART_TILE_HISTORY_KEY);
-    if (!raw) return { byBunk: {} };
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return { byBunk: {} };
-    if (!parsed.byBunk) parsed.byBunk = {};
-    return parsed;
-  } catch (e) {
-    console.warn("Daily Adjustments: Failed to load smartTileHistory", e);
-    return { byBunk: {} };
-  }
+  return { byBunk: {} };
 }
 
 function saveSmartTileHistory(history) {
-  try {
-    if (!window.localStorage) return;
-    const toSave = history && typeof history === "object" ? history : { byBunk: {} };
-    localStorage.setItem(SMART_TILE_HISTORY_KEY, JSON.stringify(toSave));
-  } catch (e) {
-    console.warn("Daily Adjustments: Failed to save smartTileHistory", e);
-  }
+  // intentionally blank (deprecated)
 }
 
-// --- Helper containers ---
-let skeletonContainer = null;
-let tripsFormContainer = null;
-let bunkOverridesContainer = null;
-let resourceOverridesContainer = null;
+// --- Global helpers referencing SchedulerCoreUtils ---
+const parseTimeToMinutes = window.SchedulerCoreUtils?.parseTimeToMinutes;
+const minutesToTime = window.SchedulerCoreUtils?.minutesToTime;
 
-// Keep track of which sub-tab is active
-let activeSubTab = 'skeleton';
-
-// =================================================================
-// ===== START: SKELETON EDITOR LOGIC =====
-// =================================================================
-
-let dailyOverrideSkeleton = [];
+// Rendering multiplier
 const PIXELS_PER_MINUTE = 2;
-const INCREMENT_MINS = 30;
 
-// --- Tile Definitions (MATCH master_schedule_builder.js) ---
+// Skeleton array
+let dailyOverrideSkeleton = [];
+
+// --- Palette Tile Definitions ---
 const TILES = [
   { type: 'activity', name: 'Activity', style: 'background:#e0f7fa;border:1px solid #007bff;', description: 'Flexible slot (Sport or Special).' },
   { type: 'sports', name: 'Sports', style: 'background:#dcedc8;border:1px solid #689f38;', description: 'Sports slot only.' },
   { type: 'special', name: 'Special Activity', style: 'background:#e8f5f9;border:1px solid #43a047;', description: 'Special Activity slot only.' },
 
-  // NEW SMART TILE (same as master schedule)
-  { type:'smart', name:'Smart Tile', style:'background:#e3f2fd;border:2px dashed #0288d1;color:#01579b;', description:'Balances 2 activities with a fallback (e.g. Special full? -> Sports).' },
+  // Smart Tile
+  { type:'smart', name:'Smart Tile', style:'background:#e3f2fd;border:2px dashed #0288d1;color:#01579b;', description:'Balances 2 activities with fallbacks.' },
 
   { type: 'split', name: 'Split Activity', style: 'background:#fff3e0;border:1px solid #f57c00;', description: 'Two activities share the block.' },
   { type: 'league', name: 'League Game', style: 'background:#d1c4e9;border:1px solid #5e35b1;', description: 'Regular League slot.' },
@@ -86,16 +65,18 @@ const TILES = [
 
 function mapEventNameForOptimizer(name) {
   if (!name) name = "Free";
-  const lowerName = name.toLowerCase().trim();
-  if (lowerName === 'activity')          return { type: 'slot',   event: 'General Activity Slot' };
-  if (lowerName === 'sports')           return { type: 'slot',   event: 'Sports Slot' };
-  if (lowerName === 'special activity' ||
-      lowerName === 'special')          return { type: 'slot',   event: 'Special Activity' };
-  if (['swim','lunch','snacks','dismissal'].includes(lowerName))
-                                        return { type: 'pinned', event: name };
-  return { type: 'pinned', event: name };
+  const lower = name.toLowerCase().trim();
+  if (lower === 'activity') return { type:'slot', event:'General Activity Slot' };
+  if (lower === 'sports') return { type:'slot', event:'Sports Slot' };
+  if (lower === 'special activity' || lower === 'special') return { type:'slot', event:'Special Activity' };
+  if (['swim','lunch','snacks','dismissal'].includes(lower))
+    return { type:'pinned', event:name };
+  return { type:'pinned', event:name };
 }
 
+// ----------------------------------------------------------------------
+// PALETTE RENDERING
+// ----------------------------------------------------------------------
 function renderPalette(paletteContainer) {
   paletteContainer.innerHTML = '<span style="font-weight:600;align-self:center;">Drag tiles onto the grid:</span>';
   TILES.forEach(tile => {
@@ -106,53 +87,73 @@ function renderPalette(paletteContainer) {
     el.style.padding = '8px 12px';
     el.style.borderRadius = '5px';
     el.style.cursor = 'grab';
-    el.onclick = () => alert(tile.description);
     el.draggable = true;
+
+    el.onclick = () => alert(tile.description);
+
     el.ondragstart = (e) => {
       e.dataTransfer.setData('application/json', JSON.stringify(tile));
       e.dataTransfer.effectAllowed = 'copy';
       el.style.cursor = 'grabbing';
     };
+
     el.ondragend = () => { el.style.cursor = 'grab'; };
+
     paletteContainer.appendChild(el);
   });
 }
 
+// ----------------------------------------------------------------------
+// GRID RENDERING
+// ----------------------------------------------------------------------
 function renderGrid(gridContainer) {
   const divisions = window.divisions || {};
   const availableDivisions = window.availableDivisions || [];
 
   let earliestMin = null;
   let latestMin = null;
+
   Object.values(divisions).forEach(div => {
     const s = parseTimeToMinutes(div.startTime);
     const e = parseTimeToMinutes(div.endTime);
     if (s !== null && (earliestMin === null || s < earliestMin)) earliestMin = s;
     if (e !== null && (latestMin === null || e > latestMin)) latestMin = e;
   });
-  if (earliestMin === null) earliestMin = 540; // 9:00
-  if (latestMin === null) latestMin = 960;     // 4:00
 
-  const latestPinnedEnd = Math.max(
-    -Infinity,
-    ...dailyOverrideSkeleton
-      .filter(ev => ev && ev.type === 'pinned')
-      .map(ev => parseTimeToMinutes(ev.endTime) ?? -Infinity)
-  );
-  if (Number.isFinite(latestPinnedEnd)) latestMin = Math.max(latestMin, latestPinnedEnd);
+  if (earliestMin === null) earliestMin = 540; // 9:00am
+  if (latestMin === null) latestMin = 960;     // 4:00pm
+
+  const pinnedEnds = dailyOverrideSkeleton
+    .filter(ev => ev.type === 'pinned')
+    .map(ev => parseTimeToMinutes(ev.endTime))
+    .filter(v => v != null);
+
+  if (pinnedEnds.length > 0) {
+    latestMin = Math.max(latestMin, Math.max(...pinnedEnds));
+  }
+
   if (latestMin <= earliestMin) latestMin = earliestMin + 60;
 
   const totalMinutes = latestMin - earliestMin;
   const totalHeight = totalMinutes * PIXELS_PER_MINUTE;
 
-  let gridHtml = `<div style="display:grid;grid-template-columns:60px repeat(${availableDivisions.length},1fr);position:relative;">`;
-  gridHtml += `<div style="grid-row:1;position:sticky;top:0;background:#fff;z-index:10;border-bottom:1px solid #999;padding:8px;">Time</div>`;
+  const timeLabels = [];
+  const TIME_LABEL_INCREMENT = 30;
+
+  for (let min = earliestMin; min < latestMin; min += TIME_LABEL_INCREMENT) {
+    const end = Math.min(min + TIME_LABEL_INCREMENT, latestMin);
+    timeLabels.push({ start:min, end });
+  }
+
+  let html = `<div style="display:grid;grid-template-columns:60px repeat(${availableDivisions.length},1fr);position:relative;min-width:600px;">`;
+
+  html += `<div style="grid-row:1;position:sticky;top:0;background:#fff;z-index:10;border-bottom:1px solid #999;padding:8px;">Time</div>`;
 
   availableDivisions.forEach((divName, i) => {
-    gridHtml += `
+    html += `
       <div style="
         grid-row:1;
-        grid-column:${i + 2};
+        grid-column:${i+2};
         position:sticky;
         top:0;
         background:${divisions[divName]?.color || '#333'};
@@ -164,81 +165,91 @@ function renderGrid(gridContainer) {
       ">${divName}</div>`;
   });
 
-  // Time column
-  gridHtml += `<div style="grid-row:2;grid-column:1;height:${totalHeight}px;position:relative;background:#f9f9f9;border-right:1px solid #ccc;">`;
-  for (let min = earliestMin; min < latestMin; min += INCREMENT_MINS) {
-    const top = (min - earliestMin) * PIXELS_PER_MINUTE;
-    gridHtml += `
+  html += `<div style="grid-row:2;grid-column:1;height:${totalHeight}px;position:relative;background:#f9f9f9;border-right:1px solid #ccc;">`;
+
+  timeLabels.forEach(({start,end}) => {
+    const top = (start - earliestMin) * PIXELS_PER_MINUTE;
+    const height = (end - start) * PIXELS_PER_MINUTE;
+    html += `
       <div style="
         position:absolute;
         top:${top}px;
         left:0;
         width:100%;
-        height:${INCREMENT_MINS * PIXELS_PER_MINUTE}px;
+        height:${height}px;
         border-bottom:1px dashed #ddd;
         box-sizing:border-box;
         font-size:10px;
         padding:2px;
         color:#777;
-      ">${minutesToTime(min)}</div>`;
-  }
-  gridHtml += `</div>`;
+      ">${minutesToTime(start)}</div>`;
+  });
 
-  // Division columns
+  html += `</div>`;
+
   availableDivisions.forEach((divName, i) => {
     const div = divisions[divName];
     const divStartMin = parseTimeToMinutes(div?.startTime);
     const divEndMin = parseTimeToMinutes(div?.endTime);
 
-    gridHtml += `
+    html += `
       <div class="grid-cell"
            data-div="${divName}"
            data-start-min="${earliestMin}"
-           style="grid-row:2;grid-column:${i + 2};position:relative;height:${totalHeight}px;border-right:1px solid #ccc;">`;
+           style="grid-row:2;grid-column:${i+2};position:relative;height:${totalHeight}px;border-right:1px solid #ccc;">`;
 
     if (divStartMin !== null && divStartMin > earliestMin) {
-      const greyHeight = (divStartMin - earliestMin) * PIXELS_PER_MINUTE;
-      gridHtml += `<div class="grid-disabled" style="top:0;height:${greyHeight}px;"></div>`;
+      const h = (divStartMin - earliestMin) * PIXELS_PER_MINUTE;
+      html += `<div class="grid-disabled" style="top:0;height:${h}px;"></div>`;
     }
     if (divEndMin !== null && divEndMin < latestMin) {
-      const greyTop = (divEndMin - earliestMin) * PIXELS_PER_MINUTE;
-      const greyHeight = (latestMin - divEndMin) * PIXELS_PER_MINUTE;
-      gridHtml += `<div class="grid-disabled" style="top:${greyTop}px;height:${greyHeight}px;"></div>`;
+      const top = (divEndMin - earliestMin) * PIXELS_PER_MINUTE;
+      const h = (latestMin - divEndMin) * PIXELS_PER_MINUTE;
+      html += `<div class="grid-disabled" style="top:${top}px;height:${h}px;"></div>`;
     }
 
     dailyOverrideSkeleton
       .filter(ev => ev.division === divName)
       .forEach(event => {
-        const startMin = parseTimeToMinutes(event.startTime);
-        const endMin = parseTimeToMinutes(event.endTime);
-        if (startMin == null || endMin == null) return;
+        const s = parseTimeToMinutes(event.startTime);
+        const e = parseTimeToMinutes(event.endTime);
+        if (s == null || e == null) return;
 
-        const visibleStartMin = Math.max(startMin, earliestMin);
-        const visibleEndMin = Math.min(endMin, latestMin);
-        if (visibleEndMin <= visibleStartMin) return;
+        const vs = Math.max(s, earliestMin);
+        const ve = Math.min(e, latestMin);
+        if (ve <= vs) return;
 
-        const top = (visibleStartMin - earliestMin) * PIXELS_PER_MINUTE;
-        const height = (visibleEndMin - visibleStartMin) * PIXELS_PER_MINUTE;
-        gridHtml += renderEventTile(event, top, height);
+        const top = (vs - earliestMin) * PIXELS_PER_MINUTE;
+        const height = (ve - vs) * PIXELS_PER_MINUTE;
+        html += renderEventTile(event, top, height);
       });
 
-    gridHtml += `</div>`;
+    html += `</div>`;
   });
 
-  gridHtml += `</div>`;
-  gridContainer.innerHTML = gridHtml;
+  html += `</div>`;
+  gridContainer.innerHTML = html;
+
   addDropListeners(gridContainer);
   addRemoveListeners(gridContainer);
 }
 
+// ----------------------------------------------------------------------
+// DROPPING LOGIC
+// ----------------------------------------------------------------------
 function addDropListeners(gridContainer) {
   gridContainer.querySelectorAll('.grid-cell').forEach(cell => {
+
     cell.ondragover = (e) => {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
       cell.style.backgroundColor = '#e0ffe0';
     };
-    cell.ondragleave = () => { cell.style.backgroundColor = ''; };
+
+    cell.ondragleave = () => {
+      cell.style.backgroundColor = '';
+    };
+
     cell.ondrop = (e) => {
       e.preventDefault();
       cell.style.backgroundColor = '';
@@ -246,106 +257,103 @@ function addDropListeners(gridContainer) {
       const tileData = JSON.parse(e.dataTransfer.getData('application/json'));
       const divName = cell.dataset.div;
       const div = window.divisions[divName] || {};
+
       const divStartMin = parseTimeToMinutes(div.startTime);
       const divEndMin = parseTimeToMinutes(div.endTime);
 
       const rect = cell.getBoundingClientRect();
       const scrollTop = cell.closest('#daily-skeleton-grid')?.scrollTop || 0;
       const y = e.clientY - rect.top + scrollTop;
-      const droppedMin = Math.round(y / PIXELS_PER_MINUTE / 15) * 15;
-      const earliestMin = parseInt(cell.dataset.start-min, 10);
-      const defaultStartTime = minutesToTime(earliestMin + droppedMin);
 
-      let eventType = 'slot';
-      let eventName = tileData.name;
-      let newEvent = null;
+      const earliest = parseInt(cell.dataset.startMin, 10);
+      let dropped = Math.round(y / PIXELS_PER_MINUTE / 5) * 5;
+      let startMin = earliest + dropped;
+      let endMin = startMin + 30;
 
-      const validateTime = (timeStr, isStartTime) => {
-        const timeMin = parseTimeToMinutes(timeStr);
-        if (timeMin === null) {
-          alert("Invalid time format. Please use '9:00am' or '2:30pm'.");
+      const defaultStartTime = minutesToTime(startMin);
+      const defaultEndTime = minutesToTime(endMin);
+
+      const validateTime = (timeStr, isStart) => {
+        const tm = parseTimeToMinutes(timeStr);
+        if (tm == null) {
+          alert("Invalid time format. Use '9:00am' style.");
           return null;
         }
-        if (divStartMin !== null && timeMin < divStartMin) {
-          alert(`Error: ${timeStr} is before this division's start time of ${div.startTime}.`);
+        if (divStartMin != null && tm < divStartMin) {
+          alert(`Error: ${timeStr} is before division start (${div.startTime}).`);
           return null;
         }
-        if (divEndMin !== null && (isStartTime ? timeMin >= divEndMin : timeMin > divEndMin)) {
-          alert(`Error: ${timeStr} is after this division's end time of ${div.endTime}.`);
+        if (divEndMin != null && (isStart ? tm >= divEndMin : tm > divEndMin)) {
+          alert(`Error: ${timeStr} is after division end (${div.endTime}).`);
           return null;
         }
-        return timeMin;
+        return tm;
       };
 
-      // --- Split Tile ---
+      let newEvent = null;
+      let eventType = 'slot';
+      let eventName = tileData.name;
+
+      // --- SPLIT TILE ---
       if (tileData.type === 'split') {
-        let startTime, endTime, startMin, endMin;
+        let sTime, eTime, sm, em;
+
         while (true) {
-          startTime = prompt(`Enter Start Time for the *full* block:`, defaultStartTime);
-          if (!startTime) return;
-          startMin = validateTime(startTime, true);
-          if (startMin !== null) break;
+          sTime = prompt(`Enter Start Time for the full block:`, defaultStartTime);
+          if (!sTime) return;
+          sm = validateTime(sTime, true);
+          if (sm !== null) break;
         }
         while (true) {
-          endTime = prompt(`Enter End Time for the *full* block:`);
-          if (!endTime) return;
-          endMin = validateTime(endTime, false);
-          if (endMin !== null) {
-            if (endMin <= startMin) alert("End time must be after start time.");
-            else break;
-          }
+          eTime = prompt(`Enter End Time for the full block:`, defaultEndTime);
+          if (!eTime) return;
+          em = validateTime(eTime, false);
+          if (em !== null && em > sm) break;
+          alert("End time must be after start time.");
         }
-        const eventName1 = prompt("Enter name for FIRST activity (e.g., Swim, Sports):");
-        if (!eventName1) return;
-        const eventName2 = prompt("Enter name for SECOND activity (e.g., Activity, Sports):");
-        if (!eventName2) return;
-        const event1 = mapEventNameForOptimizer(eventName1);
-        const event2 = mapEventNameForOptimizer(eventName2);
+
+        const act1 = prompt("Enter name for FIRST activity:");
+        if (!act1) return;
+        const act2 = prompt("Enter name for SECOND activity:");
+        if (!act2) return;
+
+        const e1 = mapEventNameForOptimizer(act1);
+        const e2 = mapEventNameForOptimizer(act2);
+
         newEvent = {
-          id: `evt_${Math.random().toString(36).slice(2, 9)}`,
-          type: 'split',
-          event: `${eventName1} / ${eventName2}`,
-          division: divName,
-          startTime: startTime,
-          endTime: endTime,
-          subEvents: [event1, event2]
+          id:`evt_${Math.random().toString(36).slice(2,9)}`,
+          type:'split',
+          event:`${act1} / ${act2}`,
+          division:divName,
+          startTime:sTime,
+          endTime:eTime,
+          subEvents:[e1, e2]
         };
 
-      // --- SMART TILE (matches master schedule Smart Tile logic) ---
+      // --- SMART TILE ---
       } else if (tileData.type === 'smart') {
-        let startTime, endTime, startMin, endMin;
+
+        let sTime, eTime, sm, em;
 
         while (true) {
-          startTime = prompt(
-            `Smart Tile for ${divName}.\n\nEnter Start Time:`,
-            defaultStartTime
-          );
-          if (!startTime) return;
-          startMin = validateTime(startTime, true);
-          if (startMin !== null) break;
+          sTime = prompt(`Smart Tile for ${divName}\nEnter Start Time:`, defaultStartTime);
+          if (!sTime) return;
+          sm = validateTime(sTime, true);
+          if (sm !== null) break;
         }
 
         while (true) {
-          endTime = prompt(`Enter End Time:`);
-          if (!endTime) return;
-          endMin = validateTime(endTime, false);
-          if (endMin !== null) {
-            if (endMin <= startMin) alert("End time must be after start time.");
-            else break;
-          }
+          eTime = prompt(`Enter End Time:`, defaultEndTime);
+          if (!eTime) return;
+          em = validateTime(eTime, false);
+          if (em !== null && em > sm) break;
+          alert("End time must be after start time.");
         }
 
-        // --- Ask for Main 1 + Main 2 ---
-        const rawMains = prompt(
-          "Enter the TWO MAIN activities (e.g., Swim / Special):"
-        );
-        if (!rawMains) return;
+        const raw = prompt("Enter the TWO MAIN activities (Activity1 / Activity2):");
+        if (!raw) return;
 
-        const mains = rawMains
-          .split(/,|\//)
-          .map(s => s.trim())
-          .filter(Boolean);
-
+        const mains = raw.split(/,|\//).map(s => s.trim()).filter(Boolean);
         if (mains.length < 2) {
           alert("Please enter TWO distinct activities.");
           return;
@@ -353,13 +361,12 @@ function addDropListeners(gridContainer) {
 
         const [main1, main2] = mains;
 
-        // --- Ask which activity has fallback ---
         const pick = prompt(
-          `Which activity requires a fallback?\n\n1: ${main1}\n2: ${main2}`
+          `Which activity requires a fallback?\n1: ${main1}\n2: ${main2}`
         );
         if (!pick) return;
 
-        let fallbackFor;
+        let fallbackFor = null;
         if (pick.trim() === "1" || pick.trim().toLowerCase() === main1.toLowerCase()) {
           fallbackFor = main1;
         } else if (pick.trim() === "2" || pick.trim().toLowerCase() === main2.toLowerCase()) {
@@ -369,21 +376,19 @@ function addDropListeners(gridContainer) {
           return;
         }
 
-        // --- Fallback Activity ---
         const fallbackActivity = prompt(
-          `If "${fallbackFor}" is unavailable, what should be played?\nExample: Sports`
+          `If "${fallbackFor}" is unavailable, what should be played instead?`
         );
         if (!fallbackActivity) return;
 
-        // --- Create Event EXACTLY Like Master Builder ---
         newEvent = {
-          id: `evt_${Math.random().toString(36).slice(2, 9)}`,
-          type: "smart",
-          event: `${main1} / ${main2}`,
-          division: divName,
-          startTime,
-          endTime,
-          smartData: {
+          id:`evt_${Math.random().toString(36).slice(2,9)}`,
+          type:'smart',
+          event:`${main1} / ${main2}`,
+          division:divName,
+          startTime:sTime,
+          endTime:eTime,
+          smartData:{
             main1,
             main2,
             fallbackFor,
@@ -391,67 +396,97 @@ function addDropListeners(gridContainer) {
           }
         };
 
-      // --- Pinned tiles ---
+      // --- PINNED (swim, lunch, snacks, custom, dismissal) ---
       } else if (['lunch','snacks','custom','dismissal','swim'].includes(tileData.type)) {
         eventType = 'pinned';
+
         if (tileData.type === 'custom') {
-          eventName = prompt("Enter the name for this custom pinned event (e.g., 'Regroup' or 'Assembly'):");
+          eventName = prompt("Enter custom event name:");
           if (!eventName) return;
         } else {
           eventName = tileData.name;
         }
-      }
 
-      // Standard single-event fallback (Activity / Sports / Special / generic slot)
-      if (!newEvent) {
-        let startTime, endTime, startMin, endMin;
+        let sTime, eTime, sm, em;
+
+        while (true) {
+          sTime = prompt(`Enter Start Time for "${eventName}":`, defaultStartTime);
+          if (!sTime) return;
+          sm = validateTime(sTime, true);
+          if (sm !== null) break;
+        }
+
+        while (true) {
+          eTime = prompt(`Enter End Time:`, defaultEndTime);
+          if (!eTime) return;
+          em = validateTime(eTime, false);
+          if (em !== null && em > sm) break;
+          alert("End time must be after start time.");
+        }
+
+        newEvent = {
+          id:`evt_${Math.random().toString(36).slice(2,9)}`,
+          type:eventType,
+          event:eventName,
+          division:divName,
+          startTime:minutesToTime(sm),
+          endTime:minutesToTime(em)
+        };
+
+      // --- STANDARD BLOCKS ---
+      } else {
 
         if (tileData.type === 'activity') eventName = 'General Activity Slot';
         else if (tileData.type === 'sports') eventName = 'Sports Slot';
         else if (tileData.type === 'special') eventName = 'Special Activity';
 
+        let sTime, eTime, sm, em;
+
         while (true) {
-          startTime = prompt(`Add "${eventName}" for ${divName}?\nEnter Start Time:`, defaultStartTime);
-          if (!startTime) return;
-          startMin = validateTime(startTime, true);
-          if (startMin !== null) break;
+          sTime = prompt(`Add "${eventName}"?\nEnter Start Time:`, defaultStartTime);
+          if (!sTime) return;
+          sm = validateTime(sTime, true);
+          if (sm !== null) break;
         }
         while (true) {
-          endTime = prompt(`Enter End Time:`);
-          if (!endTime) return;
-          endMin = validateTime(endTime, false);
-          if (endMin !== null) {
-            if (endMin <= startMin) alert("End time must be after start time.");
-            else break;
-          }
+          eTime = prompt(`Enter End Time:`, defaultEndTime);
+          if (!eTime) return;
+          em = validateTime(eTime, false);
+          if (em !== null && em > sm) break;
+          alert("End time must be after start time.");
         }
 
         newEvent = {
-          id: `evt_${Math.random().toString(36).slice(2, 9)}`,
-          type: eventType,
-          event: eventName,
-          division: divName,
-          startTime: startTime,
-          endTime: endTime
+          id:`evt_${Math.random().toString(36).slice(2,9)}`,
+          type:eventType,
+          event:eventName,
+          division:divName,
+          startTime:sTime,
+          endTime:eTime
         };
       }
 
       dailyOverrideSkeleton.push(newEvent);
       saveDailySkeleton();
+
       renderGrid(gridContainer);
     };
   });
 }
 
+// ----------------------------------------------------------------------
+// REMOVE EVENTS
+// ----------------------------------------------------------------------
 function addRemoveListeners(gridContainer) {
   gridContainer.querySelectorAll('.grid-event').forEach(tile => {
     tile.onclick = (e) => {
       e.stopPropagation();
-      const eventId = tile.dataset.eventId;
-      if (!eventId) return;
-      const event = dailyOverrideSkeleton.find(ev => ev.id === eventId);
-      if (confirm(`Remove "${event?.event || 'this event'}"?`)) {
-        dailyOverrideSkeleton = dailyOverrideSkeleton.filter(ev => ev.id !== eventId);
+      const id = tile.dataset.eventId;
+      if (!id) return;
+
+      const ev = dailyOverrideSkeleton.find(x => x.id === id);
+      if (confirm(`Remove "${ev?.event || 'event'}"?`)) {
+        dailyOverrideSkeleton = dailyOverrideSkeleton.filter(ev => ev.id !== id);
         saveDailySkeleton();
         renderGrid(gridContainer);
       }
@@ -459,53 +494,54 @@ function addRemoveListeners(gridContainer) {
   });
 }
 
+// ----------------------------------------------------------------------
+// RENDER EVENT TILE
+// ----------------------------------------------------------------------
 function renderEventTile(event, top, height) {
   let tile = TILES.find(t => t.name === event.event);
   if (!tile) {
-    if (event.type === 'split')        tile = TILES.find(t => t.type === 'split');
-    else if (event.type === 'smart')   tile = TILES.find(t => t.type === 'smart');
+    if (event.type === 'split') tile = TILES.find(t => t.type === 'split');
+    else if (event.type === 'smart') tile = TILES.find(t => t.type === 'smart');
     else if (event.event === 'General Activity Slot') tile = TILES.find(t => t.type === 'activity');
-    else if (event.event === 'Sports Slot')           tile = TILES.find(t => t.type === 'sports');
-    else if (event.event === 'Special Activity')      tile = TILES.find(t => t.type === 'special');
-    else if (event.event === 'Dismissal')             tile = TILES.find(t => t.type === 'dismissal');
-    else                                              tile = TILES.find(t => t.type === 'custom');
+    else if (event.event === 'Sports Slot') tile = TILES.find(t => t.type === 'sports');
+    else if (event.event === 'Special Activity') tile = TILES.find(t => t.type === 'special');
+    else if (event.event === 'Dismissal') tile = TILES.find(t => t.type === 'dismissal');
+    else tile = TILES.find(t => t.type === 'custom');
   }
+
   const style = tile ? tile.style : 'background:#eee;border:1px solid #616161;';
-  let tripStyle = '';
+  let extraStyle = '';
 
   if (event.type === 'pinned' && tile && tile.type === 'custom') {
-    tripStyle = 'background:#455a64;color:white;border:1px solid #000;';
+    extraStyle = 'background:#455a64;color:white;border:1px solid #000;';
   }
 
-  let innerHtml = `<strong>${event.event}</strong><br><div style="font-size:.85em;">${event.startTime} - ${event.endTime}</div>`;
+  let inner = `<strong>${event.event}</strong><br><div style="font-size:.85em;">${event.startTime} - ${event.endTime}</div>`;
+  
   if (event.type === 'smart' && event.smartData) {
-    innerHtml += `<div style="font-size:0.75em;border-top:1px dotted #01579b;margin-top:2px;padding-top:1px;">F: ${event.smartData.fallbackActivity} (if ${event.smartData.fallbackFor.substring(0,4)}. busy)</div>`;
+    inner += `
+      <div style="font-size:0.75em;border-top:1px dotted #01579b;margin-top:2px;padding-top:1px;">
+        Fallback: ${event.smartData.fallbackActivity}<br>
+        For: ${event.smartData.fallbackFor}
+      </div>`;
   }
-  if (event.type === "smart" && event.smartData) {
-  innerHtml += `
-    <div style="font-size:0.75em;border-top:1px dotted #01579b;margin-top:2px;padding-top:1px;">
-      Fallback: ${event.smartData.fallbackActivity}
-      <br>
-
-
-      For: ${event.smartData.fallbackFor}
-    </div>
-  `;
-}
-
 
   return `
     <div class="grid-event"
          data-event-id="${event.id}"
-         title="Click to remove this event"
-         style="${tripStyle || style};padding:2px 5px;border-radius:4px;text-align:center;
+         title="Click to remove"
+         style="${extraStyle || style};
+                padding:2px 5px;border-radius:4px;text-align:center;
                 margin:0 1px;font-size:.9em;position:absolute;
                 top:${top}px;height:${height}px;width:calc(100% - 4px);
                 box-sizing:border-box;overflow:hidden;cursor:pointer;">
-      ${innerHtml}
+      ${inner}
     </div>`;
 }
 
+// ----------------------------------------------------------------------
+// LOADING / SAVING SKELETON
+// ----------------------------------------------------------------------
 function loadDailySkeleton() {
   const dailyData = window.loadCurrentDailyData?.() || {};
   if (dailyData.manualSkeleton && dailyData.manualSkeleton.length > 0) {
@@ -514,131 +550,79 @@ function loadDailySkeleton() {
   }
 
   const assignments = masterSettings.app1.skeletonAssignments || {};
-  const skeletons   = masterSettings.app1.savedSkeletons || {};
+  const skeletons = masterSettings.app1.savedSkeletons || {};
   const dateStr = window.currentScheduleDate || "";
-  const [year, month, day] = dateStr.split('-').map(Number);
-  let dayOfWeek = 0;
-  if (year && month && day) dayOfWeek = new Date(year, month - 1, day).getDay();
+  const [y,m,d] = dateStr.split('-').map(Number);
+  let dow = 0;
+  if (y && m && d) dow = new Date(y, m-1, d).getDay();
   const dayNames = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
-  const todayName = dayNames[dayOfWeek];
+  const todayName = dayNames[dow];
 
   let templateName = assignments[todayName];
-  if (!templateName || !skeletons[templateName]) templateName = assignments["Default"];
-  const skeletonToLoad = skeletons[templateName];
-  dailyOverrideSkeleton = skeletonToLoad ? JSON.parse(JSON.stringify(skeletonToLoad)) : [];
+  if (!templateName || !skeletons[templateName]) {
+    templateName = assignments["Default"];
+  }
+
+  const skel = skeletons[templateName];
+  dailyOverrideSkeleton = skel ? JSON.parse(JSON.stringify(skel)) : [];
 }
 
 function saveDailySkeleton() {
   window.saveCurrentDailyData?.("manualSkeleton", dailyOverrideSkeleton);
 }
 
-function minutesToTime(min) {
-  const hh = Math.floor(min / 60);
-  const mm = min % 60;
-  const h = hh % 12 === 0 ? 12 : hh % 12;
-  const m = String(mm).padStart(2, '0');
-  const ampm = hh < 12 ? 'am' : 'pm';
-  return `${h}:${m}${ampm}`;
-}
-
-// =================================================================
-// SMART TILE PRE-PROCESSOR HOOK (DISABLED for Capacity Fix)
-// =================================================================
-
-function applySmartTileOverridesForToday() {
-  console.log("Smart Tile pre-processor DISABLED. Using Core Scheduler for capacity-aware Smart Tiles.");
-  return; // Pass-through to core optimizer
-}
-
-// =================================================================
-// RUN OPTIMIZER (now with Smart Tile pre-processing DISABLED)
-// =================================================================
-
+// ----------------------------------------------------------------------
+// RUN OPTIMIZER
+// ----------------------------------------------------------------------
 function runOptimizer() {
   if (!window.runSkeletonOptimizer) {
-    alert("Error: 'runSkeletonOptimizer' function not found. Is scheduler_logic_core.js loaded?");
-    return;
-  }
-  if (dailyOverrideSkeleton.length === 0) {
-    alert("Skeleton is empty. Please add blocks before running the optimizer.");
+    alert("Error: 'runSkeletonOptimizer' missing.");
     return;
   }
 
-  // Save manual skeleton first
+  if (dailyOverrideSkeleton.length === 0) {
+    alert("Skeleton is empty.");
+    return;
+  }
+
   saveDailySkeleton();
 
-  // NEW: Run Smart Tile pre-processor to inject bunkActivityOverrides
-  try {
-    applySmartTileOverridesForToday();
-  } catch (e) {
-    console.error("Error while applying Smart Tile overrides:", e);
-  }
-
-  // PASS LOCAL OVERRIDES (currentOverrides) to Core logic
   const success = window.runSkeletonOptimizer(dailyOverrideSkeleton, currentOverrides);
   if (success) {
     alert("Schedule Generated Successfully!");
     window.showTab?.('schedule');
   } else {
-    alert("Error during schedule generation. Check console.");
+    alert("Error during schedule generation.");
   }
-}
-
-function parseTimeToMinutes(str) {
-  if (!str || typeof str !== "string") return null;
-  let s = str.trim().toLowerCase();
-  let mer = null;
-  if (s.endsWith("am") || s.endsWith("pm")) {
-    mer = s.endsWith("am") ? "am" : "pm";
-    s = s.replace(/am|pm/g, "").trim();
-  }
-  const m = s.match(/^(\d{1,2})\s*:\s*(\d{2})$/);
-  if (!m) return null;
-  let hh = parseInt(m[1], 10);
-  const mm = parseInt(m[2], 10);
-  if (Number.isNaN(hh) || Number.isNaN(mm) || mm < 0 || mm > 59) return null;
-  if (mer) {
-    if (hh === 12) hh = mer === "am" ? 0 : 12;
-    else if (mer === "pm") hh += 12;
-  } else {
-    return null;
-  }
-  return hh * 60 + mm;
 }
 
 function uid() {
-  return `id_${Math.random().toString(36).slice(2, 9)}`;
+  return `id_${Math.random().toString(36).slice(2,9)}`;
 }
-
 // =================================================================
-// ===== END: SKELETON EDITOR LOGIC =====
+// BEGIN: DAILY ADJUSTMENTS MAIN UI
 // =================================================================
 
-
-/**
- * Main entry point for the Daily Adjustments tab
- */
 function init() {
   container = document.getElementById("daily-adjustments-content");
   if (!container) {
     console.error("Daily Adjustments: container not found");
     return;
   }
+
   console.log("Daily Adjustments: Initializing for", window.currentScheduleDate);
 
-  // --- 1. Load all data ---
+  // Load all data
   masterSettings.global = window.loadGlobalSettings?.() || {};
   masterSettings.app1 = masterSettings.global.app1 || {};
   masterSettings.leaguesByName = masterSettings.global.leaguesByName || {};
   masterSettings.specialtyLeagues = masterSettings.global.specialtyLeagues || {};
 
-  // Load Smart Tile history once per init
   smartTileHistory = loadSmartTileHistory();
 
   const dailyData = window.loadCurrentDailyData?.() || {};
   const dailyOverrides = dailyData.overrides || {};
 
-  // Populate the 'currentOverrides' object from loaded data
   currentOverrides.dailyFieldAvailability = dailyData.dailyFieldAvailability || {};
   currentOverrides.leagues = dailyOverrides.leagues || [];
   currentOverrides.disabledSpecialtyLeagues = dailyData.disabledSpecialtyLeagues || [];
@@ -647,12 +631,11 @@ function init() {
   currentOverrides.disabledSpecials = dailyOverrides.disabledSpecials || [];
   currentOverrides.bunkActivityOverrides = dailyData.bunkActivityOverrides || [];
 
-  // --- 2. Build the main UI (Tabs + Panes) ---
   container.innerHTML = `
     <div style="padding:10px 15px;background:#fff;border:1px solid #ddd;border-radius:8px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;">
       <div>
         <h2 style="margin:0 0 5px 0;">Daily Adjustments for ${window.currentScheduleDate}</h2>
-        <p style="margin:0;font-size:0.9em;color:#555;">Make final changes to the day's template, adjust activities, and run the optimizer.</p>
+        <p style="margin:0;font-size:0.9em;color:#555;">Make final changes to the day's template and run the optimizer.</p>
       </div>
       <button id="run-optimizer-btn"
               style="background:#28a745;color:white;padding:12px 20px;font-size:1.2em;border:none;border-radius:5px;cursor:pointer;white-space:nowrap;">
@@ -685,7 +668,7 @@ function init() {
     <div id="da-pane-bunk-specific" class="da-tab-pane league-content-pane">
       <div class="override-section" id="daily-bunk-overrides-section">
         <h3>Bunk-Specific Pinned Activities</h3>
-        <p style="font-size:0.9em;color:#555;">Assign a specific activity to one or more bunks at a specific time. This will override the skeleton.</p>
+        <p style="font-size:0.9em;color:#555;">Assign a specific activity to one or more bunks at a specific time.</p>
         <div id="bunk-overrides-container"></div>
       </div>
     </div>
@@ -732,7 +715,8 @@ function init() {
       }
       .master-list .list-item.selected .list-item-name{
         font-weight:700;
-      }<br>      .detail-pane{
+      }
+      .detail-pane{
         border:1px solid #ccc;
         border-radius:8px;
         padding:20px;
@@ -756,21 +740,20 @@ function init() {
     </style>
   `;
 
-  // --- 3. Hook up event listeners ---
   document.getElementById("run-optimizer-btn").onclick = runOptimizer;
 
-  // Tab switching logic
   container.querySelectorAll('.da-tabs-nav .tab-button').forEach(btn => {
     btn.onclick = () => {
-      activeSubTab = btn.dataset.tab;
-      container.querySelectorAll('.da-tabs-nav .tab-button').forEach(b => b.classList.remove('active'));
+      container.querySelectorAll('.da-tabs-nav .tab-button')
+        .forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      container.querySelectorAll('.da-tab-pane').forEach(p => p.classList.remove('active'));
-      container.querySelector(`#da-pane-${activeSubTab}`).classList.add('active');
+
+      container.querySelectorAll('.da-tab-pane')
+        .forEach(p => p.classList.remove('active'));
+      container.querySelector(`#da-pane-${btn.dataset.tab}`).classList.add('active');
     };
   });
 
-  // --- 4. Get pane containers and render content ---
   skeletonContainer = document.getElementById("override-scheduler-content");
   tripsFormContainer = document.getElementById("trips-form-container");
   bunkOverridesContainer = document.getElementById("bunk-overrides-container");
@@ -782,11 +765,10 @@ function init() {
   renderResourceOverridesUI();
 }
 
-/**
- * Renders the UI for the "Skeleton" tab
- */
+// ----------------------------------------------------------------------
+// SKELETON TAB UI
+// ----------------------------------------------------------------------
 function initDailySkeletonUI() {
-  if (!skeletonContainer) return;
   loadDailySkeleton();
   skeletonContainer.innerHTML = `
     <div id="daily-skeleton-palette"
@@ -800,12 +782,11 @@ function initDailySkeletonUI() {
   renderGrid(grid);
 }
 
-/**
- * Renders the UI for the "Trips" tab
- */
+// ----------------------------------------------------------------------
+// TRIPS TAB UI
+// ----------------------------------------------------------------------
 function renderTripsForm() {
   tripsFormContainer.innerHTML = "";
-
   const form = document.createElement('div');
   form.style.border = '1px solid #ccc';
   form.style.padding = '15px';
@@ -821,22 +802,22 @@ function renderTripsForm() {
     <label for="tripEnd" style="display:block;margin-top:10px;font-weight:600;">End Time:</label>
     <input id="tripEnd" placeholder="e.g., 2:00pm" style="margin-right:8px;">
 
-    <p style="margin-top:15px;font-weight:600;">Select Divisions (Trip will apply to all bunks in the division):</p>
+    <p style="margin-top:15px;font-weight:600;">Select Divisions:</p>
   `;
 
   const divisions = masterSettings.app1.divisions || {};
   const availableDivisions = masterSettings.app1.availableDivisions || [];
 
-  const divisionChipBox = document.createElement('div');
-  divisionChipBox.className = 'chips';
-  divisionChipBox.style.marginBottom = '5px';
+  const chipBox = document.createElement('div');
+  chipBox.className = 'chips';
+  chipBox.style.marginBottom = '5px';
 
   availableDivisions.forEach(divName => {
-    const divColor = divisions[divName]?.color || '#333';
-    const chip = createChip(divName, divColor, true);
-    divisionChipBox.appendChild(chip);
+    const chip = createChip(divName, divisions[divName]?.color || '#333', true);
+    chipBox.appendChild(chip);
   });
-  form.appendChild(divisionChipBox);
+
+  form.appendChild(chipBox);
 
   const addBtn = document.createElement('button');
   addBtn.textContent = 'Add Trip to Skeleton';
@@ -846,90 +827,82 @@ function renderTripsForm() {
   addBtn.style.marginTop = '15px';
 
   addBtn.onclick = () => {
-    const nameEl = form.querySelector('#tripName');
-    const startEl = form.querySelector('#tripStart');
-    const endEl = form.querySelector('#tripEnd');
-    if (!nameEl || !startEl || !endEl) return;
-
-    const name = nameEl.value.trim();
-    const start = startEl.value;
-    const end = endEl.value;
-    const selectedDivisions = Array.from(
-      divisionChipBox.querySelectorAll('.bunk-button.selected')
-    ).map(el => el.dataset.value);
+    const name = form.querySelector('#tripName').value.trim();
+    const start = form.querySelector('#tripStart').value;
+    const end = form.querySelector('#tripEnd').value;
+    const selectedDivs = Array.from(chipBox.querySelectorAll('.selected'))
+      .map(el => el.dataset.value);
 
     if (!name || !start || !end) {
-      alert('Please enter a name, start time, and end time for the trip.');
+      alert('Please enter a name, start, and end time.');
       return;
     }
-    if (selectedDivisions.length === 0) {
-      alert('Please select at least one division for the trip.');
+    if (selectedDivs.length === 0) {
+      alert('Select at least one division.');
       return;
     }
 
-    const tripStartMin = parseTimeToMinutes(start);
-    const tripEndMin = parseTimeToMinutes(end);
-    if (tripStartMin == null || tripEndMin == null || tripEndMin <= tripStartMin) {
-      alert('Invalid time range. Please use formats like "9:00am" and ensure end is after start.');
+    const sMin = parseTimeToMinutes(start);
+    const eMin = parseTimeToMinutes(end);
+    if (sMin == null || eMin == null || eMin <= sMin) {
+      alert('Invalid time range.');
       return;
     }
 
     loadDailySkeleton();
 
     dailyOverrideSkeleton = dailyOverrideSkeleton.filter(item => {
-      if (!selectedDivisions.includes(item.division)) return true;
-      const itemStartMin = parseTimeToMinutes(item.startTime);
-      const itemEndMin = parseTimeToMinutes(item.endTime);
-      if (itemStartMin == null || itemEndMin == null) return true;
-      const overlaps = (itemStartMin < tripEndMin) && (itemEndMin > tripStartMin);
-      return !overlaps;
+      if (!selectedDivs.includes(item.division)) return true;
+      const iS = parseTimeToMinutes(item.startTime);
+      const iE = parseTimeToMinutes(item.endTime);
+      if (iS == null || iE == null) return true;
+      const overlap = (iS < eMin) && (iE > sMin);
+      return !overlap;
     });
 
-    selectedDivisions.forEach(divName => {
+    selectedDivs.forEach(divName => {
       dailyOverrideSkeleton.push({
-        id: `evt_${Math.random().toString(36).slice(2, 9)}`,
-        type: 'pinned',
-        event: name,
-        division: divName,
-        startTime: start,
-        endTime: end
+        id:`evt_${Math.random().toString(36).slice(2,9)}`,
+        type:'pinned',
+        event:name,
+        division:divName,
+        startTime:start,
+        endTime:end
       });
     });
 
     saveDailySkeleton();
 
-    const gridContainer = skeletonContainer.querySelector('#daily-skeleton-grid');
-    if (gridContainer) renderGrid(gridContainer);
+    const grid = skeletonContainer.querySelector('#daily-skeleton-grid');
+    if (grid) renderGrid(grid);
 
-    nameEl.value = "";
-    startEl.value = "";
-    endEl.value = "";
-    form.querySelectorAll('.bunk-button.selected').forEach(chip => chip.click());
+    form.querySelector('#tripName').value = "";
+    form.querySelector('#tripStart').value = "";
+    form.querySelector('#tripEnd').value = "";
+    chipBox.querySelectorAll('.selected').forEach(c => c.click());
   };
 
   form.appendChild(addBtn);
   tripsFormContainer.appendChild(form);
 }
 
-/**
- * NEW: Renders the UI for the "Bunk Specific" tab
- */
+// ----------------------------------------------------------------------
+// BUNK-SPECIFIC TAB UI
+// ----------------------------------------------------------------------
 function renderBunkOverridesUI() {
   bunkOverridesContainer.innerHTML = "";
 
   const divisions = masterSettings.app1.divisions || {};
   const availableDivisions = masterSettings.app1.availableDivisions || [];
-  const allBunksByDiv = {};
+  const bunksByDiv = {};
   availableDivisions.forEach(divName => {
-    allBunksByDiv[divName] = (divisions[divName]?.bunks || []).sort();
+    bunksByDiv[divName] = (divisions[divName]?.bunks || []).sort();
   });
 
-  // --- UPDATED ACTIVITY LIST (Includes Field Names) ---
   const allFields = (masterSettings.app1.fields || []).map(f => f.name);
   const allSports = (masterSettings.app1.fields || []).flatMap(f => f.activities || []);
   const allSpecials = (masterSettings.app1.specialActivities || []).map(s => s.name);
   const allActivities = [...new Set([...allSports, ...allSpecials, ...allFields])].sort();
-  // ---------------------------
 
   const form = document.createElement('div');
   form.style.border = '1px solid #ccc';
@@ -938,41 +911,38 @@ function renderBunkOverridesUI() {
   form.style.marginBottom = '20px';
 
   let activityOptions = `<option value="">-- Select an Activity --</option>`;
-  allActivities.forEach(act => {
-    activityOptions += `<option value="${act}">${act}</option>`;
+  allActivities.forEach(a => {
+    activityOptions += `<option value="${a}">${a}</option>`;
   });
 
   form.innerHTML = `
-    <label for="bunk-override-activity" style="display:block;margin-bottom:5px;font-weight:600;">Activity / Field:</label>
-    <select id="bunk-override-activity" style="width:250px;padding:5px;font-size:1em;">${activityOptions}</select>
+    <label style="display:block;margin-bottom:5px;font-weight:600;">Activity / Field:</label>
+    <select id="bunk-override-activity" style="width:250px;padding:5px;">${activityOptions}</select>
 
-    <label for="bunk-override-start" style="display:block;margin-top:10px;font-weight:600;">Start Time:</label>
+    <label style="display:block;margin-top:10px;font-weight:600;">Start Time:</label>
     <input id="bunk-override-start" placeholder="e.g., 9:00am" style="margin-right:8px;">
 
-    <label for="bunk-override-end" style="display:block;margin-top:10px;font-weight:600;">End Time:</label>
+    <label style="display:block;margin-top:10px;font-weight:600;">End Time:</label>
     <input id="bunk-override-end" placeholder="e.g., 10:00am" style="margin-right:8px;">
 
     <p style="margin-top:15px;font-weight:600;">Select Bunks:</p>
   `;
 
   availableDivisions.forEach(divName => {
-    const bunks = allBunksByDiv[divName];
-    if (bunks.length === 0) return;
+    const label = document.createElement('div');
+    label.textContent = divName;
+    label.style.fontWeight = 'bold';
+    label.style.marginTop = '8px';
+    form.appendChild(label);
 
-    const divLabel = document.createElement('div');
-    divLabel.textContent = divName;
-    divLabel.style.fontWeight = 'bold';
-    divLabel.style.marginTop = '8px';
-    form.appendChild(divLabel);
-
-    const bunkChipBox = document.createElement('div');
-    bunkChipBox.className = 'chips';
-    bunkChipBox.style.marginBottom = '5px';
-    bunks.forEach(bunkName => {
-      const chip = createChip(bunkName, divisions[divName]?.color || '#ccc');
-      bunkChipBox.appendChild(chip);
+    const chipBox = document.createElement('div');
+    chipBox.className = 'chips';
+    bunksByDiv[divName].forEach(bunk => {
+      const chip = createChip(bunk, divisions[divName]?.color || '#ccc');
+      chipBox.appendChild(chip);
     });
-    form.appendChild(bunkChipBox);
+
+    form.appendChild(chipBox);
   });
 
   const addBtn = document.createElement('button');
@@ -983,48 +953,43 @@ function renderBunkOverridesUI() {
   addBtn.style.marginTop = '15px';
 
   addBtn.onclick = () => {
-    const activityEl = form.querySelector('#bunk-override-activity');
-    const startEl = form.querySelector('#bunk-override-start');
-    const endEl = form.querySelector('#bunk-override-end');
-    const selectedBunks = Array.from(
-      form.querySelectorAll('.bunk-button.selected')
-    ).map(el => el.dataset.value);
+    const activity = form.querySelector('#bunk-override-activity').value;
+    const start = form.querySelector('#bunk-override-start').value;
+    const end = form.querySelector('#bunk-override-end').value;
+    const selected = Array.from(form.querySelectorAll('.bunk-button.selected'))
+      .map(el => el.dataset.value);
 
-    const activity = activityEl.value;
-    const start = startEl.value.trim();
-    const end = endEl.value.trim();
+    if (!activity) { alert('Select an activity.'); return; }
+    if (!start || !end) { alert('Enter a time range.'); return; }
+    if (selected.length === 0) { alert('Select at least one bunk.'); return; }
 
-    if (!activity) { alert('Please select an activity.'); return; }
-    if (!start || !end) { alert('Please enter a start and end time.'); return; }
-    if (selectedBunks.length === 0) { alert('Please select at least one bunk.'); return; }
-
-    const startMin = parseTimeToMinutes(start);
-    const endMin = parseTimeToMinutes(end);
-    if (startMin == null || endMin == null || endMin <= startMin) {
-      alert('Invalid time range. Please use formats like "9:00am" and ensure end is after start.');
+    const sMin = parseTimeToMinutes(start);
+    const eMin = parseTimeToMinutes(end);
+    if (sMin == null || eMin == null || eMin <= sMin) {
+      alert('Invalid time range.');
       return;
     }
 
-    // --- Core logic for saving override data (Relies on optimizer to run fillBlock on Pass 1.5) ---
     const overrides = window.loadCurrentDailyData?.().bunkActivityOverrides || [];
-    selectedBunks.forEach(bunk => {
+
+    selected.forEach(bunk => {
       overrides.push({
-        id: uid(),
-        bunk: bunk,
-        activity: activity,
-        startTime: start,
-        endTime: end
+        id:uid(),
+        bunk,
+        activity,
+        startTime:start,
+        endTime:end
       });
     });
-    // ---------------------------------------------------------------------------------------------
 
     window.saveCurrentDailyData("bunkActivityOverrides", overrides);
     currentOverrides.bunkActivityOverrides = overrides;
 
-    activityEl.value = "";
-    startEl.value = "";
-    endEl.value = "";
-    form.querySelectorAll('.bunk-button.selected').forEach(chip => chip.click());
+    form.querySelector('#bunk-override-activity').value = "";
+    form.querySelector('#bunk-override-start').value = "";
+    form.querySelector('#bunk-override-end').value = "";
+    form.querySelectorAll('.bunk-button.selected').forEach(c => c.click());
+
     renderBunkOverridesUI();
   };
 
@@ -1036,14 +1001,14 @@ function renderBunkOverridesUI() {
 
   const overrides = currentOverrides.bunkActivityOverrides;
   if (overrides.length === 0) {
-    listContainer.innerHTML = `<p class="muted">No bunk-specific activities added yet.</p>`;
+    listContainer.innerHTML = `<p class="muted">No bunk-specific activities yet.</p>`;
   } else {
     overrides.forEach(item => {
       const el = document.createElement('div');
       el.className = 'item';
       el.innerHTML = `
         <div style="flex-grow:1;">
-          <div><strong>${item.bunk}</strong> &raquo; ${item.activity}</div>
+          <div><strong>${item.bunk}</strong> → ${item.activity}</div>
           <div class="muted" style="font-size:0.9em;">${item.startTime} - ${item.endTime}</div>
         </div>
         <button data-id="${item.id}"
@@ -1052,24 +1017,22 @@ function renderBunkOverridesUI() {
         </button>
       `;
       el.querySelector('button').onclick = () => {
-        let currentList = window.loadCurrentDailyData?.().bunkActivityOverrides || [];
-        currentList = currentList.filter(o => o.id !== item.id);
-        window.saveCurrentDailyData("bunkActivityOverrides", currentList);
-        currentOverrides.bunkActivityOverrides = currentList;
+        let list = window.loadCurrentDailyData?.().bunkActivityOverrides || [];
+        list = list.filter(o => o.id !== item.id);
+        window.saveCurrentDailyData("bunkActivityOverrides", list);
+        currentOverrides.bunkActivityOverrides = list;
         renderBunkOverridesUI();
       };
       listContainer.appendChild(el);
     });
   }
+
   bunkOverridesContainer.appendChild(listContainer);
 }
-
-/**
- * NEW: Renders the UI for the "Resource Availability" tab
- */
+// ----------------------------------------------------------------------
+// RESOURCE AVAILABILITY TAB UI
+// ----------------------------------------------------------------------
 function renderResourceOverridesUI() {
-  resourceOverridesContainer.innerHTML = "";
-
   resourceOverridesContainer.innerHTML = `
     <div style="display:flex;flex-wrap:wrap;gap:20px;">
       <div style="flex:1;min-width:300px;">
@@ -1087,115 +1050,138 @@ function renderResourceOverridesUI() {
     </div>
   `;
 
-  const overrideFieldsListEl = document.getElementById("override-fields-list");
-  const overrideSpecialsListEl = document.getElementById("override-specials-list");
-  const overrideLeaguesListEl = document.getElementById("override-leagues-list");
-  const overrideSpecialtyLeaguesListEl = document.getElementById("override-specialty-leagues-list");
+  const fieldsListEl = document.getElementById("override-fields-list");
+  const specialsListEl = document.getElementById("override-specials-list");
+  const leaguesListEl = document.getElementById("override-leagues-list");
+  const specialtyListEl = document.getElementById("override-specialty-leagues-list");
 
   const saveOverrides = () => {
     const dailyData = window.loadCurrentDailyData?.() || {};
-    const fullOverrides = dailyData.overrides || {};
-    fullOverrides.leagues = currentOverrides.leagues;
-    fullOverrides.disabledFields = currentOverrides.disabledFields;
-    fullOverrides.disabledSpecials = currentOverrides.disabledSpecials;
-    window.saveCurrentDailyData("overrides", fullOverrides);
+    const full = dailyData.overrides || {};
+    full.leagues = currentOverrides.leagues;
+    full.disabledFields = currentOverrides.disabledFields;
+    full.disabledSpecials = currentOverrides.disabledSpecials;
+    window.saveCurrentDailyData("overrides", full);
   };
 
+  // ------------------------------
+  // Fields
+  // ------------------------------
   const fields = masterSettings.app1.fields || [];
   if (fields.length === 0) {
-    overrideFieldsListEl.innerHTML = `<p class="muted" style="font-size:0.9em;">No fields found in Setup.</p>`;
+    fieldsListEl.innerHTML = `<p class="muted" style="font-size:0.9em;">No fields in Setup.</p>`;
   }
+
   fields.forEach(item => {
-    const isDisabled = currentOverrides.disabledFields.includes(item.name);
+    const enabled = !currentOverrides.disabledFields.includes(item.name);
     const onToggle = (isEnabled) => {
-      if (isEnabled) {
-        currentOverrides.disabledFields = currentOverrides.disabledFields.filter(name => name !== item.name);
-      } else if (!currentOverrides.disabledFields.includes(item.name)) {
+      if (isEnabled)
+        currentOverrides.disabledFields = currentOverrides.disabledFields.filter(n => n !== item.name);
+      else if (!currentOverrides.disabledFields.includes(item.name))
         currentOverrides.disabledFields.push(item.name);
-      }
+
       saveOverrides();
     };
-    overrideFieldsListEl.appendChild(
-      createOverrideMasterListItem('field', item.name, !isDisabled, onToggle)
+
+    fieldsListEl.appendChild(
+      createOverrideMasterListItem('field', item.name, enabled, onToggle)
     );
   });
 
-  const specials = masterSettings.app1.specialActivities || [];
-  if (specials.length === 0) {
-    overrideSpecialsListEl.innerHTML = `<p class="muted" style="font-size:0.9em;">No special activities found in Setup.</p>`;
+  // ------------------------------
+  // Special Activities
+  // ------------------------------
+  const specialActs = masterSettings.app1.specialActivities || [];
+  if (specialActs.length === 0) {
+    specialsListEl.innerHTML = `<p class="muted" style="font-size:0.9em;">No specials in Setup.</p>`;
   }
-  specials.forEach(item => {
-    const isDisabled = currentOverrides.disabledSpecials.includes(item.name);
+
+  specialActs.forEach(item => {
+    const enabled = !currentOverrides.disabledSpecials.includes(item.name);
     const onToggle = (isEnabled) => {
-      if (isEnabled) {
-        currentOverrides.disabledSpecials = currentOverrides.disabledSpecials.filter(name => name !== item.name);
-      } else if (!currentOverrides.disabledSpecials.includes(item.name)) {
+      if (isEnabled)
+        currentOverrides.disabledSpecials = currentOverrides.disabledSpecials.filter(n => n !== item.name);
+      else if (!currentOverrides.disabledSpecials.includes(item.name))
         currentOverrides.disabledSpecials.push(item.name);
-      }
+
       saveOverrides();
     };
-    overrideSpecialsListEl.appendChild(
-      createOverrideMasterListItem('special', item.name, !isDisabled, onToggle)
+
+    specialsListEl.appendChild(
+      createOverrideMasterListItem('special', item.name, enabled, onToggle)
     );
   });
 
+  // ------------------------------
+  // Regular Leagues
+  // ------------------------------
   const leagues = masterSettings.leaguesByName || {};
   const leagueNames = Object.keys(leagues);
   if (leagueNames.length === 0) {
-    overrideLeaguesListEl.innerHTML = `<p class="muted" style="font-size:0.9em;">No leagues found in Setup.</p>`;
+    leaguesListEl.innerHTML = `<p class="muted" style="font-size:0.9em;">No leagues in Setup.</p>`;
   }
+
   leagueNames.forEach(name => {
-    const isDisabled = currentOverrides.leagues.includes(name);
+    const enabled = !currentOverrides.leagues.includes(name);
     const onToggle = (isEnabled) => {
-      if (isEnabled) {
-        currentOverrides.leagues = currentOverrides.leagues.filter(l => l !== name);
-      } else if (!currentOverrides.leagues.includes(name)) {
+      if (isEnabled)
+        currentOverrides.leagues = currentOverrides.leagues.filter(n => n !== name);
+      else if (!currentOverrides.leagues.includes(name))
         currentOverrides.leagues.push(name);
-      }
+
       saveOverrides();
     };
-    overrideLeaguesListEl.appendChild(
-      createOverrideMasterListItem('league', name, !isDisabled, onToggle)
+
+    leaguesListEl.appendChild(
+      createOverrideMasterListItem('league', name, enabled, onToggle)
     );
   });
 
-  const specialtyLeagues = masterSettings.specialtyLeagues || {};
-  const specialtyLeagueNames = Object.values(specialtyLeagues).map(l => l.name).sort();
-  if (specialtyLeagueNames.length === 0) {
-    overrideSpecialtyLeaguesListEl.innerHTML = `<p class="muted" style="font-size:0.9em;">No specialty leagues found in Setup.</p>`;
+  // ------------------------------
+  // Specialty Leagues
+  // ------------------------------
+  const specialty = masterSettings.specialtyLeagues || {};
+  const specialtyNames = Object.values(specialty).map(l => l.name).sort();
+
+  if (specialtyNames.length === 0) {
+    specialtyListEl.innerHTML = `<p class="muted" style="font-size:0.9em;">No specialty leagues in Setup.</p>`;
   }
-  specialtyLeagueNames.forEach(name => {
-    const isDisabled = currentOverrides.disabledSpecialtyLeagues.includes(name);
+
+  specialtyNames.forEach(name => {
+    const enabled = !currentOverrides.disabledSpecialtyLeagues.includes(name);
     const onToggle = (isEnabled) => {
-      if (isEnabled) {
+      if (isEnabled)
         currentOverrides.disabledSpecialtyLeagues =
-          currentOverrides.disabledSpecialtyLeagues.filter(l => l !== name);
-      } else if (!currentOverrides.disabledSpecialtyLeagues.includes(name)) {
+          currentOverrides.disabledSpecialtyLeagues.filter(n => n !== name);
+      else if (!currentOverrides.disabledSpecialtyLeagues.includes(name))
         currentOverrides.disabledSpecialtyLeagues.push(name);
-      }
+
       window.saveCurrentDailyData("disabledSpecialtyLeagues", currentOverrides.disabledSpecialtyLeagues);
     };
-    overrideSpecialtyLeaguesListEl.appendChild(
-      createOverrideMasterListItem('specialty_league', name, !isDisabled, onToggle)
+
+    specialtyListEl.appendChild(
+      createOverrideMasterListItem('specialty_league', name, enabled, onToggle)
     );
   });
 
   renderOverrideDetailPane();
 }
 
-// (Helper functions for Resource Availability)
+// -----------------------------------------------------------
+// MASTER LIST ITEM (Fields / Specials / Leagues)
+// -----------------------------------------------------------
 let selectedOverrideId = null;
 
 function createOverrideMasterListItem(type, name, isEnabled, onToggle) {
   const el = document.createElement('div');
   el.className = 'list-item';
+
   const id = `${type}-${name}`;
   if (id === selectedOverrideId) el.classList.add('selected');
 
   const nameEl = document.createElement('span');
   nameEl.className = 'list-item-name';
   nameEl.textContent = name;
-  el.appendChild(nameEl);
 
   nameEl.onclick = () => {
     selectedOverrideId = id;
@@ -1205,54 +1191,66 @@ function createOverrideMasterListItem(type, name, isEnabled, onToggle) {
 
   const tog = document.createElement("label");
   tog.className = "switch";
-  tog.title = isEnabled ? "Click to disable for today" : "Click to enable for today";
+  tog.title = isEnabled ? "Disable for today" : "Enable for today";
   tog.onclick = (e) => e.stopPropagation();
 
   const cb = document.createElement("input");
   cb.type = "checkbox";
   cb.checked = isEnabled;
-  cb.onchange = (e) => {
-    e.stopPropagation();
+
+  cb.onchange = () => {
     onToggle(cb.checked);
-    tog.title = cb.checked ? "Click to disable for today" : "Click to enable for today";
+    tog.title = cb.checked ? "Disable for today" : "Enable for today";
   };
 
-  const sl = document.createElement("span");
-  sl.className = "slider";
+  const slider = document.createElement("span");
+  slider.className = "slider";
 
   tog.appendChild(cb);
-  tog.appendChild(sl);
+  tog.appendChild(slider);
+
+  el.appendChild(nameEl);
   el.appendChild(tog);
 
   return el;
 }
 
+// -----------------------------------------------------------
+// DETAIL PANE (Time Rules, Sports rules)
+// -----------------------------------------------------------
 function renderOverrideDetailPane() {
-  const overrideDetailPaneEl = document.getElementById("override-detail-pane");
-  if (!overrideDetailPaneEl) return;
+  const pane = document.getElementById("override-detail-pane");
+  if (!pane) return;
 
   if (!selectedOverrideId) {
-    overrideDetailPaneEl.innerHTML = `<p class="muted">Select an item from the left to edit its details.</p>`;
+    pane.innerHTML = `<p class="muted">Select an item from the left.</p>`;
     return;
   }
 
-  overrideDetailPaneEl.innerHTML = "";
+  pane.innerHTML = "";
+
   const [type, name] = selectedOverrideId.split(/-(.+)/);
 
+  // FIELD or SPECIAL
   if (type === 'field' || type === 'special') {
+    const fields = masterSettings.app1.fields || [];
+    const specials = masterSettings.app1.specialActivities || [];
+
     const item = (type === 'field')
-      ? (masterSettings.app1.fields || []).find(f => f.name === name)
-      : (masterSettings.app1.specialActivities || []).find(s => s.name === name);
+      ? fields.find(f => f.name === name)
+      : specials.find(s => s.name === name);
 
     if (!item) {
-      overrideDetailPaneEl.innerHTML = `<p style="color:red;">Error: Could not find item.</p>`;
+      pane.innerHTML = `<p style="color:red;">Error: Item not found.</p>`;
       return;
     }
 
     const globalRules = item.timeRules || [];
+
     if (!currentOverrides.dailyFieldAvailability[name]) {
       currentOverrides.dailyFieldAvailability[name] = [];
     }
+
     const dailyRules = currentOverrides.dailyFieldAvailability[name];
 
     const onSave = () => {
@@ -1261,196 +1259,524 @@ function renderOverrideDetailPane() {
       renderOverrideDetailPane();
     };
 
-    overrideDetailPaneEl.appendChild(
+    pane.appendChild(
       renderTimeRulesUI(name, globalRules, dailyRules, onSave)
     );
 
+    // Additional sports override if FIELD
     if (type === 'field') {
-      const sportListContainer = document.createElement('div');
-      sportListContainer.className = 'sport-override-list';
-      sportListContainer.innerHTML = `<strong>Daily Sport Availability for ${name}</strong>`;
-
       const sports = item.activities || [];
-      if (sports.length === 0) {
-        sportListContainer.innerHTML += `<p class="muted" style="margin:5px 0 0 10px;font-size:0.9em;">No sports are assigned to this field in the "Fields" tab.</p>`;
-      }
-
       const disabledToday = currentOverrides.dailyDisabledSportsByField[name] || [];
+
+      const sportList = document.createElement('div');
+      sportList.className = 'sport-override-list';
+      sportList.innerHTML = `<strong>Daily Sport Availability for ${name}</strong>`;
+
+      if (sports.length === 0) {
+        sportList.innerHTML += `<p class="muted" style="margin:5px 0 0 10px;">No sports are assigned in Fields tab.</p>`;
+      }
 
       sports.forEach(sport => {
         const isEnabled = !disabledToday.includes(sport);
-        const el = createCheckbox(sport, isEnabled);
+        const { wrapper, checkbox } = createCheckbox(sport, isEnabled);
 
-        el.checkbox.onchange = () => {
+        checkbox.onchange = () => {
           let list = currentOverrides.dailyDisabledSportsByField[name] || [];
-          if (el.checkbox.checked) {
+          if (checkbox.checked)
             list = list.filter(s => s !== sport);
-          } else {
-            if (!list.includes(sport)) list.push(sport);
-          }
+          else if (!list.includes(sport))
+            list.push(sport);
+
           currentOverrides.dailyDisabledSportsByField[name] = list;
           window.saveCurrentDailyData("dailyDisabledSportsByField", currentOverrides.dailyDisabledSportsByField);
         };
-        sportListContainer.appendChild(el.wrapper);
+
+        sportList.appendChild(wrapper);
       });
-      overrideDetailPaneEl.appendChild(sportListContainer);
+
+      pane.appendChild(sportList);
     }
 
-  } else if (type === 'league') {
-    overrideDetailPaneEl.innerHTML = `<p class="muted">Enable or disable this league for today using the toggle in the list on the left.</p>`;
-  } else if (type === 'specialty_league') {
-    overrideDetailPaneEl.innerHTML = `<p class="muted">Enable or disable this league for today using the toggle in the list on the left.</p>`;
+    return;
   }
+
+  // LEAGUE / SPECIALTY LEAGUE
+  if (type === 'league' || type === 'specialty_league') {
+    pane.innerHTML = `<p class="muted">Enable or disable this league with the toggle on the left.</p>`;
+    return;
+  }
+
+  pane.innerHTML = `<p class="muted">No details available.</p>`;
 }
 
-// --- Common Helpers ---
+// -----------------------------------------------------------
+// TIME RULES UI COMPONENT
+// -----------------------------------------------------------
 function renderTimeRulesUI(itemName, globalRules, dailyRules, onSave) {
   const container = document.createElement("div");
 
-  const globalContainer = document.createElement("div");
-  globalContainer.innerHTML = `<strong style="font-size:0.9em;">Global Rules (from Setup):</strong>`;
+  // Global Rules
+  const g = document.createElement("div");
+  g.innerHTML = `<strong>Global Rules (from Setup):</strong>`;
   if (globalRules.length === 0) {
-    globalContainer.innerHTML += `<p class="muted" style="margin:0;font-size:0.9em;">Available all day</p>`;
+    g.innerHTML += `<p class="muted">Available all day</p>`;
   }
   globalRules.forEach(rule => {
-    const ruleEl = document.createElement("div");
-    ruleEl.style.margin = "2px 0";
-    ruleEl.style.fontSize = "0.9em";
-    ruleEl.innerHTML =
-      `&bull; <span style="color:${rule.type === 'Available' ? 'green' : 'red'};text-transform:capitalize;">${rule.type}</span> from ${rule.start} to ${rule.end}`;
-    globalContainer.appendChild(ruleEl);
+    const r = document.createElement("div");
+    r.style.margin = "2px 0";
+    r.style.fontSize = "0.9em";
+    r.innerHTML = `
+      • <span style="color:${rule.type === 'Available' ? 'green' : 'red'};">
+        ${rule.type}
+      </span> from ${rule.start} to ${rule.end}
+    `;
+    g.appendChild(r);
   });
-  container.appendChild(globalContainer);
 
-  const dailyContainer = document.createElement("div");
-  dailyContainer.style.marginTop = "10px";
-  dailyContainer.innerHTML = `<strong style="font-size:0.9em;">Daily Override Rules (replaces global rules):</strong>`;
+  // Daily Overrides
+  const d = document.createElement("div");
+  d.style.marginTop = "10px";
+  d.innerHTML = `<strong>Daily Override Rules (replace global rules):</strong>`;
 
-  const ruleList = document.createElement("div");
+  const list = document.createElement("div");
+
   if (dailyRules.length === 0) {
-    ruleList.innerHTML = `<p class="muted" style="margin:0;font-size:0.9em;">No daily rules. Using global rules.</p>`;
+    list.innerHTML = `<p class="muted">No daily rules. Using global rules.</p>`;
   }
 
-  dailyRules.forEach((rule, index) => {
-    const ruleEl = document.createElement("div");
-    ruleEl.style.margin = "2px 0";
-    ruleEl.style.padding = "4px";
-    ruleEl.style.background = "#fff8e1";
-    ruleEl.style.borderRadius = "4px";
+  dailyRules.forEach((rule, idx) => {
+    const row = document.createElement("div");
+    row.style.margin = "3px 0";
+    row.style.padding = "4px";
+    row.style.background = "#fff8e1";
+    row.style.borderRadius = "4px";
 
-    const ruleType = document.createElement("strong");
-    ruleType.textContent = rule.type;
-    ruleType.style.color = rule.type === 'Available' ? 'green' : 'red';
-    ruleType.style.textTransform = "capitalize";
+    const type = document.createElement("strong");
+    type.style.color = rule.type === "Available" ? "green" : "red";
+    type.textContent = rule.type;
 
-    const ruleText = document.createElement("span");
-    ruleText.textContent = ` from ${rule.start} to ${rule.end}`;
+    const text = document.createElement("span");
+    text.textContent = ` from ${rule.start} to ${rule.end}`;
 
-    const removeBtn = document.createElement("button");
-    removeBtn.textContent = "✖";
-    removeBtn.style.marginLeft = "8px";
-    removeBtn.style.border = "none";
-    removeBtn.style.background = "transparent";
-    removeBtn.style.cursor = "pointer";
-    removeBtn.onclick = () => {
-      dailyRules.splice(index, 1);
+    const rm = document.createElement("button");
+    rm.textContent = "✖";
+    rm.style.marginLeft = "8px";
+    rm.style.background = "transparent";
+    rm.style.border = "none";
+    rm.style.cursor = "pointer";
+
+    rm.onclick = () => {
+      dailyRules.splice(idx, 1);
       onSave();
     };
 
-    ruleEl.appendChild(ruleType);
-    ruleEl.appendChild(ruleText);
-    ruleEl.appendChild(removeBtn);
-    ruleList.appendChild(ruleEl);
+    row.appendChild(type);
+    row.appendChild(text);
+    row.appendChild(rm);
+    list.appendChild(row);
   });
-  dailyContainer.appendChild(ruleList);
-  container.appendChild(dailyContainer);
 
-  const addContainer = document.createElement("div");
-  addContainer.style.marginTop = "10px";
+  d.appendChild(list);
 
-  const typeSelect = document.createElement("select");
-  typeSelect.innerHTML = `
+  // Add new rule
+  const addBox = document.createElement("div");
+  addBox.style.marginTop = "10px";
+
+  const sel = document.createElement("select");
+  sel.innerHTML = `
     <option value="Available">Available</option>
     <option value="Unavailable">Unavailable</option>
   `;
 
-  const startInput = document.createElement("input");
-  startInput.placeholder = "e.g., 9:00am";
-  startInput.style.width = "100px";
-  startInput.style.marginLeft = "5px";
+  const sIn = document.createElement("input");
+  sIn.placeholder = "9:00am";
+  sIn.style.width = "100px";
+  sIn.style.marginLeft = "5px";
 
-  const toLabel = document.createElement("span");
-  toLabel.textContent = " to ";
-  toLabel.style.margin = "0 5px";
+  const to = document.createElement("span");
+  to.textContent = " to ";
+  to.style.margin = "0 5px";
 
-  const endInput = document.createElement("input");
-  endInput.placeholder = "e.g., 10:30am";
-  endInput.style.width = "100px";
+  const eIn = document.createElement("input");
+  eIn.placeholder = "10:00am";
+  eIn.style.width = "100px";
 
   const addBtn = document.createElement("button");
-  addBtn.textContent = "Add Daily Rule";
+  addBtn.textContent = "Add Rule";
   addBtn.style.marginLeft = "8px";
 
   addBtn.onclick = () => {
-    const type = typeSelect.value;
-    const start = startInput.value;
-    const end = endInput.value;
+    const type = sel.value;
+    const s = sIn.value;
+    const e = eIn.value;
 
-    if (!start || !end) { alert("Please enter a start and end time."); return; }
-    if (parseTimeToMinutes(start) == null || parseTimeToMinutes(end) == null) {
-      alert("Invalid time format. Use '9:00am' or '2:30pm'.");
-      return; }
-    if (parseTimeToMinutes(start) >= parseTimeToMinutes(end)) {
-      alert("End time must be after start time.");
-      return;
+    if (!s || !e) { alert("Enter both times"); return; }
+    if (parseTimeToMinutes(s) == null || parseTimeToMinutes(e) == null) {
+      alert("Invalid time format."); return;
+    }
+    if (parseTimeToMinutes(s) >= parseTimeToMinutes(e)) {
+      alert("End must be after start."); return;
     }
 
-    dailyRules.push({ type, start, end });
+    dailyRules.push({ type, start:s, end:e });
     onSave();
   };
 
-  addContainer.appendChild(typeSelect);
-  addContainer.appendChild(startInput);
-  addContainer.appendChild(toLabel);
-  addContainer.appendChild(endInput);
-  addContainer.appendChild(addBtn);
-  container.appendChild(addContainer);
+  addBox.appendChild(sel);
+  addBox.appendChild(sIn);
+  addBox.appendChild(to);
+  addBox.appendChild(eIn);
+  addBox.appendChild(addBtn);
+
+  container.appendChild(g);
+  container.appendChild(d);
+  container.appendChild(addBox);
 
   return container;
 }
 
+// -------------------------------------------------------
+// COMMON HELPERS
+// -------------------------------------------------------
 function createCheckbox(name, isChecked) {
-  const w = document.createElement('label');
-  w.className = 'override-checkbox';
-  const c = document.createElement('input');
-  c.type = 'checkbox';
-  c.checked = isChecked;
-  const t = document.createElement('span');
-  t.textContent = name;
-  w.appendChild(c);
-  w.appendChild(t);
-  return { wrapper: w, checkbox: c };
+  const wrapper = document.createElement('label');
+  wrapper.className = 'override-checkbox';
+
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = isChecked;
+
+  const text = document.createElement('span');
+  text.textContent = name;
+
+  wrapper.appendChild(cb);
+  wrapper.appendChild(text);
+
+  return { wrapper, checkbox: cb };
 }
 
-function createChip(name, color = '#007BFF', isDivision = false) {
+function createChip(name, color = '#007BFF', isDivision=false) {
   const el = document.createElement('span');
   el.className = 'bunk-button';
   el.textContent = name;
   el.dataset.value = name;
+
   const defaultBorder = isDivision ? color : '#ccc';
+
   el.style.borderColor = defaultBorder;
   el.style.backgroundColor = 'white';
   el.style.color = 'black';
-  el.addEventListener('click', () => {
+
+  el.onclick = () => {
     const sel = el.classList.toggle('selected');
     el.style.backgroundColor = sel ? color : 'white';
     el.style.color = sel ? 'white' : 'black';
     el.style.borderColor = sel ? color : defaultBorder;
-  });
+  };
+
   return el;
 }
 
-// Expose init
-window.initDailyAdjustments = init;
+function uid() {
+  return `id_${Math.random().toString(36).slice(2, 9)}`;
+}
+// ======================================================================
+// DAILY OVERRIDE: SKELETON EDITOR + RUN OPTIMIZER
+// ======================================================================
+
+// Draggable skeleton grid references
+let skeletonGridContainer = null;
+let dailyOverrideSkeleton = [];
+let skeletonSelectedBlockId = null;
+
+// -----------------------------------------------------------
+// LOAD / SAVE DAILY SKELETON
+// -----------------------------------------------------------
+function loadDailySkeleton() {
+  const dailyData = window.loadCurrentDailyData?.() || {};
+  dailyOverrideSkeleton = dailyData.manualSkeleton || [];
+}
+
+function saveDailySkeleton() {
+  window.saveCurrentDailyData?.("manualSkeleton", dailyOverrideSkeleton);
+}
+
+// -----------------------------------------------------------
+// RENDER SKELETON UI
+// -----------------------------------------------------------
+function renderSkeletonOverridesUI() {
+  skeletonGridContainer.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+      <h3 style="margin:0;font-size:1.1rem;">Daily Skeleton Editor</h3>
+      <button id="clear-skeleton-btn" style="background:#FFE5E5;color:#B91C1C;font-weight:600;border:1px solid #FECACA;padding:6px 14px;border-radius:999px;">
+        Clear All
+      </button>
+    </div>
+
+    <div id="skeleton-grid" class="skeleton-grid"></div>
+
+    <div style="margin-top:20px;display:flex;justify-content:flex-end;">
+      <button id="save-skeleton-btn" style="background:#00C896;color:white;font-weight:600;border-color:#00C896;padding:8px 16px;border-radius:999px;">
+        Save Overrides
+      </button>
+    </div>
+  `;
+
+  const grid = document.getElementById("skeleton-grid");
+  renderSkeletonGrid(grid);
+
+  document.getElementById("clear-skeleton-btn").onclick = () => {
+    if (confirm("Clear all skeleton entries for today?")) {
+      dailyOverrideSkeleton = [];
+      saveDailySkeleton();
+      renderSkeletonOverridesUI();
+    }
+  };
+
+  document.getElementById("save-skeleton-btn").onclick = () => {
+    saveDailySkeleton();
+    alert("Daily skeleton saved!");
+  };
+}
+
+// -----------------------------------------------------------
+// RENDER SKELETON GRID
+// -----------------------------------------------------------
+function renderSkeletonGrid(grid) {
+  grid.innerHTML = '';
+
+  const divisions = window.availableDivisions || [];
+  const times = buildMinuteTimeline();
+
+  // Header row
+  const headerRow = document.createElement("div");
+  headerRow.className = "skeleton-row header-row";
+
+  const timeHeader = document.createElement("div");
+  timeHeader.className = "skeleton-cell time-col";
+  timeHeader.textContent = "Time";
+  headerRow.appendChild(timeHeader);
+
+  divisions.forEach(div => {
+    const d = document.createElement("div");
+    d.className = "skeleton-cell header-cell";
+    d.textContent = div;
+    headerRow.appendChild(d);
+  });
+
+  grid.appendChild(headerRow);
+
+  // Time rows
+  times.forEach(timeMin => {
+    const row = document.createElement("div");
+    row.className = "skeleton-row";
+
+    const timeCell = document.createElement("div");
+    timeCell.className = "skeleton-cell time-col";
+    timeCell.textContent = window.SchedulerCoreUtils.minutesToTime(timeMin);
+    row.appendChild(timeCell);
+
+    divisions.forEach(div => {
+      const cell = document.createElement("div");
+      cell.className = "skeleton-cell drop-cell";
+      cell.dataset.division = div;
+      cell.dataset.start = timeMin;
+
+      // Find block in this slot
+      const block = dailyOverrideSkeleton.find(b =>
+        b.division === div && parseTimeToMinutes(b.startTime) === timeMin
+      );
+
+      if (block) {
+        const el = createSkeletonBlockElement(block);
+        cell.appendChild(el);
+      }
+
+      // Enable dropping
+      enableDrop(cell);
+
+      row.appendChild(cell);
+    });
+
+    grid.appendChild(row);
+  });
+}
+
+// -----------------------------------------------------------
+// SKELETON BLOCK ELEMENT
+// -----------------------------------------------------------
+function createSkeletonBlockElement(block) {
+  const el = document.createElement("div");
+  el.className = "skeleton-block";
+  el.draggable = true;
+  el.dataset.blockId = block.id;
+
+  el.textContent = block.event;
+
+  // Drag start
+  el.ondragstart = (e) => {
+    e.dataTransfer.setData("text/plain", block.id);
+    skeletonSelectedBlockId = block.id;
+  };
+
+  // Click to highlight
+  el.onclick = () => {
+    skeletonSelectedBlockId = block.id;
+    highlightSelectedBlock();
+  };
+
+  return el;
+}
+
+function highlightSelectedBlock() {
+  document.querySelectorAll(".skeleton-block").forEach(el => {
+    el.classList.remove("selected");
+    if (el.dataset.blockId === skeletonSelectedBlockId) {
+      el.classList.add("selected");
+    }
+  });
+}
+
+// -----------------------------------------------------------
+// DRAG / DROP SUPPORT
+// -----------------------------------------------------------
+function enableDrop(cell) {
+  cell.ondragover = (e) => e.preventDefault();
+
+  cell.ondrop = (e) => {
+    e.preventDefault();
+    const blockId = e.dataTransfer.getData("text/plain");
+    moveBlockToCell(blockId, cell);
+  };
+}
+
+function moveBlockToCell(blockId, cell) {
+  const block = dailyOverrideSkeleton.find(b => b.id === blockId);
+  if (!block) return;
+
+  block.division = cell.dataset.division;
+  block.startTime = window.SchedulerCoreUtils.minutesToTime(
+    parseInt(cell.dataset.start, 10)
+  );
+
+  saveDailySkeleton();
+  renderSkeletonOverridesUI();
+}
+
+// -----------------------------------------------------------
+// TIME UTILITIES (using core minute system)
+// -----------------------------------------------------------
+function buildMinuteTimeline() {
+  const start = window.masterSettings?.app1?.startMinutes || 9 * 60;
+  const end = window.masterSettings?.app1?.endMinutes || 17 * 60;
+  const inc = window.INCREMENT_MINS || 30;
+
+  const out = [];
+  for (let t = start; t < end; t += inc) out.push(t);
+  return out;
+}
+
+const parseTimeToMinutes = window.SchedulerCoreUtils.parseTimeToMinutes;
+
+// ======================================================================
+// SMART TILE HISTORY
+// ======================================================================
+function saveSmartTileHistory(historyObj) {
+  if (!window.localStorage) return;
+  localStorage.setItem(SMART_TILE_HISTORY_KEY, JSON.stringify(historyObj));
+}
+
+// ======================================================================
+// RUN OPTIMIZER (FINAL CLEAN VERSION)
+// ======================================================================
+window.runOptimizer = function () {
+  if (!window.runSkeletonOptimizer) {
+    alert("Error: 'runSkeletonOptimizer' function not found.");
+    return;
+  }
+
+  if (dailyOverrideSkeleton.length === 0) {
+    alert("Skeleton is empty. Add blocks before running the optimizer.");
+    return;
+  }
+
+  // Save manually edited skeleton
+  saveDailySkeleton();
+
+  // Smart Tiles — applied here, not pre-injected into skeleton
+  try {
+    applySmartTileOverridesForToday();
+  } catch (e) {
+    console.error("Smart Tile override error:", e);
+  }
+
+  const success = window.runSkeletonOptimizer(dailyOverrideSkeleton, currentOverrides);
+
+  if (success) {
+    alert("Schedule generated successfully!");
+    window.showTab?.('schedule');
+  } else {
+    alert("Error during schedule generation. Check console.");
+  }
+};
+
+// ======================================================================
+// EXPORT OBJECT
+// ======================================================================
+window.DailyAdjustments = {
+  init: (master) => {
+    masterSettings = master || {};
+    loadSmartTileHistory();
+    loadDailySkeleton();
+    loadRoundState();
+
+    container = document.getElementById("daily_adjustments");
+    if (!container) return;
+
+    container.style.padding = "10px";
+    container.innerHTML = `
+      <div class="setup-tabs">
+        <button id="tab-tiles" class="active">Smart Tile Assignments</button>
+        <button id="tab-skeleton">Skeleton</button>
+        <button id="tab-resources">Field & Activity Overrides</button>
+      </div>
+
+      <div id="panel-tiles"></div>
+      <div id="panel-skeleton" style="display:none;"></div>
+      <div id="panel-resources" style="display:none;"></div>
+    `;
+
+    // Panels
+    tilesPanel = document.getElementById("panel-tiles");
+    skeletonGridContainer = document.getElementById("panel-skeleton");
+    resourceOverridesContainer = document.getElementById("panel-resources");
+
+    // Tab switching
+    document.getElementById("tab-tiles").onclick = () => {
+      switchPanel("tiles");
+    };
+    document.getElementById("tab-skeleton").onclick = () => {
+      switchPanel("skeleton");
+    };
+    document.getElementById("tab-resources").onclick = () => {
+      switchPanel("resources");
+    };
+
+    // Initial load
+    renderSmartTilePanel();
+    renderSkeletonOverridesUI();
+    renderResourceOverridesUI();
+  }
+};
+
+function switchPanel(panel) {
+  document.getElementById("panel-tiles").style.display = panel === "tiles" ? "block" : "none";
+  document.getElementById("panel-skeleton").style.display = panel === "skeleton" ? "block" : "none";
+  document.getElementById("panel-resources").style.display = panel === "resources" ? "block" : "none";
+
+  document.getElementById("tab-tiles").classList.toggle("active", panel === "tiles");
+  document.getElementById("tab-skeleton").classList.toggle("active", panel === "skeleton");
+  document.getElementById("tab-resources").classList.toggle("active", panel === "resources");
+}
 
 })();
