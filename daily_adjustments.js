@@ -1486,7 +1486,7 @@ function uid() {
 
 // Draggable skeleton grid references
 let skeletonGridContainer = null;
-let dailyOverrideSkeleton = [];
+
 let skeletonSelectedBlockId = null;
 
 // -----------------------------------------------------------
