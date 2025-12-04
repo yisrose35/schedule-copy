@@ -88,19 +88,74 @@
         // Inject CSS Styles
         const style = `
             <style>
+                /* ========================= */
+                /* THEME INJECTION           */
+                /* ========================= */
                 .mb-app {
-                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-                    color: #333;
-                    max-width: 100%;
-                }
-                .mb-toolbar {
-                    background: #ffffff;
+                    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                    background: #f5f5f7;
+                    color: #111827;
                     padding: 20px;
-                    border: 1px solid #e5e7eb;
-                    border-radius: 12px;
-                    margin-bottom: 24px;
-                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
                 }
+
+                /* Generic buttons adapted from theme */
+                .mb-app button {
+                    font-family: inherit;
+                    font-size: 0.85rem;
+                    border-radius: 999px;
+                    border: 1px solid #d1d5db;
+                    padding: 6px 14px;
+                    background: #ffffff;
+                    color: #111827;
+                    cursor: pointer;
+                    transition: all 0.15s ease;
+                    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+                }
+                .mb-app button:hover {
+                    background: #f3f4f6;
+                    border-color: #9ca3af;
+                    box-shadow: 0 4px 8px rgba(15, 23, 42, 0.08);
+                    transform: translateY(-0.5px);
+                }
+                .mb-app button.mb-btn-primary { background: #2563eb; color: white; border-color: #2563eb; }
+                .mb-app button.mb-btn-primary:hover { background: #1d4ed8; }
+                .mb-app button.mb-btn-secondary { background: #f59e0b; color: white; border-color: #f59e0b; }
+                .mb-app button.mb-btn-secondary:hover { background: #d97706; }
+                .mb-app button.mb-btn-success { background: #10b981; color: white; border-color: #10b981; }
+                .mb-app button.mb-btn-success:hover { background: #059669; }
+                .mb-app button.mb-btn-danger { background: #ef4444; color: white; border-color: #ef4444; }
+                .mb-app button.mb-btn-danger:hover { background: #dc2626; }
+
+                /* Inputs adapted from theme */
+                .mb-app input[type="text"],
+                .mb-app select {
+                    font-family: inherit;
+                    font-size: 0.85rem;
+                    padding: 6px 12px;
+                    border-radius: 999px;
+                    border: 1px solid #d1d5db;
+                    background: #ffffff;
+                    color: #111827;
+                    box-sizing: border-box;
+                    outline: none;
+                    transition: all 0.2s;
+                }
+                .mb-app input[type="text"]:focus,
+                .mb-app select:focus {
+                    border-color: #2563eb;
+                    box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.35);
+                }
+
+                /* Layout Containers (Cards) */
+                .mb-toolbar, .mb-palette-area {
+                    background: #ffffff;
+                    border-radius: 12px;
+                    border: 1px solid #e5e7eb;
+                    padding: 1rem 1.25rem;
+                    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+                    margin-bottom: 24px;
+                }
+
                 .mb-label {
                     display: block;
                     font-size: 0.75rem;
@@ -110,63 +165,20 @@
                     margin-bottom: 6px;
                     font-weight: 600;
                 }
-                .mb-select, .mb-input {
-                    padding: 8px 12px;
-                    border: 1px solid #d1d5db;
-                    border-radius: 6px;
-                    font-size: 0.9rem;
-                    width: 100%;
-                    box-sizing: border-box;
-                    transition: all 0.2s;
-                    background-color: #f9fafb;
-                }
-                .mb-select:focus, .mb-input:focus {
-                    outline: none;
-                    border-color: #3b82f6;
-                    background-color: #fff;
-                    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-                }
-                .mb-btn {
-                    padding: 8px 16px;
-                    border: none;
-                    border-radius: 6px;
-                    font-size: 0.9rem;
-                    font-weight: 500;
-                    cursor: pointer;
-                    transition: transform 0.1s, box-shadow 0.1s;
-                    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-                }
-                .mb-btn:hover {
-                    transform: translateY(-1px);
-                    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
-                }
-                .mb-btn:active {
-                    transform: translateY(0);
-                }
-                .mb-btn-primary { background: #2563eb; color: white; }
-                .mb-btn-secondary { background: #f59e0b; color: white; }
-                .mb-btn-success { background: #10b981; color: white; }
-                .mb-btn-danger { background: #ef4444; color: white; }
 
+                /* Palette Items */
                 .mb-palette-area {
-                    background: #ffffff;
-                    padding: 16px;
-                    border-radius: 12px;
-                    border: 1px solid #e5e7eb;
                     display: flex;
                     flex-wrap: wrap;
                     gap: 12px;
-                    margin-bottom: 24px;
-                    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
                 }
-                
                 .mb-tile-item {
-                    padding: 10px 16px;
-                    border-radius: 8px;
+                    padding: 8px 16px;
+                    border-radius: 999px; /* Pill shape matches theme */
                     cursor: grab;
                     font-size: 0.85rem;
                     font-weight: 600;
-                    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+                    box-shadow: 0 3px 6px rgba(15, 23, 42, 0.08);
                     transition: all 0.2s ease;
                     user-select: none;
                     display: flex;
@@ -177,53 +189,56 @@
                 }
                 .mb-tile-item:hover {
                     transform: translateY(-2px);
-                    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+                    box-shadow: 0 8px 16px rgba(15, 23, 42, 0.12);
                 }
                 .mb-tile-item:active {
                     cursor: grabbing;
                 }
 
+                /* Grid Container */
                 .mb-grid-container {
                     border: 1px solid #e5e7eb;
                     border-radius: 12px;
                     background: #ffffff;
-                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
-                    overflow: hidden; /* Contains the scrollbar nicer */
+                    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+                    overflow: hidden;
                 }
-                
+
+                /* Scrollbar styling from theme */
+                .mb-grid-container::-webkit-scrollbar {
+                    height: 10px;
+                    width: 10px;
+                }
+                .mb-grid-container::-webkit-scrollbar-track {
+                    background: #f1f1f1;
+                }
+                .mb-grid-container::-webkit-scrollbar-thumb {
+                    background: #c1c1c1;
+                    border-radius: 5px;
+                }
+                .mb-grid-container::-webkit-scrollbar-thumb:hover {
+                    background: #a8a8a8;
+                }
+
+                /* Event Card on Grid */
                 .mb-event-card {
                     border-radius: 6px;
-                    padding: 6px 8px;
+                    padding: 4px 8px;
                     font-size: 0.8rem;
                     line-height: 1.2;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+                    box-shadow: 0 2px 4px rgba(15, 23, 42, 0.1);
                     cursor: grab;
                     overflow: hidden;
                     transition: box-shadow 0.2s, transform 0.1s;
                     z-index: 10;
                     border-width: 1px;
                     border-style: solid;
+                    font-family: inherit;
                 }
                 .mb-event-card:hover {
-                    box-shadow: 0 8px 16px -4px rgba(0,0,0,0.15);
+                    box-shadow: 0 8px 16px -4px rgba(15, 23, 42, 0.2);
                     z-index: 20;
                     transform: scale(1.01);
-                }
-                
-                /* Scrollbar styling */
-                #mb-grid-wrapper::-webkit-scrollbar {
-                    height: 10px;
-                    width: 10px;
-                }
-                #mb-grid-wrapper::-webkit-scrollbar-track {
-                    background: #f1f1f1;
-                }
-                #mb-grid-wrapper::-webkit-scrollbar-thumb {
-                    background: #c1c1c1;
-                    border-radius: 5px;
-                }
-                #mb-grid-wrapper::-webkit-scrollbar-thumb:hover {
-                    background: #a8a8a8;
                 }
             </style>
         `;
@@ -261,7 +276,7 @@
             <div style="flex:1; min-width: 200px;">
                 <label class="mb-label">Load Template</label>
                 <div style="display:flex; gap:8px;">
-                    <select id="mb-load-select" class="mb-select">
+                    <select id="mb-load-select">
                         <option value="">-- Select --</option>
                         ${opts}
                     </select>
@@ -271,26 +286,26 @@
             <div style="flex:1; min-width: 200px;">
                 <label class="mb-label">Save As</label>
                 <div style="display:flex; gap:8px;">
-                    <input id="mb-save-name" type="text" placeholder="New Template Name" class="mb-input">
+                    <input id="mb-save-name" type="text" placeholder="New Template Name">
                 </div>
             </div>
 
             <div style="display:flex; gap:8px;">
-                <button id="mb-save-btn" class="mb-btn mb-btn-primary">Save Template</button>
-                <button id="mb-new-btn" class="mb-btn mb-btn-secondary">New Sheet</button>
+                <button id="mb-save-btn" class="mb-btn-primary">Save Template</button>
+                <button id="mb-new-btn" class="mb-btn-secondary">New Sheet</button>
             </div>
         </div>
 
         <details style="margin-top:20px; border-top: 1px solid #f3f4f6; padding-top: 15px;">
             <summary style="cursor:pointer;color:#2563eb;font-weight:600;font-size:0.9rem;">Advanced: Assignments & Delete</summary>
 
-            <div style="padding:15px;background:#f9fafb;border-radius:8px;margin-top:15px;border:1px solid #e5e7eb;">
+            <div style="padding:15px;background:#f9fafb;border-radius:12px;margin-top:15px;border:1px solid #e5e7eb;">
                 <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap:15px;">
                     ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Default"]
                 .map(day => `
                             <div>
                                 <label class="mb-label">${day}</label>
-                                <select data-day="${day}" class="mb-select" style="padding:4px 8px; font-size:0.8rem;">
+                                <select data-day="${day}" style="width:100%">
                                     <option value="">-- None --</option>
                                     ${opts}
                                 </select>
@@ -299,11 +314,11 @@
                 </div>
 
                 <div style="margin-top:20px; display:flex; justify-content:space-between; align-items:center;">
-                    <button id="mb-assign-save" class="mb-btn mb-btn-success">
+                    <button id="mb-assign-save" class="mb-btn-success">
                         Save Assignments
                     </button>
                     
-                    <button id="mb-delete-btn" class="mb-btn mb-btn-danger">
+                    <button id="mb-delete-btn" class="mb-btn-danger">
                         Delete Loaded Template
                     </button>
                 </div>
