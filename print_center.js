@@ -1,93 +1,67 @@
-// =================================================================
+// ============================================================================
 // print_center.js
+// (UPDATED: Continuous Minute Timeline Integration)
 //
-// Handles generating printable schedules.
-// Features:
-// - Print Whole Schedule (All Divisions) - Layout matches Daily View
-// - Print Selected Divisions (Multi-select)
-// - Print Selected Bunks (Multi-select) - Natural Sort & Excel
-// - Print Selected Locations (Multi-select) - Excel Export
-// - UPDATED: Bunk view shows FULL league schedule (all matchups).
-// - UPDATED: Field view shows ONLY the specific matchup on that field.
-// =================================================================
+// CRITICAL UPDATES:
+// - Uses SchedulerCoreUtils.minutesToTime exclusively.
+// - Fully minute-accurate schedule reconstruction.
+// - Location view uses reservationLog with merging.
+// - Division view reconstructs minute rows dynamically.
+// - Bunk view supports merged blocks and league matchups.
+// ============================================================================
 
 (function() {
 'use strict';
 
-// --- Helpers Copied/Adapted from scheduler_ui.js for consistency ---
-const INCREMENT_MINS = 30;
+// ----------------------------------------------------------
+// CORE HELPERS (from Utils)
+// ----------------------------------------------------------
+const parseTimeToMinutes = window.SchedulerCoreUtils?.parseTimeToMinutes;
+const minutesToTime = window.SchedulerCoreUtils?.minutesToTime;
+const fieldLabel = window.SchedulerCoreUtils?.fieldLabel;
 
-function parseTimeToMinutes(str) {
-  if (!str || typeof str !== "string") return null;
-  let s = str.trim().toLowerCase();
-  let mer = null;
-  if (s.endsWith("am") || s.endsWith("pm")) {
-    mer = s.endsWith("am") ? "am" : "pm";
-    s = s.replace(/am|pm/g, "").trim();
-  }
-  const m = s.match(/^(\d{1,2})\s*:\s*(\d{2})$/);
-  if (!m) return null;
-  let hh = parseInt(m[1], 10);
-  const mm = parseInt(m[2], 10);
-  if (Number.isNaN(hh) || Number.isNaN(mm)) return null;
-  if (mer) {
-    if (hh === 12) hh = mer === "am" ? 0 : 12;
-    else if (mer === "pm") hh += 12;
-  }
-  return hh * 60 + mm;
+// ----------------------------------------------------------
+// BASIC ACCESSOR
+// ----------------------------------------------------------
+function getEntry(bunk, startMin) {
+    const assignments = window.scheduleAssignments || {};
+    if (!assignments[bunk]) return null;
+    return assignments[bunk][startMin] || null;
 }
 
-function minutesToTimeLabel(min) {
-  let h = Math.floor(min / 60);
-  let m = min % 60;
-  let ap = h >= 12 ? "PM" : "AM";
-  h = h % 12 || 12;
-  return `${h}:${m.toString().padStart(2, '0')} ${ap}`;
-}
-
-function findFirstSlotForTime(startMin) {
-  const times = window.unifiedTimes || [];
-  if (startMin === null || !times.length) return -1;
-  for (let i = 0; i < times.length; i++) {
-    const slot = times[i];
-    const slotStart = new Date(slot.start).getHours() * 60 + new Date(slot.start).getMinutes();
-    if (slotStart >= startMin && slotStart < startMin + INCREMENT_MINS) {
-      return i;
-    }
-  }
-  return -1;
-}
-
-function getEntry(bunk, slotIndex) {
-  const assignments = window.scheduleAssignments || {};
-  if (bunk && assignments[bunk] && assignments[bunk][slotIndex]) {
-    return assignments[bunk][slotIndex];
-  }
-  return null;
-}
-
+// ----------------------------------------------------------
+// FORMAT ENTRY (unified output)
+// ----------------------------------------------------------
 function formatEntry(entry) {
-  if (!entry) return "";
-  if (entry._isDismissal) return "Dismissal";
-  if (entry._isSnack) return "Snacks";
-  
-  let label = "";
-  if (typeof entry.field === 'string') label = entry.field;
-  else if (entry.field && entry.field.name) label = entry.field.name;
+    if (!entry) return "";
 
-  if (entry._h2h) return entry.sport || "League Game";
-  if (entry._fixed) return label || entry._activity || "";
-  if (entry.sport) return `${label} – ${entry.sport}`;
-  return label;
+    if (entry._isDismissal) return "Dismissal";
+    if (entry._isSnack) return "Snacks";
+
+    let label = fieldLabel(entry.field) || "";
+
+    // Leagues
+    if (entry._h2h) return entry.sport || "League Game";
+
+    // Fixed events
+    if (entry._fixed) return label || entry._activity || "";
+
+    // Sports: Field – Sport
+    if (entry.sport) return `${label} – ${entry.sport}`;
+
+    return label;
 }
 
+// ----------------------------------------------------------
 // Natural Sort Helper
+// ----------------------------------------------------------
 function naturalSort(a, b) {
     return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
 }
 
-// -------------------------------------------------------------------
-
+// ----------------------------------------------------------
+// MAIN ENTRY: INIT PRINT CENTER
+// ----------------------------------------------------------
 function initPrintCenter() {
     const container = document.getElementById("print-content");
     if (!container) return;
@@ -95,13 +69,13 @@ function initPrintCenter() {
     container.innerHTML = `
         <div class="print-dashboard">
             <h1 style="color:#1a5fb4;">🖨️ Print Center</h1>
-            <p class="no-print">Select what you want to print or export. The "Master Schedule" views now look exactly like the Daily Schedule screen.</p>
+            <p class="no-print">Select what you want to print or export.</p>
 
             <div class="print-cards no-print">
                 
                 <div class="print-card">
                     <h3>📅 Master Schedule</h3>
-                    <p>Print grid views for divisions.</p>
+                    <p>Print the division-based grid view.</p>
                     
                     <div style="display:flex; gap:10px; margin-bottom:15px;">
                         <button onclick="window.printAllDivisions()" style="background:#28a745; flex:1;">Print All</button>
@@ -110,7 +84,7 @@ function initPrintCenter() {
 
                     <hr style="border-top:1px solid #ddd; margin:10px 0;">
                     
-                    <label style="font-weight:bold; display:block; margin-bottom:5px;">Or Select Specific Divisions:</label>
+                    <label style="font-weight:bold;">Select Specific Divisions:</label>
                     <div id="print-div-list" class="print-list-box"></div>
                     <div style="display:flex; gap:10px;">
                         <button onclick="window.printSelectedDivisions()" style="flex:1;">Print Selected</button>
@@ -120,7 +94,7 @@ function initPrintCenter() {
 
                 <div class="print-card">
                     <h3>👤 Individual Bunks</h3>
-                    <p>Print list views for specific bunks.</p>
+                    <p>Print per-bunk list views.</p>
                     <div id="print-bunk-list" class="print-list-box"></div>
                     <div style="display:flex; gap:10px;">
                         <button onclick="window.printSelectedBunks()" style="flex:1;">Print Selected</button>
@@ -130,7 +104,7 @@ function initPrintCenter() {
 
                 <div class="print-card">
                     <h3>📍 Locations / Fields</h3>
-                    <p>Print schedules for specific fields.</p>
+                    <p>Print full location calendars.</p>
                     <div id="print-loc-list" class="print-list-box"></div>
                     <div style="display:flex; gap:10px;">
                         <button onclick="window.printSelectedLocations()" style="flex:1;">Print Selected</button>
@@ -141,36 +115,34 @@ function initPrintCenter() {
 
             <div id="printable-area"></div>
         </div>
-        
+
         <style>
             .print-list-box {
                 max-height: 200px;
                 overflow-y: auto;
                 border: 1px solid #ccc;
-                padding: 10px;
                 background: white;
+                padding: 10px;
                 margin-bottom: 10px;
                 border-radius: 4px;
             }
             .print-list-group {
                 font-weight: bold;
-                margin-top: 5px;
-                margin-bottom: 3px;
-                color: #555;
-                background: #eee;
+                margin: 5px 0 3px;
                 padding: 2px 5px;
+                background: #eee;
+                color: #555;
             }
-            .print-list-item {
-                display: block;
-                margin-left: 5px;
-                margin-bottom: 2px;
-            }
+            .print-list-item { display:block; margin-left: 5px; }
         </style>
     `;
 
     populateSelectors();
 }
 
+// ----------------------------------------------------------
+// POPULATE UI CHECKBOX LISTS
+// ----------------------------------------------------------
 function populateSelectors() {
     const divList = document.getElementById("print-div-list");
     const bunkList = document.getElementById("print-bunk-list");
@@ -181,38 +153,46 @@ function populateSelectors() {
     const availableDivisions = app1.availableDivisions || [];
     const fields = app1.fields || [];
     const specials = app1.specialActivities || [];
-    
-    // 1. Divisions Checkboxes
+
+    // DIVISIONS
     divList.innerHTML = "";
-    availableDivisions.forEach(divName => {
-        divList.innerHTML += `<label class="print-list-item"><input type="checkbox" value="${divName}"> ${divName}</label>`;
+    availableDivisions.forEach(div => {
+        divList.innerHTML += `<label class="print-list-item">
+            <input type="checkbox" value="${div}"> ${div}
+        </label>`;
     });
 
-    // 2. Bunks Checkboxes (Grouped by Division)
+    // BUNKS grouped by division
     bunkList.innerHTML = "";
-    availableDivisions.forEach(divName => {
-        const bunks = (divisions[divName].bunks || []).sort(naturalSort);
+    availableDivisions.forEach(div => {
+        const bunks = (divisions[div].bunks || []).sort(naturalSort);
         if (bunks.length > 0) {
-            bunkList.innerHTML += `<div class="print-list-group">${divName}</div>`;
+            bunkList.innerHTML += `<div class="print-list-group">${div}</div>`;
             bunks.forEach(b => {
-                bunkList.innerHTML += `<label class="print-list-item"><input type="checkbox" value="${b}"> ${b}</label>`;
+                bunkList.innerHTML += `<label class="print-list-item">
+                    <input type="checkbox" value="${b}"> ${b}
+                </label>`;
             });
         }
     });
 
-    // 3. Locations Checkboxes
+    // LOCATIONS
     locList.innerHTML = "";
-    const allLocs = [...fields.map(f=>f.name), ...specials.map(s=>s.name)].sort(naturalSort);
+    const allLocs = [...fields.map(f => f.name), ...specials.map(s=>s.name)].sort(naturalSort);
     allLocs.forEach(loc => {
-        locList.innerHTML += `<label class="print-list-item"><input type="checkbox" value="${loc}"> ${loc}</label>`;
+        locList.innerHTML += `<label class="print-list-item">
+            <input type="checkbox" value="${loc}"> ${loc}
+        </label>`;
     });
 }
 
-// --- GENERATORS ---
+// ============================================================================
+// PART 1 END — NEXT MESSAGE WILL CONTAIN PART 2
+// ============================================================================
+// ============================================================================
+// DIVISION HTML GENERATION (Minute-Accurate Daily Grid)
+// ============================================================================
 
-/**
- * Generates the HTML for a Division using the "Daily View" logic (Timeline Blocks).
- */
 function generateDivisionHTML(divName) {
     const daily = window.loadCurrentDailyData?.() || {};
     const manualSkeleton = daily.manualSkeleton || [];
@@ -221,329 +201,419 @@ function generateDivisionHTML(divName) {
 
     if (bunks.length === 0) return "";
 
-    // --- 1. Build Blocks Logic (Ported from scheduler_ui.js) ---
-    const tempSortedBlocks = [];
-    manualSkeleton.forEach(item => {
-        if (item.division === divName) {
-            const startMin = parseTimeToMinutes(item.startTime);
-            const endMin = parseTimeToMinutes(item.endTime);
-            if (startMin === null || endMin === null) return;
-            tempSortedBlocks.push({ item, startMin, endMin });
-        }
-    });
-    tempSortedBlocks.sort((a, b) => a.startMin - b.startMin);
+    // ----------------------------------------------------------
+    // Collect all minute keys for division
+    // ----------------------------------------------------------
+    const divisionAssignments = {};  
+    const allStartMinutes = new Set();
 
-    const divisionBlocks = [];
-    let leagueCounter = 0; 
-    let specialtyCounter = 0;
+    bunks.forEach(bunk => {
+        const sched = window.scheduleAssignments[bunk] || {};
+        Object.keys(sched).forEach(startMinStr => {
+            const startMin = parseInt(startMinStr);
+            const entry = sched[startMin];
 
-    tempSortedBlocks.forEach(block => {
-        let eventName = block.item.event;
-        if (block.item.event === "League Game") {
-            leagueCounter++;
-            eventName = `League Game ${leagueCounter}`;
-        } else if (block.item.event === "Specialty League") {
-            specialtyCounter++;
-            eventName = `Specialty League ${specialtyCounter}`;
-        }
+            if (!entry || !entry._activity) return;
 
-        divisionBlocks.push({
-            label: `${minutesToTimeLabel(block.startMin)} - ${minutesToTimeLabel(block.endMin)}`,
-            startMin: block.startMin,
-            endMin: block.endMin,
-            event: eventName,
-            type: block.item.type
+            allStartMinutes.add(startMin);
+            divisionAssignments[startMin] ||= [];
+            divisionAssignments[startMin].push({ bunk, entry });
         });
     });
 
-    // Filter duplicates and handle splits
-    const uniqueBlocks = divisionBlocks.filter((block, index, self) => 
-        index === self.findIndex((t) => t.label === block.label)
-    );
+    const sortedStarts = Array.from(allStartMinutes).sort((a,b)=>a-b);
+    const today = window.currentScheduleDate;
 
-    const flattenedBlocks = [];
-    uniqueBlocks.forEach((block) => {
-        if (block.type === "split" && block.startMin !== null && block.endMin !== null) {
-            const midMin = Math.round(block.startMin + (block.endMin - block.startMin) / 2);
-            flattenedBlocks.push({
-                ...block,
-                label: `${minutesToTimeLabel(block.startMin)} - ${minutesToTimeLabel(midMin)}`,
-                startMin: block.startMin,
-                endMin: midMin,
-                splitPart: 1
-            });
-            flattenedBlocks.push({
-                ...block,
-                label: `${minutesToTimeLabel(midMin)} - ${minutesToTimeLabel(block.endMin)}`,
-                startMin: midMin,
-                endMin: block.endMin,
-                splitPart: 2
-            });
-        } else {
-            flattenedBlocks.push(block);
-        }
-    });
-
-    // --- 2. Build HTML Table ---
+    // ----------------------------------------------------------
+    // Begin HTML Output
+    // ----------------------------------------------------------
     let html = `
         <div class="print-page landscape">
-            <div class="print-header">
-                <h2>📅 ${divName} Schedule</h2>
-                <p>Date: ${window.currentScheduleDate}</p>
-            </div>
-            <table class="print-table grid-table">
-                <thead>
-                    <tr>
-                        <th style="width:130px;">Time</th>
-                        ${bunks.map(b => `<th>${b}</th>`).join('')}
-                    </tr>
-                </thead>
-                <tbody>
+        <div class="print-header">
+            <h2>📅 ${divName} Schedule</h2>
+            <p>Date: ${today}</p>
+        </div>
+        <table class="print-table grid-table">
+        <thead>
+            <tr>
+                <th style="width:130px;">Time</th>
+                ${bunks.map(b => `<th>${b}</th>`).join('')}
+            </tr>
+        </thead>
+        <tbody>
     `;
 
-    if (flattenedBlocks.length === 0) {
-        html += `<tr><td colspan="${bunks.length + 1}" style="text-align:center; padding:20px;">No schedule blocks found.</td></tr>`;
+    if (sortedStarts.length === 0) {
+        html += `
+            <tr><td colspan="${bunks.length+1}" style="text-align:center; padding:20px;">
+                No scheduled blocks found.
+            </td></tr>
+        `;
     }
 
-    flattenedBlocks.forEach(eventBlock => {
-        html += `<tr>`;
-        // Time Cell
-        html += `<td class="time-col"><strong>${eventBlock.label}</strong></td>`;
+    // Track active rowSpan merges per bunk
+    const activeMerges = {};
 
-        // Activity Cells
-        const isLeague = eventBlock.event.startsWith("League Game") || eventBlock.event.startsWith("Specialty League");
-        
-        if (isLeague) {
-            // --- Merged Cell for League ---
-            // Calculate matchups
-            const firstSlotIndex = findFirstSlotForTime(eventBlock.startMin);
-            let allMatchups = [];
-            if (bunks.length > 0) {
-                const entry = getEntry(bunks[0], firstSlotIndex);
-                if (entry && entry._allMatchups) allMatchups = entry._allMatchups;
+    // =====================================================================
+    // MAIN LOOP: Build rows for each start minute
+    // =====================================================================
+    sortedStarts.forEach(startMin => {
+        const rowSet = divisionAssignments[startMin] || [];
+        if (rowSet.length === 0) return;
+
+        // Representative activity (first bunk found)
+        const repEntry = rowSet[0].entry;
+        if (!repEntry) return;
+
+        // Skip rows where all bunks are merged
+        const allCovered = bunks.every(b => {
+            const e = getEntry(b, startMin);
+            return e && e.startTime !== minutesToTime(startMin); 
+        });
+        if (allCovered) return;
+
+        const repEndMin = repEntry.endTime || (startMin + 30);
+
+        // TIME COLUMN
+        let rowHTML = `
+            <tr>
+            <td class="time-col"><strong>${minutesToTime(startMin)} - ${minutesToTime(repEndMin)}</strong></td>
+        `;
+
+        // =================================================================
+        // LEAGUE MATCHES: One merged cell across all bunks
+        // =================================================================
+        if (repEntry._h2h) {
+            let matchups = repEntry._allMatchups || [];
+            let text = `<strong>${repEntry.sport || "League Game"}</strong>`;
+
+            if (matchups.length > 0) {
+                text += `<ul style="margin:0; padding-left:15px; font-size:0.9em;">`;
+                matchups.forEach(m => text += `<li>${m}</li>`);
+                text += `</ul>`;
             }
 
-            let cellContent = `<strong>${eventBlock.event}</strong>`;
-            if (allMatchups.length > 0) {
-                cellContent += `<ul style="margin:0; padding-left:15px; text-align:left; font-size:0.9em;">`;
-                allMatchups.forEach(m => cellContent += `<li>${m}</li>`);
-                cellContent += `</ul>`;
-            } else {
-                cellContent += `<br><em>(No matchups found)</em>`;
+            rowHTML += `
+                <td colspan="${bunks.length}" style="background:#e8f4ff; vertical-align:top; text-align:left;">
+                    ${text}
+                </td>
+            </tr>
+            `;
+            html += rowHTML;
+            return;
+        }
+
+        // =================================================================
+        // STANDARD CELLS — Per bunk, with rowSpan merging
+        // =================================================================
+        bunks.forEach(bunk => {
+            const entry = getEntry(bunk, startMin);
+
+            // If this bunk is merged from a previous row
+            if (activeMerges[bunk] && activeMerges[bunk] > startMin) {
+                return; 
             }
 
-            html += `<td colspan="${bunks.length}" style="background:#e8f4ff; vertical-align:top; text-align:left;">${cellContent}</td>`;
+            let t = "";
+            let bg = "";
+            let rowSpan = 1;
 
-        } else {
-            // --- Standard Cells ---
-            bunks.forEach(bunk => {
-                const slotIndex = findFirstSlotForTime(eventBlock.startMin);
-                const entry = getEntry(bunk, slotIndex);
-                let text = "";
-                let bg = "";
+            if (entry) {
+                t = formatEntry(entry);
+                if (entry._fixed) bg = "#fff8e1";
 
-                if (entry) {
-                    text = formatEntry(entry);
-                    if (entry._fixed) bg = "#fff8e1"; // pinned color
-                } else {
-                    // Fallback to the block name if nothing is scheduled yet (e.g. "Lunch")
-                    if (["Lunch","Snack","Dismissal","Swim"].some(k => eventBlock.event.includes(k))) {
-                        text = eventBlock.event;
+                // Row-span calculation:
+                let cur = startMin;
+                while (cur < entry.endTime) {
+                    const next = sortedStarts.find(m => m > cur);
+                    if (!next || next >= entry.endTime) break;
+                    rowSpan++;
+                    cur = next;
+                }
+                if (rowSpan > 1) activeMerges[bunk] = entry.endTime;
+            } 
+            else {
+                // BUNK HAS NO ENTRY HERE — check manual skeleton pinned
+                const block = manualSkeleton.find(m =>
+                    m.division === divName &&
+                    parseTimeToMinutes(m.startTime) <= startMin &&
+                    parseTimeToMinutes(m.endTime) > startMin
+                );
+                if (block) {
+                    if (["Lunch","Snack","Dismissal","Swim"]
+                        .some(k => block.event.includes(k))) 
+                    {
+                        t = block.event;
                         bg = "#fff8e1";
                     }
                 }
-                
-                html += `<td style="background:${bg};">${text}</td>`;
-            });
-        }
-        html += `</tr>`;
-    });
-
-    html += `</tbody></table></div><div class="page-break"></div>`;
-    return html;
-}
-
-// --- 2. Individual Bunk HTML ---
-function generateBunkHTML(bunk) {
-    const daily = window.loadCurrentDailyData?.() || {};
-    const schedule = daily.scheduleAssignments?.[bunk] || [];
-    const times = window.unifiedTimes || [];
-
-    let html = `
-        <div class="print-page portrait">
-            <div class="print-header">
-                <h2>👤 Schedule: ${bunk}</h2>
-                <p>Date: ${window.currentScheduleDate}</p>
-            </div>
-            <table class="print-table">
-                <thead><tr><th style="width:120px;">Time</th><th>Activity / Location</th></tr></thead>
-                <tbody>
-    `;
-
-    times.forEach((t, i) => {
-        const entry = schedule[i];
-        if (!entry || entry.continuation) return; 
-
-        let label = "";
-        if (typeof entry.field === 'object') label = entry.field.name;
-        else label = entry.field;
-        
-        // --- NEW: SHOW FULL LEAGUE SCHEDULE ---
-        // If it's a league game, we want to see ALL matchups occurring in that block
-        if (entry._h2h) {
-            if (entry._allMatchups && entry._allMatchups.length > 0) {
-                label = `<strong>${entry.sport || "League Game"}</strong><br>`;
-                label += `<ul style="margin:5px 0 0 15px; padding:0; font-size:0.9em; color:#555;">`;
-                entry._allMatchups.forEach(m => {
-                    // Highlight own game? Optional.
-                    if (entry.sport && m === entry.sport) {
-                         label += `<li><strong>${m}</strong></li>`;
-                    } else {
-                         label += `<li>${m}</li>`;
-                    }
-                });
-                label += `</ul>`;
-            } else {
-                // Fallback if no list
-                label = `<strong>${entry.sport}</strong>`;
             }
-        }
 
-        html += `<tr>
-            <td class="time-col"><strong>${t.label}</strong></td>
-            <td>${label}</td>
-        </tr>`;
-    });
-
-    html += `</tbody></table></div>`;
-    return html;
-}
-
-// --- 3. Location HTML ---
-function generateLocationHTML(loc) {
-    const daily = window.loadCurrentDailyData?.() || {};
-    const times = window.unifiedTimes || [];
-    const assignments = daily.scheduleAssignments || {};
-
-    let html = `
-        <div class="print-page portrait">
-            <div class="print-header">
-                <h2>📍 Schedule: ${loc}</h2>
-                <p>Date: ${window.currentScheduleDate}</p>
-            </div>
-            <table class="print-table">
-                <thead><tr><th style="width:120px;">Time</th><th>Event / Bunks</th></tr></thead>
-                <tbody>
-    `;
-
-    times.forEach((t, i) => {
-        const bunksHere = [];
-        let leagueLabel = null;
-
-        Object.keys(assignments).forEach(b => {
-            const entry = assignments[b][i];
-            if (entry) {
-                const fName = (typeof entry.field === 'object') ? entry.field.name : entry.field;
-                if (fName === loc) {
-                    if(!bunksHere.includes(b)) bunksHere.push(b);
-                    
-                    // Check for league matchup label
-                    if (entry._h2h && entry.sport) {
-                        // For fields, we ONLY want the specific game being played here.
-                        // The scheduler ensures entry.sport has the right label if assigned to this field.
-                        let matchStr = entry.sport; 
-                        // matchStr is usually "A vs B (Sport) @ Field"
-                        // We can strip "@ Field" since we are on the field page
-                        if(matchStr.includes('@')) matchStr = matchStr.split('@')[0].trim();
-                        
-                        leagueLabel = matchStr;
-                    }
-                }
-            }
+            rowHTML += `<td rowspan="${rowSpan}" style="background:${bg};">${t}</td>`;
         });
 
-        let content = "";
-        let style = "";
-
-        if (leagueLabel) {
-            content = `<strong>${leagueLabel}</strong>`;
-        } else if (bunksHere.length > 0) {
-            content = bunksHere.join(", ");
-        } else {
-            content = "-- Free --";
-            style = "color:#999; font-style:italic;";
-        }
-
-        html += `<tr>
-            <td class="time-col"><strong>${t.label}</strong></td>
-            <td style="${style}">${content}</td>
-        </tr>`;
+        rowHTML += `</tr>`;
+        html += rowHTML;
     });
 
-    html += `</tbody></table></div>`;
+    html += `
+        </tbody></table>
+        </div>
+        <div class="page-break"></div>
+    `;
+
     return html;
 }
 
-// --- ACTIONS ---
+// ============================================================================
+// INDIVIDUAL BUNK — Minute-Precise List View
+// ============================================================================
+
+function generateBunkHTML(bunk) {
+    const daily = window.loadCurrentDailyData?.() || {};
+    const schedule = daily.scheduleAssignments?.[bunk] || {};
+    const startMinutes = Object.keys(schedule).map(Number).sort((a,b)=>a-b);
+
+    let html = `
+        <div class="print-page portrait">
+        <div class="print-header">
+            <h2>👤 Schedule: ${bunk}</h2>
+            <p>Date: ${window.currentScheduleDate}</p>
+        </div>
+        <table class="print-table">
+        <thead>
+            <tr><th style="width:120px;">Time</th><th>Activity / Location</th></tr>
+        </thead>
+        <tbody>
+    `;
+
+    startMinutes.forEach(startMin => {
+        const entry = schedule[startMin];
+        if (!entry) return;
+        if (entry.continuation) return;
+
+        let endMin = entry.endTime || (startMin+30);
+        // Merge
+        let current = startMin;
+        let next = startMinutes.find(m => m > current);
+
+        while (next && next < endMin) {
+            const nxtEntry = schedule[next];
+            if (nxtEntry && nxtEntry._activity === entry._activity) {
+                endMin = nxtEntry.endTime;
+                next = startMinutes.find(m => m > next);
+            } else break;
+        }
+
+        let label;
+        if (entry._h2h) {
+            // Entire league match
+            if (entry._allMatchups?.length) {
+                label = `<strong>${entry.sport || "League Game"}</strong><ul style="margin:5px 0 0 15px; padding:0; font-size:0.9em;">`;
+                entry._allMatchups.forEach(m => label += `<li>${m}</li>`);
+                label += `</ul>`;
+            } else {
+                label = `<strong>${entry.sport}</strong>`;
+            }
+        } else {
+            label = formatEntry(entry);
+        }
+
+        html += `
+            <tr>
+                <td class="time-col"><strong>${minutesToTime(startMin)} - ${minutesToTime(endMin)}</strong></td>
+                <td>${label}</td>
+            </tr>
+        `;
+    });
+
+    html += `
+        </tbody></table>
+        </div>
+    `;
+
+    return html;
+}
+
+// ============================================================================
+// PART 2 END — LAST PART CONTAINS LOCATION VIEW + ACTIONS
+// ============================================================================
+// ============================================================================
+// LOCATION VIEW (Field / Special Activity Schedule)
+// Minute-accurate, merged reservations, transitions included
+// ============================================================================
+
+function generateLocationHTML(loc) {
+    const daily = window.loadCurrentDailyData?.() || {};
+    const assignments = daily.scheduleAssignments || {};
+    const reservationLog = window.fieldReservationLog?.[loc] || [];
+
+    // Include transitions that occupy the field
+    const transLog = window.fieldReservationLog?.[window.TRANSITION_TYPE] || [];
+    transLog.forEach(r => {
+        if (r.field === loc && r.occupiesField) {
+            reservationLog.push(r);
+        }
+    });
+
+    reservationLog.sort((a,b) => a.startMin - b.startMin);
+
+    let html = `
+        <div class="print-page portrait">
+        <div class="print-header">
+            <h2>📍 Schedule: ${loc}</h2>
+            <p>Date: ${window.currentScheduleDate}</p>
+        </div>
+        <table class="print-table">
+        <thead>
+            <tr><th style="width:120px;">Time</th><th>Event / Bunks</th></tr>
+        </thead>
+        <tbody>
+    `;
+
+    // Merge adjacent identical reservations
+    const merged = [];
+    reservationLog.forEach(r => {
+        let last = merged[merged.length - 1];
+
+        const sameEvent =
+            last &&
+            last.activityName === r.activityName &&
+            last.isTransition === r.isTransition &&
+            last.endMin === r.startMin;
+
+        if (sameEvent) {
+            last.endMin = r.endMin;
+            last.bunks.push(r.bunk);
+            last.uniqueBunks.add(r.bunk);
+        } else {
+            merged.push({
+                startMin: r.startMin,
+                endMin: r.endMin,
+                activityName: r.activityName,
+                isTransition: r.isTransition,
+                bunks: [r.bunk],
+                uniqueBunks: new Set([r.bunk]),
+                sportLabel: r.sport || null,
+                leagueMatchups: r._allMatchups || null
+            });
+        }
+    });
+
+    if (merged.length === 0) {
+        html += `
+            <tr>
+                <td colspan="2" style="color:#999; font-style:italic; text-align:center;">
+                    No scheduled use for this location.
+                </td>
+            </tr>
+        `;
+    } else {
+        merged.forEach(m => {
+            const label = `${minutesToTime(m.startMin)} - ${minutesToTime(m.endMin)}`;
+            let content = "";
+            let style = "";
+
+            if (m.isTransition) {
+                style = "background:#f3f4f6;";
+                content = `🏃‍♂️ ${m.activityName}<br>Bunks: ${[...m.uniqueBunks].join(", ")}`;
+            }
+            else if (m.leagueMatchups) {
+                style = "background:#e8f4ff;";
+                content = `<strong>${m.sportLabel || m.activityName}</strong>`;
+            }
+            else {
+                content = `${m.activityName}<br>Bunks: ${[...m.uniqueBunks].join(", ")}`;
+            }
+
+            html += `
+                <tr>
+                    <td class="time-col"><strong>${label}</strong></td>
+                    <td style="${style}">${content}</td>
+                </tr>
+            `;
+        });
+    }
+
+    html += `
+        </tbody></table>
+        </div>
+    `;
+    return html;
+}
+
+// ============================================================================
+// ACTION HELPERS
+// ============================================================================
 
 function getSelectedDivisions() {
-    const checkboxes = document.querySelectorAll("#print-div-list input:checked");
-    return Array.from(checkboxes).map(cb => cb.value);
+    return Array.from(document.querySelectorAll("#print-div-list input:checked"))
+        .map(cb => cb.value);
 }
 
 function getSelectedBunks() {
-    const checkboxes = document.querySelectorAll("#print-bunk-list input:checked");
-    return Array.from(checkboxes).map(cb => cb.value);
+    return Array.from(document.querySelectorAll("#print-bunk-list input:checked"))
+        .map(cb => cb.value);
 }
 
 function getSelectedLocations() {
-    const checkboxes = document.querySelectorAll("#print-loc-list input:checked");
-    return Array.from(checkboxes).map(cb => cb.value);
+    return Array.from(document.querySelectorAll("#print-loc-list input:checked"))
+        .map(cb => cb.value);
 }
+
+// ============================================================================
+// PRINT ACTIONS
+// ============================================================================
 
 window.printAllDivisions = function() {
     const app1 = window.loadGlobalSettings?.().app1 || {};
     const allDivs = app1.availableDivisions || [];
     if (allDivs.length === 0) return alert("No divisions found.");
-    
-    let fullHtml = "";
-    allDivs.forEach(div => { fullHtml += generateDivisionHTML(div); });
-    triggerPrint(fullHtml);
+
+    let html = "";
+    allDivs.forEach(div => html += generateDivisionHTML(div));
+    triggerPrint(html);
 };
 
 window.printSelectedDivisions = function() {
-    const selected = getSelectedDivisions();
-    if (selected.length === 0) return alert("Please select at least one division.");
-
-    let fullHtml = "";
-    selected.forEach(div => { fullHtml += generateDivisionHTML(div); });
-    triggerPrint(fullHtml);
+    const chosen = getSelectedDivisions();
+    if (chosen.length === 0) return alert("Please select at least one division.");
+    
+    let html = "";
+    chosen.forEach(div => html += generateDivisionHTML(div));
+    triggerPrint(html);
 };
 
 window.printSelectedBunks = function() {
-    const selected = getSelectedBunks();
-    if (selected.length === 0) return alert("Please select at least one bunk.");
+    const chosen = getSelectedBunks();
+    if (chosen.length === 0) return alert("Please select at least one bunk.");
 
-    let fullHtml = "";
-    selected.forEach(bunk => { fullHtml += generateBunkHTML(bunk); });
-    triggerPrint(fullHtml);
+    let html = "";
+    chosen.forEach(b => html += generateBunkHTML(b));
+    triggerPrint(html);
 };
 
 window.printSelectedLocations = function() {
-    const selected = getSelectedLocations();
-    if (selected.length === 0) return alert("Please select at least one location.");
+    const chosen = getSelectedLocations();
+    if (chosen.length === 0) return alert("Please select at least one location.");
 
-    let fullHtml = "";
-    selected.forEach(loc => { fullHtml += generateLocationHTML(loc); });
-    triggerPrint(fullHtml);
+    let html = "";
+    chosen.forEach(loc => html += generateLocationHTML(loc));
+    triggerPrint(html);
 };
 
-// --- EXPORT TO EXCEL ---
+// ============================================================================
+// EXCEL EXPORT (Simple HTML Excel Sheet)
+// ============================================================================
 
 function downloadXLS(htmlContent, fileName) {
-    const blob = new Blob(['<html xmlns:x="urn:schemas-microsoft-com:office:excel">' + htmlContent + '</html>'], { type: 'application/vnd.ms-excel' });
+    const blob = new Blob(
+        ['<html xmlns:x="urn:schemas-microsoft-com:office:excel">' + htmlContent + '</html>'],
+        { type: "application/vnd.ms-excel" }
+    );
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+
+    const a = document.createElement("a");
     a.href = url;
     a.download = fileName;
     document.body.appendChild(a);
@@ -554,39 +624,43 @@ function downloadXLS(htmlContent, fileName) {
 window.exportAllDivisionsToExcel = function() {
     const app1 = window.loadGlobalSettings?.().app1 || {};
     const allDivs = app1.availableDivisions || [];
-    if (allDivs.length === 0) return alert("No divisions found.");
+    if (allDivs.length === 0) return alert("No divisions available.");
 
-    let fullHtml = "";
-    allDivs.forEach(div => fullHtml += generateDivisionHTML(div));
-    downloadXLS(fullHtml, `Schedule_All_${window.currentScheduleDate}.xls`);
+    let html = "";
+    allDivs.forEach(div => html += generateDivisionHTML(div));
+    downloadXLS(html, `Schedule_All_${window.currentScheduleDate}.xls`);
 };
 
 window.exportSelectedDivisionsToExcel = function() {
-    const selected = getSelectedDivisions();
-    if (selected.length === 0) return alert("Please select at least one division.");
+    const chosen = getSelectedDivisions();
+    if (!chosen.length) return alert("Select at least one division.");
 
-    let fullHtml = "";
-    selected.forEach(div => fullHtml += generateDivisionHTML(div));
-    downloadXLS(fullHtml, `Schedule_Divisions_${window.currentScheduleDate}.xls`);
+    let html = "";
+    chosen.forEach(div => html += generateDivisionHTML(div));
+    downloadXLS(html, `Schedule_Divisions_${window.currentScheduleDate}.xls`);
 };
 
 window.exportSelectedBunksToExcel = function() {
-    const selected = getSelectedBunks();
-    if (selected.length === 0) return alert("Please select at least one bunk.");
+    const chosen = getSelectedBunks();
+    if (!chosen.length) return alert("Select at least one bunk.");
 
-    let fullHtml = "";
-    selected.forEach(bunk => fullHtml += generateBunkHTML(bunk));
-    downloadXLS(fullHtml, `Schedule_Bunks_${window.currentScheduleDate}.xls`);
+    let html = "";
+    chosen.forEach(b => html += generateBunkHTML(b));
+    downloadXLS(html, `Schedule_Bunks_${window.currentScheduleDate}.xls`);
 };
 
 window.exportSelectedLocationsToExcel = function() {
-    const selected = getSelectedLocations();
-    if (selected.length === 0) return alert("Please select at least one location.");
+    const chosen = getSelectedLocations();
+    if (!chosen.length) return alert("Select at least one location.");
 
-    let fullHtml = "";
-    selected.forEach(loc => fullHtml += generateLocationHTML(loc));
-    downloadXLS(fullHtml, `Schedule_Locations_${window.currentScheduleDate}.xls`);
+    let html = "";
+    chosen.forEach(loc => html += generateLocationHTML(loc));
+    downloadXLS(html, `Schedule_Locations_${window.currentScheduleDate}.xls`);
 };
+
+// ============================================================================
+// PRINT TRIGGER
+// ============================================================================
 
 function triggerPrint(content) {
     const area = document.getElementById("printable-area");
@@ -594,6 +668,5 @@ function triggerPrint(content) {
     window.print();
 }
 
+// Export initializer
 window.initPrintCenter = initPrintCenter;
-
-})();
