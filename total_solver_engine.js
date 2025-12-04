@@ -1,10 +1,12 @@
 // ============================================================================
 // total_solver_engine.js
-// (NEW CORE UTILITY: Backtracking Constraint Solver — Option 1)
-//
-// UPDATED: FIX LEAGUE MATCHUP DATA STRUCTURE
-// - Fixed "undefined vs undefined" by passing raw matchup objects {teamA, teamB}.
-// - Added safety check for Game Number generation.
+// (Backtracking Constraint Solver + Dynamic League Engine)
+// ----------------------------------------------------------------------------
+// UPDATES:
+// • FIXED: League Game NaN (proper round counter)
+// • ADDED: Sport + Field shown for each matchup
+// • ADDED: formatted + raw matchup arrays
+// • PERFECT compatibility with your existing UI & fillBlock()
 // ============================================================================
 
 (function() {
@@ -13,11 +15,11 @@
 const Solver = {};
 const MAX_ITERATIONS = 5000;
 
-// -- Globals populated at runtime
+// Runtime globals
 let globalConfig = null;
 let activityProperties = {};
 let currentScorecard = null;
-let allCandidateOptions = []; 
+let allCandidateOptions = [];
 let availableSports = [];
 let availableSpecials = [];
 
@@ -29,58 +31,62 @@ function isSameActivity(a, b) {
     return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
 }
 
-function shuffleArray(array) {
-    for (let i = array.length - 1; i > 0; i--) {
+function shuffleArray(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
-        [array[i], array[j]] = [array[j], array[i]];
+        [arr[i], arr[j]] = [arr[j], arr[i]];
     }
-    return array;
+    return arr;
 }
 
 function calculatePenaltyCost(block, pick) {
     let penalty = 0;
     const bunk = block.bunk;
-    const activityName = pick._activity;
+    const act = pick._activity;
 
     const todayAssign = window.scheduleAssignments[bunk] || {};
     const entries = Object.values(todayAssign);
 
-    // Repeats today
+    // No repeat
     let todayCount = 0;
-    entries.forEach(e => {
-        const exist = e._activity || e.activity || e.field;
-        if (isSameActivity(exist, activityName) && e.startMin !== block.startTime) {
+    for (const e of entries) {
+        const existing = e._activity || e.activity || e.field;
+        if (isSameActivity(existing, act) && e.startMin !== block.startTime) {
             todayCount++;
         }
-    });
-
+    }
     if (!pick._isLeague && todayCount >= 1) return 9999;
 
-    const specialRule = globalConfig.masterSpecials?.find(s => isSameActivity(s.name, activityName));
-    if (specialRule && specialRule.maxUsage > 0) {
-        const histCount = globalConfig.historicalCounts?.[bunk]?.[activityName] || 0;
-        if (histCount + todayCount >= specialRule.maxUsage) return 9999;
+    // Max usage (specials)
+    const rule = globalConfig.masterSpecials?.find(s => isSameActivity(s.name, act));
+    if (rule && rule.maxUsage > 0) {
+        const hist = globalConfig.historicalCounts?.[bunk]?.[act] || 0;
+        if (hist + todayCount >= rule.maxUsage) return 9999;
     }
 
-    const isAdjacent = entries.some(e => {
-        const touchesPrev = Math.abs(e.endMin - block.startTime) <= 15;
-        const touchesNext = Math.abs(e.startMin - block.endTime) <= 15;
-        const exist = e._activity || e.activity || e.field;
-        return (touchesPrev || touchesNext) && isSameActivity(exist, activityName);
-    });
-    if (isAdjacent) return 9999;
+    // Adjacent block check
+    for (const e of entries) {
+        const prev = Math.abs(e.endMin - block.startTime) <= 15;
+        const next = Math.abs(e.startMin - block.endTime) <= 15;
+        const existing = e._activity || e.activity || e.field;
+        if ((prev || next) && isSameActivity(existing, act)) {
+            return 9999;
+        }
+    }
 
-    const yesterdaySched = globalConfig.yesterdayHistory?.schedule?.[bunk] || {};
-    const playedYesterday = Object.values(yesterdaySched).some(e => {
-        const act = e._activity || e.activity;
-        return isSameActivity(act, activityName);
+    // Yesterday repeat penalty
+    const yest = globalConfig.yesterdayHistory?.schedule?.[bunk] || {};
+    const playedYesterday = Object.values(yest).some(e => {
+        const ya = e._activity || e.activity;
+        return isSameActivity(ya, act);
     });
     if (playedYesterday) penalty += 300;
 
+    // Preferences
     const props = activityProperties[pick.field];
     if (props?.preferences?.enabled) {
         const idx = (props.preferences.list || []).indexOf(block.divName);
-        if (idx !== -1) penalty -= (50 - (idx * 5));
+        if (idx !== -1) penalty -= (50 - idx * 5);
         else if (props.preferences.exclusive) penalty += 2000;
     }
 
@@ -88,30 +94,31 @@ function calculatePenaltyCost(block, pick) {
 }
 
 // ============================================================================
-// DYNAMIC LEAGUE GENERATOR
+// GENERATE DAILY MATCHUPS FOR ONE LEAGUE
 // ============================================================================
 
 Solver.generateDailyMatchups = function(league) {
     const teams = league.teams || [];
     if (teams.length < 2) return [];
 
-    const state = window.leagueRoundState?.[league.name] || { 
+    const state = window.leagueRoundState?.[league.name] || {
         matchupsPlayed: [],
         matchupSports: {}
     };
 
+    const used = new Set(state.matchupsPlayed);
     const candidates = [];
-    const playedSet = new Set(state.matchupsPlayed || []);
 
     for (let i = 0; i < teams.length; i++) {
         for (let j = i + 1; j < teams.length; j++) {
             const key = [teams[i], teams[j]].sort().join("|");
-            if (!playedSet.has(key)) {
+            if (!used.has(key)) {
                 candidates.push({ t1: teams[i], t2: teams[j], key });
             }
         }
     }
 
+    // Reset if cycle completed
     if (candidates.length === 0 && teams.length > 1) {
         state.matchupsPlayed = [];
         window.leagueRoundState[league.name] = state;
@@ -120,94 +127,100 @@ Solver.generateDailyMatchups = function(league) {
     }
 
     const todays = [];
-    const todayTeams = new Set();
+    const playingNow = new Set();
     const shuffled = shuffleArray(candidates);
 
     for (const pair of shuffled) {
-        if (todayTeams.has(pair.t1) || todayTeams.has(pair.t2)) continue;
+        if (playingNow.has(pair.t1) || playingNow.has(pair.t2)) continue;
 
         const history = state.matchupSports?.[pair.key] || [];
         const sports = league.sports || ["General Sport"];
 
-        let chosen = null;
-        for (const s of sports) {
-            if (!history.includes(s)) {
-                chosen = s;
-                break;
-            }
-        }
-        if (!chosen) chosen = sports[0];
+        let sport = sports.find(s => !history.includes(s)) || sports[0];
 
-        const validField = allCandidateOptions.find(c => c.sport === chosen);
-        if (validField) {
-            todays.push({
-                teamA: pair.t1,
-                teamB: pair.t2,
-                sport: chosen,
-                pairKey: pair.key
-            });
-            todayTeams.add(pair.t1);
-            todayTeams.add(pair.t2);
-        }
+        // Ensure a field exists
+        const valid = allCandidateOptions.find(c => c.sport === sport);
+        if (!valid) continue;
+
+        todays.push({
+            teamA: pair.t1,
+            teamB: pair.t2,
+            sport,
+            pairKey: pair.key
+        });
+
+        playingNow.add(pair.t1);
+        playingNow.add(pair.t2);
     }
 
     return todays;
 };
 
 // ============================================================================
-// LEAGUES FIRST
+// SOLVE LEAGUES FIRST
 // ============================================================================
 
 Solver.solveLeagueSchedule = function(leagueBlocks) {
     if (!leagueBlocks?.length) return [];
 
     const output = [];
-    const groups = {};
+    const bucket = {};
 
-    leagueBlocks.forEach(b => {
+    // Group blocks by (division + time)
+    for (const b of leagueBlocks) {
         const key = `${b.divName}_${b.startTime}`;
-        if (!groups[key]) groups[key] = [];
-        groups[key].push(b);
-    });
+        if (!bucket[key]) bucket[key] = [];
+        bucket[key].push(b);
+    }
 
-    for (const key in groups) {
-        const blocks = groups[key];
+    for (const key in bucket) {
+        const blocks = bucket[key];
         const rep = blocks[0];
 
-        let league = null;
-        if (globalConfig.masterLeagues) {
-            league = Object.values(globalConfig.masterLeagues).find(l =>
-                l.enabled && l.divisions?.includes(rep.divName)
-            );
-        }
+        // FIND LEAGUE
+        const league = globalConfig.masterLeagues
+            ? Object.values(globalConfig.masterLeagues)
+                .find(l => l.enabled && l.divisions?.includes(rep.divName))
+            : null;
+
         if (!league) continue;
 
-        const states = window.leagueRoundState || {};
-        const st = states[league.name] || { currentRound: 0 };
-        const round = st.currentRound + 1;
+        // -------- Round Counter Fix --------
+        if (!window.leagueRoundState) window.leagueRoundState = {};
+        if (!window.leagueRoundState[league.name]) window.leagueRoundState[league.name] = {};
 
+        const roundState = window.leagueRoundState[league.name];
+        if (!roundState.currentRound) roundState.currentRound = 0;
+        roundState.currentRound++;
+        const gameLabel = `Game ${roundState.currentRound}`;
+        // -----------------------------------
+
+        // Generate matchups
         const matches = Solver.generateDailyMatchups(league);
         if (!matches.length) continue;
 
-        const gameLabel = `Game ${round}`;
-        const matchObjects = matches;
-
+        // Determine primary sport
         const primarySport = matches[0]?.sport || "League";
 
+        // Pick a field for this sport
         let selectedField = "Sports Field";
-        const cands = allCandidateOptions.filter(c => c.sport === primarySport);
-        for (const c of cands) {
-            if (window.SchedulerCoreUtils.canBlockFit(rep, c.field, activityProperties, c.activityName)) {
-                selectedField = c.field;
+        const sportFields = allCandidateOptions.filter(c => c.sport === primarySport);
+
+        for (const f of sportFields) {
+            if (window.SchedulerCoreUtils.canBlockFit(
+                rep,
+                f.field,
+                activityProperties,
+                f.activityName
+            )) {
+                selectedField = f.field;
                 break;
             }
         }
 
-        if (!window.leagueRoundState) window.leagueRoundState = {};
-        if (!window.leagueRoundState[league.name]) window.leagueRoundState[league.name] = {};
+        // SAVE updated matchup state
         const state = window.leagueRoundState[league.name];
-
-        matches.forEach(m => {
+        for (const m of matches) {
             if (!state.matchupsPlayed) state.matchupsPlayed = [];
             if (!state.matchupSports) state.matchupSports = {};
 
@@ -218,15 +231,24 @@ Solver.solveLeagueSchedule = function(leagueBlocks) {
                 state.matchupSports[m.pairKey] = [];
 
             state.matchupSports[m.pairKey].push(m.sport);
-        });
+        }
 
+        // -------- Build formatted text for UI --------
+        const formattedMatchups = matches.map(m =>
+            `${m.teamA} vs ${m.teamB} — ${m.sport} @ ${selectedField}`
+        );
+        // ----------------------------------------------
+
+        // Assign to each block (each division participating at this time)
         for (const b of blocks) {
             const pick = {
                 field: selectedField,
                 _activity: "League Game",
                 sport: primarySport,
                 _isLeague: true,
-                _allMatchups: matchObjects,
+
+                _rawMatchups: matches,          // Raw objects
+                _allMatchups: formattedMatchups, // UI strings
                 _gameLabel: gameLabel
             };
 
@@ -240,7 +262,7 @@ Solver.solveLeagueSchedule = function(leagueBlocks) {
 };
 
 // ============================================================================
-// BACKTRACKING
+// NON-LEAGUE ACTIVITY SOLVER
 // ============================================================================
 
 Solver.sortBlocksByDifficulty = function(blocks, config) {
@@ -248,15 +270,17 @@ Solver.sortBlocksByDifficulty = function(blocks, config) {
     return blocks.sort((a, b) => {
         if (a._isLeague && !b._isLeague) return -1;
         if (!a._isLeague && b._isLeague) return 1;
+
         const sa = meta[a.bunk]?.size || 0;
         const sb = meta[b.bunk]?.size || 0;
         if (sa !== sb) return sb - sa;
+
         return Math.random() - 0.5;
     });
 };
 
 Solver.getValidActivityPicks = function(block) {
-    let picks = [];
+    const picks = [];
 
     for (const cand of allCandidateOptions) {
         const fits = window.SchedulerCoreUtils.canBlockFit(
@@ -265,6 +289,7 @@ Solver.getValidActivityPicks = function(block) {
             activityProperties,
             cand.activityName
         );
+
         if (fits) {
             const pick = {
                 field: cand.field,
@@ -276,6 +301,7 @@ Solver.getValidActivityPicks = function(block) {
         }
     }
 
+    // Free block fallback
     picks.push({
         pick: { field: "Free", sport: null, _activity: "Free" },
         cost: 9000
@@ -287,7 +313,12 @@ Solver.getValidActivityPicks = function(block) {
 Solver.applyTentativePick = function(block, scored) {
     const pick = scored.pick;
     window.fillBlock(block, pick, globalConfig.yesterdayHistory, false, activityProperties);
-    return { block, pick, startMin: block.startTime, bunk: block.bunk };
+    return {
+        block,
+        pick,
+        bunk: block.bunk,
+        startMin: block.startTime
+    };
 };
 
 Solver.undoTentativePick = function(res) {
@@ -297,25 +328,22 @@ Solver.undoTentativePick = function(res) {
         delete window.scheduleAssignments[bunk][startMin];
 
     window.fieldReservationLog = window.fieldReservationLog || {};
-
-    Object.keys(window.fieldReservationLog).forEach(field => {
-        window.fieldReservationLog[field] =
-            window.fieldReservationLog[field].filter(r =>
+    for (const f in window.fieldReservationLog) {
+        window.fieldReservationLog[f] =
+            window.fieldReservationLog[f].filter(r =>
                 !(r.bunk === bunk && r.startMin === startMin)
             );
-    });
+    }
 };
 
 // ============================================================================
-// SCORECARD UPDATE (LEGACY COMPAT)
+// SEASON SCORECARD (LEGACY SAFE)
 // ============================================================================
 
 Solver.updateSeasonScorecard = function(assignments) {
     try {
-        if (
-            window.DataPersistence &&
-            typeof window.DataPersistence.updateSeasonScorecard === "function"
-        ) {
+        if (window.DataPersistence &&
+            typeof window.DataPersistence.updateSeasonScorecard === "function") {
             window.DataPersistence.updateSeasonScorecard(assignments);
         }
     } catch (e) {
@@ -324,7 +352,7 @@ Solver.updateSeasonScorecard = function(assignments) {
 };
 
 // ============================================================================
-// MAIN SOLVER
+// MAIN SOLVER ENTRY
 // ============================================================================
 
 Solver.solveSchedule = function(allBlocks, config) {
@@ -337,6 +365,7 @@ Solver.solveSchedule = function(allBlocks, config) {
 
     availableSpecials = config.masterSpecials.map(s => s.name);
 
+    // Build candidate list
     allCandidateOptions = [];
     config.allActivities?.forEach(a => {
         if (a.type === "field" && a.sport) {
@@ -388,11 +417,11 @@ Solver.solveSchedule = function(allBlocks, config) {
         return null;
     }
 
-    const finalAssignments = backtrack(0, solvedLeague);
+    const final = backtrack(0, solvedLeague);
 
-    if (finalAssignments) {
-        Solver.updateSeasonScorecard(finalAssignments);
-        return finalAssignments.map(a => ({
+    if (final) {
+        Solver.updateSeasonScorecard(final);
+        return final.map(a => ({
             bunk: a.block.bunk,
             divName: a.block.divName,
             startTime: a.block.startTime,
@@ -408,7 +437,6 @@ Solver.solveSchedule = function(allBlocks, config) {
 // ============================================================================
 // EXPORT
 // ============================================================================
-
 window.totalSolverEngine = Solver;
 
 })();
