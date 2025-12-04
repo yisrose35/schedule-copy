@@ -159,7 +159,7 @@
         <tr><th colspan="${1 + bunks.length}" style="background:${divisions[div]?.color || "#444"};color:white;">${div}</th></tr>
         <tr><th>Time</th>${bunks.map(b => `<th>${b}</th>`).join("")}</tr>
       `;
-      table.appendChild(head);
+      table.appendChild(thead); // Fixed typo here (was 'head')
 
       // TBODY
       const tbody = document.createElement("tbody");
@@ -286,7 +286,7 @@
                   // Check if there is an activity starting *mid-block*?
                   // (e.g. Skeleton 11:00, but Activity starts 11:10)
                   // Iterate assignment keys to find overlap
-                  const sched = window.scheduleAssignments[bunk];
+                  const sched = window.scheduleAssignments[bunk] || {};
                   const midKey = Object.keys(sched).find(k => {
                       const kMin = parseInt(k);
                       return kMin > block.startMin && kMin < block.endMin;
