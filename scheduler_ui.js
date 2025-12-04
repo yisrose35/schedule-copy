@@ -1,23 +1,12 @@
 // ============================================================================
-// scheduler_ui.js  — FULLY FIXED FOR CONTINUOUS MINUTE TIMELINE
-// Synchronized with corrected scheduler_core_utils.js + scheduler_core_main.js
-//
-// Fixes Included:
-// ✔ config reference fixed inside editCell
-// ✔ correct cleanup of old reservations before editing
-// ✔ correct transition clearing
-// ✔ correct merging logic across minute rows
-// ✔ correct league rendering / colSpan
-// ✔ correct fillBlock signature
-// ✔ correct division lookup
-// ✔ no dangling unifiedTimes / slots
-// ✔ stable with Option B Division Firewall
+// scheduler_ui.js  — FIXED RENDERER
+// Fixes: "White Gaps" / Broken Grid Layout / Row Merging
 // ============================================================================
 
 (function () {
   "use strict";
 
-  const TRANSITION_TYPE = window.TRANSITION_TYPE;
+  const TRANSITION_TYPE = window.TRANSITION_TYPE || "Transition/Buffer";
 
   // -------------------------------------------------------------------------
   // TIME HELPERS
@@ -278,6 +267,7 @@
     // -----------------------------------------------------
     const allTimes = new Set();
 
+    // From Skeleton
     manualSkeleton.forEach(item => {
       const s = parseTime(item.startTime);
       const e = parseTime(item.endTime);
@@ -285,6 +275,7 @@
       if (e !== null) allTimes.add(e);
     });
 
+    // From Actual Assignments (Critical for detecting generated blocks)
     Object.values(window.scheduleAssignments).forEach(sched => {
       Object.values(sched).forEach(entry => {
         if (entry.startMin != null) allTimes.add(entry.startMin);
@@ -294,6 +285,7 @@
 
     const sorted = [...allTimes].sort((a, b) => a - b);
 
+    // Build Time Segments
     const rows = [];
     for (let i = 0; i < sorted.length - 1; i++) {
       const start = sorted[i];
@@ -334,17 +326,23 @@
       table.appendChild(head);
 
       const body = document.createElement("tbody");
-      const skip = {};
+      const skip = {}; // Tracks skip state per bunk (minutes)
 
-      rows.forEach(({ startMin, endMin, label }) => {
+      rows.forEach((row) => {
+        const { startMin, endMin, label } = row;
         const tr = document.createElement("tr");
 
+        // Time Column
         const tdTime = document.createElement("td");
         tdTime.textContent = label;
+        tdTime.style.whiteSpace = "nowrap";
         tr.appendChild(tdTime);
 
         bunks.forEach(bunk => {
-          if (skip[bunk] && skip[bunk] > startMin) return;
+          // CHECK SKIP: If this bunk is already covered by a previous rowspan
+          if (skip[bunk] && skip[bunk] > startMin) {
+            return;
+          }
 
           const entry = getEntry(bunk, startMin);
 
@@ -353,54 +351,70 @@
           let bg = "";
 
           if (entry) {
+            // === FOUND ACTIVITY STARTING HERE ===
             const act = entry._activity;
+            const isLeague = act === "League Game" || act === "Specialty League";
+            bg = entry._fixed ? "#fff8e1" : (isLeague ? "#dbeeff" : "");
+            content = formatEntry(entry);
 
-            // league detection
-            const isLeague =
-              act === "League Game" || act === "Specialty League";
+            // --- MERGE LOGIC (THE FIX) ---
+            let targetEnd = entry.endMin; // The definitive end time of this block
 
-            // merging logic
-            let cursor = startMin;
-            while (cursor < entry.endMin) {
-              const next = rows.find(r => r.startMin === cursor);
-              if (!next) break;
+            // Look ahead at subsequent rows
+            for (let rIndex = rows.indexOf(row) + 1; rIndex < rows.length; rIndex++) {
+                const nextRow = rows[rIndex];
 
-              const ne = getEntry(bunk, next.startMin);
-              if (!ne || ne._activity !== act) break;
+                // Case 1: The activity naturally covers this next row
+                // (e.g. Activity ends at 12:00, nextRow is 11:30-12:00)
+                if (nextRow.startMin < targetEnd) {
+                    rowspan++;
+                    continue;
+                }
 
-              rowspan++;
-              cursor = next.endMin;
+                // Case 2: Seamless continuation (Consecutive identical blocks)
+                const nextEntry = getEntry(bunk, nextRow.startMin);
+                if (nextEntry && nextEntry._activity === act) {
+                    rowspan++;
+                    targetEnd = nextEntry.endMin; // Extend our target
+                } else {
+                    break; // Stop merging
+                }
             }
-            if (rowspan > 1) skip[bunk] = cursor;
 
-            if (isLeague && bunk !== bunks[0]) return; // only first bunk gets league colSpan
+            // Mark this bunk as skipped until targetEnd
+            skip[bunk] = targetEnd;
 
+            // LEAGUE EXCEPTION: Render colSpan for the first bunk, skip others
             if (isLeague) {
+              if (bunk !== bunks[0]) return; // Only draw for first bunk
               const td = document.createElement("td");
               td.colSpan = bunks.length;
               td.style.background = "#dbeeff";
               td.style.fontWeight = "bold";
-              td.textContent = act;
-              td.onclick = () => editCell(bunk, startMin, endMin, act);
+              td.textContent = content;
+              td.onclick = () => editCell(bunk, startMin, entry.endMin, act);
+              td.rowSpan = rowspan;
               tr.appendChild(td);
 
-              bunks.slice(1).forEach(b => (skip[b] = endMin));
-              body.appendChild(tr);
+              // Mark ALL bunks as skipped
+              bunks.slice(1).forEach(b => (skip[b] = targetEnd));
               return;
             }
 
-            content = formatEntry(entry);
-            bg = entry._fixed ? "#fff8e1" : "";
+            const td = document.createElement("td");
+            td.style.background = bg;
+            td.rowSpan = rowspan;
+            td.textContent = content;
+            td.style.cursor = "pointer";
+            td.onclick = () => editCell(bunk, startMin, entry.endMin, content);
+            tr.appendChild(td);
+
+          } else {
+            // === EMPTY SLOT ===
+            const td = document.createElement("td");
+            td.onclick = () => editCell(bunk, startMin, endMin, "");
+            tr.appendChild(td);
           }
-
-          const td = document.createElement("td");
-          td.style.background = bg;
-          td.rowSpan = rowspan;
-          td.textContent = content;
-
-          td.onclick = () => editCell(bunk, startMin, endMin, content);
-
-          tr.appendChild(td);
         });
 
         body.appendChild(tr);
