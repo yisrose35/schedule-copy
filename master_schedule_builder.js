@@ -21,8 +21,10 @@
   const PIXELS_PER_MINUTE = 2;
 
   // --- Core Helper Functions ---
-  const parseTimeToMinutes = window.SchedulerCoreUtils?.parseTimeToMinutes;
-  const minutesToTime = window.SchedulerCoreUtils?.minutesToTime;
+const parseTimeToMinutes = window.SchedulerCoreUtils?.parseTimeToMinutes || window.parseTimeToMinutes;
+
+ const minutesToTime = window.SchedulerCoreUtils?.minutesToTime || window.minutesToTime;
+
 
   // =====================================================================
   // PERSISTENCE
