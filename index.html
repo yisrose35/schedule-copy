@@ -170,7 +170,6 @@
                                 </div>
                             </div>
 
-                            <!-- Add Division -->
                             <div class="setup-field-row">
                                 <input id="divisionInput" placeholder="Enter division…">
                                 <button id="addDivisionBtn">Add Division</button>
@@ -185,7 +184,8 @@
                             <div id="divisionButtons" class="master-list"></div>
                         </section>
 
-                        <!-- Right Panel: Division Details --><section class="setup-card">
+                        <!-- Right Panel -->
+                        <section class="setup-card">
                             <div class="setup-card-header">
                                 <div class="setup-step-pill">Step 2</div>
                                 <div class="setup-card-text">
@@ -222,6 +222,7 @@
                                 <p class="setup-group-help">Erase generated data without touching setup.</p>
 
                                 <div class="setup-button-row">
+
                                     <button id="eraseTodayBtn"
                                             style="background:#db7a00;color:#fff;border:none;"
                                             onclick="if(confirm('Delete today’s schedule?')) window.eraseCurrentDailyData?.();">
@@ -235,15 +236,16 @@
                                     </button>
 
                                     <button id="eraseHistoryBtn"
-        style="background:#5e35b1;color:#fff;border:none;"
-        onclick="if(confirm('Reset rotation history and League Game Counters?')) { 
-            window.eraseRotationHistory?.(); 
-            window.leagueRoundState = {}; 
-            window.saveGlobalSettings?.('leagueRoundState', {}); 
-            alert('Activity History and Game Counters have been reset!'); 
-        }">
-    Reset Activity History
-</button>
+                                            style="background:#5e35b1;color:#fff;border:none;"
+                                            onclick="if(confirm('Reset rotation history and League Game Counters?')) { 
+                                                window.eraseRotationHistory?.(); 
+                                                window.leagueRoundState = {}; 
+                                                window.saveGlobalSettings?.('leagueRoundState', {}); 
+                                                alert('Activity History and Game Counters have been reset!'); 
+                                            }">
+                                        Reset Activity History
+                                    </button>
+
                                 </div>
                             </div>
 
@@ -253,6 +255,7 @@
                                 <p class="setup-group-help">Download or upload full application data.</p>
 
                                 <div class="setup-button-row">
+
                                     <button id="exportBackupBtn"
                                             style="background:#007bff;color:#fff;border:none;">
                                         Export Data to File
@@ -332,18 +335,17 @@
                 <div id="updates" class="tab-content"><div id="updates-content"></div></div>
                 <div id="helper" class="tab-content"><div id="helper-content"></div></div>
 
-            </main> <!-- /app-content -->
+            </main>
 
-        </div> <!-- /app-main -->
+        </div>
 
-    </div> <!-- /app-shell -->
+    </div>
 
-</div> <!-- /main-app-container -->
+</div>
 
 <!-- =============================================================== -->
-<!-- SCRIPT LOADING ORDER (SPLIT CORE) -->
+<!-- SCRIPT LOADING ORDER -->
 <!-- =============================================================== -->
-
 <script src="welcome.js" defer></script>
 <script src="calendar.js" defer></script>
 <script src="app1.js" defer></script>
@@ -356,25 +358,23 @@
 <script src="specialty_leagues.js" defer></script>
 <script src="master_schedule_builder.js" defer></script>
 
-<!-- Smart Tile Adapter -->
 <script src="smart_logic_adapter.js" defer></script>
-
-<!-- League Season State -->
 <script src="league_scheduling.js" defer></script>
 
-<!-- CORE LOGIC SPLIT -->
+<script src="data_persistence.js" defer></script>
+<script src="total_solver_engine.js" defer></script>
+
 <script src="scheduler_core_utils.js" defer></script>
 <script src="scheduler_core_leagues.js" defer></script>
-<script src="scheduler_logic_fillers.js" defer></script>
+<script src="scheduler_logic_fillers.js" defer"></script>
 <script src="scheduler_core_main.js" defer></script>
 
-<!-- UI Components -->
 <script src="scheduler_ui.js" defer></script>
 <script src="analytics.js" defer></script>
 <script src="validator.js" defer></script>
-<script src="print_center.js" defer></script>
-<script src="helper.js" defer></script>
-<script src="updates.js" defer></script>
+<script src="print_center.js" defer"></script>
+<script src="helper.js" defer"></script>
+<script src="updates.js" defer"></script>
 
 <!-- =============================================================== -->
 <!-- TAB NAVIGATION -->
