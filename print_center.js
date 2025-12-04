@@ -670,3 +670,5 @@ function triggerPrint(content) {
 
 // Export initializer
 window.initPrintCenter = initPrintCenter;
+    })();
+
