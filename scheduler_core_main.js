@@ -8,6 +8,7 @@
 // - Added Transition Concurrency Tracking.
 // - FIXED: Smart Tile Integration (Pass 2.5 restored).
 // - FIX: Corrected canBlockFit argument signature (removed fieldUsageBySlot).
+// - FIX: Corrected findBest... function argument signatures (removed fieldUsageBySlot).
 // ============================================================================
 
 (function () {
@@ -517,6 +518,8 @@
                         pushGenerated(bunk, "General Activity Slot", job.blockB.startMin, job.blockB.endMin);
                     } else {
                         fillBlock(
+                        // The pick here is for a fixed activity coming from the smart tile logic,
+                        // so fieldUsageBySlot is passed correctly to fillBlock for registration.
                             { divName: job.division, bunk, startTime: job.blockB.startMin, endTime: job.blockB.endMin, slots: slotsB },
                             { field: act, sport: null, _fixed: true, _h2h: false, _activity: act },
                             fieldUsageBySlot,
@@ -582,13 +585,38 @@
             let pick = null;
 
             if (block.event === 'Special Activity' || block.event === 'Special Activity Slot') {
-                pick = window.findBestSpecial?.(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
+                // FIX #1 & #2: Removed fieldUsageBySlot and divisions. Corrected argument order.
+                pick = window.findBestSpecial?.(
+                    block,
+                    allActivities,
+                    yesterdayHistory,
+                    activityProperties,
+                    rotationHistory,
+                    historicalCounts
+                );
             } else if (block.event === 'Sports Slot' || block.event === 'Sports') {
-                pick = window.findBestSportActivity?.(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
+                // FIX #1 & #2: Removed fieldUsageBySlot and divisions. Corrected argument order.
+                pick = window.findBestSportActivity?.(
+                    block,
+                    allActivities,
+                    yesterdayHistory,
+                    activityProperties,
+                    rotationHistory,
+                    historicalCounts
+                );
             }
 
             if (!pick) {
-                pick = window.findBestGeneralActivity(block, allActivities, h2hActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
+                // FIX #1 & #2: Removed fieldUsageBySlot and divisions. Corrected argument order.
+                pick = window.findBestGeneralActivity(
+                    block,
+                    allActivities,
+                    h2hActivities,
+                    yesterdayHistory,
+                    activityProperties,
+                    rotationHistory,
+                    historicalCounts
+                );
             }
 
             // FIX #1: Corrected canBlockFit signature: fieldUsageBySlot removed.
