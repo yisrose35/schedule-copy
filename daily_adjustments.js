@@ -215,7 +215,8 @@
     function renderGrid(gridContainer) {
         // Always pull fresh filtered config from loader
         const config = window.SchedulerCoreUtils.loadAndFilterData();
-        const { divisions, availableDivisions } = config;
+        // FIX: Ensure divisions and availableDivisions are properly destructured with fallbacks
+        const { divisions = {}, availableDivisions = [] } = config;
 
         // Compute earliest & latest min across divisions
         let earliestMin = null,
