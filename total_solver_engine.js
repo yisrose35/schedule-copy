@@ -6,7 +6,8 @@
 // ✓ League Exclusivity Lockout (absolute unshareable fields)
 // ✓ Smart Neighbor Sharing & Distance Penalties
 // ✓ No updateSeasonScorecard() required (history handled in fillBlock)
-// ✓ League-first solving, then activity blocks
+// ✓ League-first solving (Guaranteed priority)
+// ✓ Mixed Sports Support (Matchups within a round can vary)
 // ✓ Complete compatibility with Smart Tiles & Minute Timeline
 // ✓ Clean modern design: no legacy scoring, no legacy history writes
 // ✓ FIXED: Field Collision Check in League Matchups
@@ -17,7 +18,7 @@
 
 const Solver = {};
 const MAX_ITERATIONS = 5000;
-const MAX_MATCHUP_ITERATIONS = 500;
+const MAX_MATCHUP_ITERATIONS = 2000; // Increased to allow for mixed-sport permutations
 
 // Runtime globals
 let globalConfig = null;
@@ -304,53 +305,59 @@ Solver.generateDailyMatchups = function (league, repBlock) {
     fieldAvailabilityCache = buildFieldConstraintCache(repBlock, leagueSports);
 
     const viable = [];
-    // Load balancing: track how often we've offered a field in this batch
-    const fieldLoadBalance = {}; 
-
+    
+    // MIXED SPORTS LOGIC:
+    // Iterate through candidates (team pairs).
+    // Instead of picking just ONE best sport, pick valid fields from MULTIPLE good sports.
+    // This gives the solver options: "A vs B can be Baseball OR Soccer".
+    
     for (const p of candidates) {
         let minSC = Infinity;
 
+        // Find the sports played least by this pair
         for (const sport of leagueSports) {
             const c = p.sportCounts[sport] || 0;
             minSC = Math.min(minSC, c);
         }
 
         let equalBest = leagueSports.filter(s => (p.sportCounts[s] || 0) === minSC);
+        
+        // Filter for sports that actually have valid fields
+        const validSports = equalBest.filter(s => fieldAvailabilityCache[s] && fieldAvailabilityCache[s].length > 0);
 
-        equalBest = equalBest.filter(s => fieldAvailabilityCache[s]?.length > 0);
-        if (equalBest.length === 0) continue;
+        if (validSports.length === 0) continue;
 
-        let bestSport = equalBest[0];
-        for (const s of equalBest) {
-            if (fieldAvailabilityCache[s].length < fieldAvailabilityCache[bestSport].length) {
-                bestSport = s;
-            }
+        // Randomize sports order to encourage mixing
+        shuffleArray(validSports);
+
+        // Limit options per pair to avoid combinatorial explosion, 
+        // but allow enough to mix sports (e.g., 3 options)
+        let optionsAdded = 0;
+
+        for (const sport of validSports) {
+             const fields = fieldAvailabilityCache[sport];
+             shuffleArray(fields); // Randomize fields
+
+             // Add a few field options for this sport
+             for (const f of fields) {
+                 viable.push({
+                    t1: p.t1,
+                    t2: p.t2,
+                    playCount: p.playCount,
+                    sport: sport,
+                    field: f,
+                    _sportConstraintCount: fields.length,
+                    key: [p.t1, p.t2].sort().join("|")
+                 });
+                 optionsAdded++;
+                 if (optionsAdded >= 3) break; // Limit total options per pair
+             }
+             if (optionsAdded >= 3) break;
         }
-
-        const validFields = fieldAvailabilityCache[bestSport] || [];
-        if(validFields.length === 0) continue;
-
-        // FIXED: Load Balanced Field Selection
-        // 1. Shuffle fields to randomise
-        // 2. Sort by usage count (least used first)
-        const shuffledFields = shuffleArray([...validFields]);
-        shuffledFields.sort((a, b) => {
-            return (fieldLoadBalance[a] || 0) - (fieldLoadBalance[b] || 0);
-        });
-
-        const chosenField = shuffledFields[0];
-        fieldLoadBalance[chosenField] = (fieldLoadBalance[chosenField] || 0) + 1;
-
-        viable.push({
-            t1: p.t1,
-            t2: p.t2,
-            playCount: p.playCount,
-            sport: bestSport,
-            field: chosenField,
-            _sportConstraintCount: validFields.length,
-            key: [p.t1, p.t2].sort().join("|")
-        });
     }
+
+    // Shuffle the viable options so the solver doesn't just pick the first sport for everyone
+    shuffleArray(viable);
 
     return findOptimalSchedule(viable, []);
 };
@@ -461,6 +468,7 @@ Solver.sortBlocksByDifficulty = function (blocks, config) {
     const meta = config.bunkMetaData || {};
 
     return blocks.sort((a, b) => {
+        // LEAGUE PRIORITY: Always sort leagues to the top
         if (a._isLeague && !b._isLeague) return -1;
         if (!a._isLeague && b._isLeague) return 1;
 
@@ -570,13 +578,17 @@ Solver.solveSchedule = function (allBlocks, config) {
     if (!globalConfig.rotationHistory.leagues) globalConfig.rotationHistory.leagues = {};
 
     const sorted = Solver.sortBlocksByDifficulty(allBlocks, config);
+    
+    // Explicit Separation: League vs Activity
     const leagueBlocks = sorted.filter(b => b._isLeague);
     const activityBlocks = sorted.filter(b => !b._isLeague);
 
-    // Solve leagues first
+    // 1. SOLVE LEAGUES FIRST (Guarantees priority)
     const solvedLeague = Solver.solveLeagueSchedule(leagueBlocks);
 
-    // Backtracking solver for normal activities
+    // 2. BACKTRACK SOLVER (For remaining activities)
+    // We pass 'solvedLeague' as the initial state accumulator, though fillBlock handles the actual state.
+    
     let iterations = 0;
 
     function backtrack(idx, acc) {
