@@ -208,7 +208,7 @@
                 false
             )) return false;
 
-            // max usage (only if special i.e. field but no sport)
+            // max usage (for specials)
             const isSpecial = pick.field && !pick.sport;
             if (isSpecial) {
                 if (isOverUsageLimit(actName, block.bunk, activityProperties, historicalCounts, doneToday))
