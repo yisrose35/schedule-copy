@@ -483,69 +483,55 @@ Utils.isTimeAvailable = function (slotIndex, fieldProps) {
     };
 
     // =================================================================
-    // 4. DATA LOADER
-    // =================================================================
+// 4. DATA LOADER (NEW — Delegates to scheduler_core_loader.js)
+// =================================================================
 
-    function parseTimeRule(rule) {
-        if (!rule) return null;
-        if (typeof rule.startMin === "number" && typeof rule.endMin === "number") return rule;
+// Utils.loadAndFilterData now simply calls the global loader.
+// This keeps ALL loading logic in scheduler_core_loader.js.
+// If missing, we warn and return a safe empty config.
+Utils.loadAndFilterData = function () {
+    if (typeof window.loadAndFilterData !== "function") {
+        console.error("ERROR: scheduler_core_loader.js not loaded before scheduler_core_utils.js");
         return {
-            ...rule,
-            startMin: Utils.parseTimeToMinutes(rule.start),
-            endMin: Utils.parseTimeToMinutes(rule.end)
+            divisions: {},
+            availableDivisions: [],
+            activityProperties: {},
+            allActivities: [],
+            h2hActivities: [],
+            fieldsBySport: {},
+            masterLeagues: {},
+            masterSpecialtyLeagues: {},
+            masterSpecials: [],
+            yesterdayHistory: {},
+            rotationHistory: {},
+            disabledLeagues: [],
+            disabledSpecialtyLeagues: [],
+            historicalCounts: {},
+            specialActivityNames: [],
+            disabledFields: [],
+            disabledSpecials: [],
+            dailyFieldAvailability: {},
+            dailyDisabledSportsByField: {},
+            masterFields: [],
+            bunkMetaData: {},
+            sportMetaData: {},
+            masterZones: {}
         };
     }
 
-    Utils.loadAndFilterData = function () {
-        const globalSettings = window.loadGlobalSettings?.() || {};
-        const app1Data = globalSettings.app1 || {};
+    // Use loader's centralized data pipeline
+    const result = window.loadAndFilterData();
 
-        const masterFields = app1Data.fields || [];
-        const masterDivisions = app1Data.divisions || {};
-        const masterSpecials = app1Data.specialActivities || [];
-        const masterLeagues = globalSettings.leaguesByName || {};
-        const masterSpecialtyLeagues = globalSettings.specialtyLeagues || {};
-        const bunkMetaData = app1Data.bunkMetaData || {};
-        const sportMetaData = app1Data.sportMetaData || {};
+    // Expose for debugging/inspection
+    window.__lastFilteredActivities = result.activities || [];
+    window.__lastSchedulableBlocks = result.blocks || [];
 
-        Utils._bunkMetaData = bunkMetaData;
-        Utils._sportMetaData = sportMetaData;
+    return result;
+};
 
-        const dailyData = window.loadCurrentDailyData?.() || {};
-        const dailyFieldAvailability = dailyData.dailyFieldAvailability || {};
-        const dailyOverrides = dailyData.overrides || {};
-        const disabledLeagues = dailyOverrides.leagues || [];
-        const disabledSpecialtyLeagues = dailyData.disabledSpecialtyLeagues || [];
-        const dailyDisabledSportsByField = dailyData.dailyDisabledSportsByField || {};
-        const disabledFields = dailyOverrides.disabledFields || [];
-        const disabledSpecials = dailyOverrides.disabledSpecials || [];
+// Export Utils object globally
+window.SchedulerCoreUtils = Utils;
 
-        const rotationHistoryRaw = window.loadRotationHistory?.() || {};
-        const rotationHistory = {
-            bunks: rotationHistoryRaw.bunks || {},
-            leagues: rotationHistoryRaw.leagues || {},
-            leagueTeamSports: rotationHistoryRaw.leagueTeamSports || {},
-            leagueTeamLastSport: rotationHistoryRaw.leagueTeamLastSport || {}
-        };
-
-        const historicalCounts = {};
-        const specialActivityNames = [];
-        const specialNamesSet = new Set();
-        const specialRules = {};
-
-        try {
-            masterSpecials.forEach(s => {
-                const name = s.name;
-                specialActivityNames.push(name);
-                specialNamesSet.add(name);
-                specialRules[name] = {
-                    frequencyWeeks: s.frequencyWeeks || 0,
-                    limit: s.maxUsage || 0
-                };
-            });
-        } catch (e) {
-            console.error("Error loading special activity rules:", e);
-        }
 
         // =====================================================================
         // HISTORICAL COUNTS (PATCHED)
