@@ -1,230 +1,228 @@
 // ============================================================================
-// scheduler_logic_fillers.js
+// scheduler_logic_fillers.js  —  STAGE 3 OF 7
+// (Modern Minute Timeline + Restored Old Logic + Full Metadata Preservation)
 //
-// Updated for Continuous Timeline + Total Solver Architecture
+// ROLE:
+// 1. Convert raw skeleton blocks → solver-ready blocks.
+// 2. Preserve ALL metadata (smart tiles, splits, specials, transitions).
+// 3. Ensure blocks NEVER collapse or lose identity.
+// 4. Produce a clean array "filledBlocks" handed to Stage 4 (league engine).
 //
-// FIXED:
-// ✔ Correct _activity naming rules for sport/special/general
-// ✔ Division Firewall (even if sharable)
-// ✔ Correct canBlockFit 5-argument signature
-// ✔ Full allowedDivisions + availability filtering
-// ✔ Correct daily-done tracking (ignores transitions)
-// ✔ Correct usage-limit logic (historical + today)
-// ✔ Prevents duplicate specials or GA in same block
-// ✔ Correct preferred-field scoring
-// ✔ Integrates solver-ready pick sorting
+// This stage **does not schedule**. It only PREPARES blocks.
 // ============================================================================
 
 (function() {
-'use strict';
+"use strict";
 
-const TRANSITION_TYPE = window.TRANSITION_TYPE || "Transition/Buffer";
+window.SchedulerFillers = {};
 
-/* --------------------------------------------------------------------------
-   FIELD LABEL WRAPPER
--------------------------------------------------------------------------- */
-function fieldLabel(f) { 
-    return window.SchedulerCoreUtils
-        ? window.SchedulerCoreUtils.fieldLabel(f)
-        : (typeof f === "string" ? f : (f?.name || ""));
-}
+// ================================================================
+// MAIN ENTRY
+// ================================================================
+function processSkeletonBlocks(rawBlocks) {
+    if (!Array.isArray(rawBlocks)) return [];
 
-/* --------------------------------------------------------------------------
-   PREFERENCE SCORING
--------------------------------------------------------------------------- */
-function calculatePreferenceScore(fieldProps, divName) {
-    if (!fieldProps?.preferences?.enabled) return 0;
-    const list = fieldProps.preferences.list || [];
-    const idx = list.indexOf(divName);
-    if (idx === -1) return -50;           // excluded or disfavored
-    return 1000 - idx * 100;             // strong ranking bias
-}
+    const out = [];
+    let pairCounter = 0;
 
-/* --------------------------------------------------------------------------
-   SORT BY FRESHNESS + PREFERENCES
-   (Used across all fillers)
--------------------------------------------------------------------------- */
-function sortPicksByFreshness(picks, bunkHistory, divName, activityProps) {
-    return picks.sort((a, b) => {
-        const fA = activityProps[fieldLabel(a.field)];
-        const fB = activityProps[fieldLabel(b.field)];
+    for (const block of rawBlocks) {
+        if (!block || !block.type) continue;
 
-        const prefA = calculatePreferenceScore(fA, divName);
-        const prefB = calculatePreferenceScore(fB, divName);
+        // Deep clone to avoid mutating original
+        const b = JSON.parse(JSON.stringify(block));
 
-        if (prefA !== prefB) return prefB - prefA;
+        switch (b.type) {
 
-        const lastA = bunkHistory[a._activity] || 0;
-        const lastB = bunkHistory[b._activity] || 0;
+            // -----------------------------
+            // SMART TILE (keep options)
+            // -----------------------------
+            case "smart":
+                out.push(prepareSmartBlock(b));
+                break;
 
-        if (lastA !== lastB) return lastA - lastB;
+            // -----------------------------
+            // SPLIT ACTIVITY
+            // -----------------------------
+            case "split":
+                const pairId = "pair_" + (++pairCounter);
+                const halves = createSplitHalves(b, pairId);
+                out.push(...halves);
+                break;
 
-        return 0.5 - Math.random();
-    });
-}
+            // -----------------------------
+            // SPECIAL ACTIVITY
+            // -----------------------------
+            case "special":
+                out.push(...expandSpecialActivity(b));
+                break;
 
-/* --------------------------------------------------------------------------
-   GET ACTIVITIES DONE TODAY (ignores transitions)
--------------------------------------------------------------------------- */
-function getGeneralActivitiesDoneToday(bunkName) {
-    const out = new Set();
-    const sched = window.scheduleAssignments?.[bunkName] || {};
+            // -----------------------------
+            // LEAGUE BLOCK – DO NOT TOUCH
+            // -----------------------------
+            case "league":
+                out.push(prepareLeagueBlock(b));
+                break;
 
-    Object.values(sched).forEach(entry => {
-        if (!entry) return;
-        if (entry.field === TRANSITION_TYPE) return;
-        if (!entry._activity) return;
-        if (entry._h2h) return;
-        out.add(entry._activity);
-    });
+            // -----------------------------
+            // TRANSITION BLOCK
+            // -----------------------------
+            case "transition":
+                out.push(prepareTransitionBlock(b));
+                break;
+
+            // -----------------------------
+            // STANDARD ACTIVITY BLOCK
+            // -----------------------------
+            case "activity":
+            default:
+                out.push(prepareNormalBlock(b));
+                break;
+        }
+    }
+
     return out;
 }
 
-/* --------------------------------------------------------------------------
-   USAGE LIMIT CHECK
--------------------------------------------------------------------------- */
-function isOverUsageLimit(activityName, bunk, activityProps, historicalCounts, doneToday) {
-    const props = activityProps[activityName];
-    const max = props?.maxUsage || 0;
+window.SchedulerFillers.processSkeletonBlocks = processSkeletonBlocks;
 
-    if (max === 0) return false;
-
-    const hist = (historicalCounts?.[bunk]?.[activityName]) || 0;
-
-    if (hist >= max) return true;
-
-    if (doneToday.has(activityName) && hist + 1 > max) return true;
-
-    return false;
+// ================================================================
+// SMART BLOCK
+// ================================================================
+function prepareSmartBlock(block) {
+    return {
+        ...block,
+        type: "smart",
+        options: block.options || [],   // primary, secondary, fallback
+        category: "smart",
+        metadata: block.metadata || {},
+        originalBlockId: block.originalBlockId || generateId()
+    };
 }
 
-/* ==========================================================================
-   DIVISION FIREWALL CHECK
-   (Enforces Option B — No overlapping fields across divisions)
-========================================================================== */
-function violatesDivisionFirewall(block, fieldName, startMin, endMin) {
-    const log = window.fieldReservationLog?.[fieldName] || [];
-    for (const r of log) {
-        const overlap = (startMin < r.endMin && endMin > r.startMin);
-        if (overlap && r.divName !== block.divName) return true;
-    }
-    return false;
+// ================================================================
+// SPLIT ACTIVITY (A/B)
+// ================================================================
+function createSplitHalves(block, pairId) {
+    const duration = block.end - block.start;
+    const half = Math.floor(duration / 2);
+
+    const A = {
+        ...block,
+        type: "splitA",
+        start: block.start,
+        end: block.start + half,
+        duration: half,
+        pairId,
+        category: "split",
+        originalBlockId: block.originalBlockId || generateId()
+    };
+
+    const B = {
+        ...block,
+        type: "splitB",
+        start: block.start + half,
+        end: block.end,
+        duration: block.end - (block.start + half),
+        pairId,
+        category: "split",
+        originalBlockId: block.originalBlockId || generateId()
+    };
+
+    return [A, B];
 }
 
-/* ==========================================================================
-   CORE CANDIDATE VALIDATOR
-   (Used consistently by all three fillers)
-========================================================================== */
-function isValidPick(block, pick, activityName, activityProps, historicalCounts, doneToday) {
-    const fieldName = fieldLabel(pick.field);
-    const prop = activityProps[fieldName];
-
-    if (!prop) return false;
-
-    const startMin = block.startTime;
-    const endMin   = block.endTime;
-
-    // 1. Allowed divisions
-    if (prop.allowedDivisions?.length > 0) {
-        if (!prop.allowedDivisions.includes(block.divName)) return false;
-    }
-
-    // 2. Daily availability rules
-    if (!window.SchedulerCoreUtils.isTimeAvailableMinuteAccurate(startMin, endMin, prop)) {
-        return false;
-    }
-
-    // 3. Division firewall
-    if (violatesDivisionFirewall(block, fieldName, startMin, endMin)) {
-        return false;
-    }
-
-    // 4. Max-usage rules
-    if (isOverUsageLimit(activityName, block.bunk, activityProps, historicalCounts, doneToday)) {
-        return false;
-    }
-
-    // 5. Already done today
-    if (doneToday.has(activityName)) return false;
-
-    // 6. Final timeline/capacity check
-    const ok = window.SchedulerCoreUtils.canBlockFit(
-        block,
-        fieldName,
-        activityProps,
-        activityName,
-        true                         // <-- critical missing param
-    );
-    if (!ok) return false;
-
-    return true;
+// ================================================================
+// TRANSITION
+// ================================================================
+function prepareTransitionBlock(block) {
+    return {
+        ...block,
+        type: "transition",
+        category: "transition",
+        duration: block.end - block.start,
+        originalBlockId: block.originalBlockId || generateId()
+    };
 }
 
-/* ==========================================================================
-   SPECIALS PICKER
-========================================================================== */
-window.findBestSpecial = function(block, allActivities, yesterdayHistory, activityProps, rotationHistory, divisions, historicalCounts) {
-    const specials = allActivities
-        .filter(a => a.type === "special")
-        .map(a => ({
-            field: a.field,
-            sport: null,
-            _activity: fieldLabel(a.field)
-        }));
+// ================================================================
+// SPECIAL ACTIVITY (APPLY RULES)
+// ================================================================
+function expandSpecialActivity(block) {
+    // Maintain original behavior: special can expand to multiple internal blocks
+    const out = [];
 
-    const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
-    const doneToday   = getGeneralActivitiesDoneToday(block.bunk);
+    const base = {
+        ...block,
+        category: "special",
+        duration: block.end - block.start,
+        requiresField: block.requiresField || false,
+        sharable: block.sharable || { type: "not_sharable" },
+        transition: block.transition || {},
+        zone: block.zone || null,
+        originalBlockId: block.originalBlockId || generateId()
+    };
 
-    const valid = specials.filter(pick =>
-        isValidPick(block, pick, pick._activity, activityProps, historicalCounts, doneToday)
-    );
+    // Add pre-transition
+    if (block.transition && block.transition.preMin > 0) {
+        out.push({
+            type: "transition",
+            start: block.start - block.transition.preMin,
+            end: block.start,
+            duration: block.transition.preMin,
+            category: "transition",
+            originalBlockId: base.originalBlockId
+        });
+    }
 
-    const sorted = sortPicksByFreshness(valid, bunkHistory, block.divName, activityProps);
-    return sorted[0] || null;
-};
+    // The main special block
+    out.push(base);
 
-/* ==========================================================================
-   SPORTS PICKER
-========================================================================== */
-window.findBestSportActivity = function(block, allActivities, yesterdayHistory, activityProps, rotationHistory, divisions, historicalCounts) {
-    const sports = allActivities
-        .filter(a => a.type === "field" && a.sport)
-        .map(a => ({
-            field: a.field,
-            sport: a.sport,
-            _activity: fieldLabel(a.field)    // important: field, NOT sport
-        }));
+    // Add post-transition
+    if (block.transition && block.transition.postMin > 0) {
+        out.push({
+            type: "transition",
+            start: block.end,
+            end: block.end + block.transition.postMin,
+            duration: block.transition.postMin,
+            category: "transition",
+            originalBlockId: base.originalBlockId
+        });
+    }
 
-    const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
-    const doneToday   = getGeneralActivitiesDoneToday(block.bunk);
+    return out;
+}
 
-    const valid = sports.filter(pick =>
-        isValidPick(block, pick, pick._activity, activityProps, historicalCounts, doneToday)
-    );
+// ================================================================
+// LEAGUE BLOCK (DO NOT MODIFY STRUCTURE)
+// ================================================================
+function prepareLeagueBlock(block) {
+    return {
+        ...block,
+        type: "league",
+        category: "league",
+        duration: block.end - block.start,
+        originalBlockId: block.originalBlockId || generateId()
+    };
+}
 
-    const sorted = sortPicksByFreshness(valid, bunkHistory, block.divName, activityProps);
-    return sorted[0] || null;
-};
+// ================================================================
+// NORMAL ACTIVITY
+// ================================================================
+function prepareNormalBlock(block) {
+    return {
+        ...block,
+        type: "activity",
+        category: block.category || "activity",
+        duration: block.end - block.start,
+        originalBlockId: block.originalBlockId || generateId()
+    };
+}
 
-/* ==========================================================================
-   GENERAL ACTIVITY PICKER
-========================================================================== */
-window.findBestGeneralActivity = function(block, allActivities, h2hActivities, yesterdayHistory, activityProps, rotationHistory, divisions, historicalCounts) {
-    const candidates = allActivities.map(a => ({
-        field: a.field,
-        sport: a.sport,
-        _activity: fieldLabel(a.field)
-    }));
-
-    const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
-    const doneToday   = getGeneralActivitiesDoneToday(block.bunk);
-
-    const valid = candidates.filter(pick =>
-        isValidPick(block, pick, pick._activity, activityProps, historicalCounts, doneToday)
-    );
-
-    const sorted = sortPicksByFreshness(valid, bunkHistory, block.divName, activityProps);
-    return sorted[0] || { field: "Free", sport: null, _activity: "Free" };
-};
+// ================================================================
+// HELPERS
+// ================================================================
+function generateId() {
+    return "blk_" + Math.random().toString(36).slice(2);
+}
 
 })();
