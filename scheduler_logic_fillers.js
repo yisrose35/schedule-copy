@@ -1,82 +1,95 @@
 // ============================================================================
-// scheduler_logic_fillers.js
+// scheduler_logic_fillers.js (FULLY FIXED & SYNCED WITH 5-ARG canBlockFit)
+// ============================================================================
 //
-// UPDATED:
-// - Adapted for Timeline Architecture.
-// - Restored proper canBlockFit signature.
-// - FIXED all argument ordering bugs for canBlockFit.
+// - Correctly calls canBlockFit(block, fieldName, activityProperties, activityName, isLeague)
+// - Removes ALL uses of fieldUsageBySlot inside canBlockFit
+// - Removes all invalid 6-arg calls
+// - Ensures consistent fieldLabeling
+// - Ensures SmartTiles + General/Special/Sport flows work
 // ============================================================================
 
 (function () {
     'use strict';
 
-    // Delegate to the central Utilities for field name resolution
+    // ---------------------------------------------------------
+    // Safe fieldLabel wrapper
+    // ---------------------------------------------------------
     function fieldLabel(f) {
-        return window.SchedulerCoreUtils
-            ? window.SchedulerCoreUtils.fieldLabel(f)
-            : (f && f.name ? f.name : f);
+        if (window.SchedulerCoreUtils?.fieldLabel) {
+            return window.SchedulerCoreUtils.fieldLabel(f);
+        }
+        return (f && f.name) ? f.name : f;
     }
 
+    // ---------------------------------------------------------
+    // Preferences Score
+    // ---------------------------------------------------------
     function calculatePreferenceScore(fieldProps, divName) {
         if (!fieldProps?.preferences?.enabled) return 0;
 
-        const index = (fieldProps.preferences.list || []).indexOf(divName);
-        return index !== -1 ? 1000 - (index * 100) : -50;
+        const idx = (fieldProps.preferences.list || []).indexOf(divName);
+        return idx !== -1 ? (1000 - idx * 100) : -50;
     }
 
-    function sortPicksByFreshness(possiblePicks, bunkHistory = {}, divName, activityProperties) {
-        return possiblePicks.sort((a, b) => {
+    // ---------------------------------------------------------
+    // Freshness Sorting
+    // ---------------------------------------------------------
+    function sortPicksByFreshness(picks, bunkHistory = {}, divName, activityProperties) {
+        return picks.sort((a, b) => {
             const propsA = activityProperties[fieldLabel(a.field)];
             const propsB = activityProperties[fieldLabel(b.field)];
 
-            const scoreA = calculatePreferenceScore(propsA, divName);
-            const scoreB = calculatePreferenceScore(propsB, divName);
+            const prefA = calculatePreferenceScore(propsA, divName);
+            const prefB = calculatePreferenceScore(propsB, divName);
 
-            if (scoreA !== scoreB) return scoreB - scoreA; // Higher preference first
+            if (prefA !== prefB) return prefB - prefA;
 
             const lastA = bunkHistory[a._activity] || 0;
             const lastB = bunkHistory[b._activity] || 0;
 
-            if (lastA !== lastB) return lastA - lastB; // Less recent = better
+            if (lastA !== lastB) return lastA - lastB;
 
-            return 0.5 - Math.random(); // Random tiebreaker
+            return Math.random() - 0.5;
         });
     }
 
-    // --- SAFETY: Max usage checker ---
-    function isOverUsageLimit(activityName, bunk, activityProperties, historicalCounts, activitiesDoneToday) {
+    // ---------------------------------------------------------
+    // Daily Activity Tracker (GA/Special/Sport)
+    // ---------------------------------------------------------
+    function getGeneralActivitiesDoneToday(bunkName) {
+        const set = new Set();
+        const sched = window.scheduleAssignments?.[bunkName] || [];
+
+        sched.forEach(e => {
+            if (e?._activity && !e._isTransition) {
+                set.add(e._activity);
+            }
+        });
+
+        return set;
+    }
+
+    // ---------------------------------------------------------
+    // Max Usage Guard
+    // ---------------------------------------------------------
+    function isOverUsageLimit(activityName, bunk, activityProperties, historicalCounts, todaySet) {
         const props = activityProperties[activityName];
-        const max = props?.maxUsage || 0; // 0 means unlimited
+        const max = props?.maxUsage || 0;
 
         if (max === 0) return false;
 
-        const pastCount = historicalCounts?.[bunk]?.[activityName] || 0;
+        const history = historicalCounts?.[bunk]?.[activityName] || 0;
+        if (history >= max) return true;
 
-        if (pastCount >= max) return true;
-
-        if (activitiesDoneToday.has(activityName) && pastCount + 1 >= max) {
-            return true;
-        }
+        if (todaySet.has(activityName) && history + 1 >= max) return true;
 
         return false;
     }
 
-    function getGeneralActivitiesDoneToday(bunkName) {
-        const activities = new Set();
-        const schedule = window.scheduleAssignments?.[bunkName] || [];
-
-        for (const entry of schedule) {
-            if (entry?._activity && !entry._h2h) {
-                activities.add(entry._activity);
-            }
-        }
-        return activities;
-    }
-
     // ============================================================================
-    // SPECIAL ACTIVITIES
+    // SPECIAL ACTIVITY SELECTOR
     // ============================================================================
-
     window.findBestSpecial = function (
         block,
         allActivities,
@@ -93,46 +106,40 @@
                 _activity: a.field
             }));
 
-        const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
-        const activitiesDoneToday = getGeneralActivitiesDoneToday(block.bunk);
+        const bunkHist = rotationHistory?.bunks?.[block.bunk] || {};
+        const doneToday = getGeneralActivitiesDoneToday(block.bunk);
 
-        const availablePicks = specials.filter(pick => {
-            const name = pick._activity;
+        const available = specials.filter(pick => {
+            const actName = pick._activity;
 
-            // 🔥 FIXED: Proper canBlockFit signature
-            if (!window.SchedulerCoreUtils?.canBlockFit(
+            // --- timeline/capacity check (correct 5-arg form) ---
+            if (!window.SchedulerCoreUtils.canBlockFit(
                 block,
                 fieldLabel(pick.field),
                 activityProperties,
-                window.fieldUsageBySlot,       // FIXED
-                name,
+                actName,
                 false
             )) {
                 return false;
             }
 
-            if (isOverUsageLimit(name, block.bunk, activityProperties, historicalCounts, activitiesDoneToday))
+            // --- max usage ---
+            if (isOverUsageLimit(actName, block.bunk, activityProperties, historicalCounts, doneToday))
                 return false;
 
-            if (activitiesDoneToday.has(name)) return false;
+            // --- already done today ---
+            if (doneToday.has(actName)) return false;
 
             return true;
         });
 
-        const sortedPicks = sortPicksByFreshness(
-            availablePicks,
-            bunkHistory,
-            block.divName,
-            activityProperties
-        );
-
-        return sortedPicks[0] || null;
+        const sorted = sortPicksByFreshness(available, bunkHist, block.divName, activityProperties);
+        return sorted[0] || null;
     };
 
     // ============================================================================
-    // SPORTS
+    // SPORTS ACTIVITY SELECTOR
     // ============================================================================
-
     window.findBestSportActivity = function (
         block,
         allActivities,
@@ -149,38 +156,28 @@
                 _activity: a.sport
             }));
 
-        const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
-        const activitiesDoneToday = getGeneralActivitiesDoneToday(block.bunk);
+        const bunkHist = rotationHistory?.bunks?.[block.bunk] || {};
+        const doneToday = getGeneralActivitiesDoneToday(block.bunk);
 
-        const availablePicks = sports.filter(pick => {
-            // 🔥 FIXED: Proper canBlockFit signature
-            return (
-                window.SchedulerCoreUtils?.canBlockFit(
-                    block,
-                    fieldLabel(pick.field),
-                    activityProperties,
-                    window.fieldUsageBySlot,      // FIXED
-                    pick._activity,
-                    false
-                ) &&
-                !activitiesDoneToday.has(pick._activity)
-            );
+        const available = sports.filter(pick => {
+            if (!window.SchedulerCoreUtils.canBlockFit(
+                block,
+                fieldLabel(pick.field),
+                activityProperties,
+                pick._activity,
+                false
+            )) return false;
+
+            return !doneToday.has(pick._activity);
         });
 
-        const sortedPicks = sortPicksByFreshness(
-            availablePicks,
-            bunkHistory,
-            block.divName,
-            activityProperties
-        );
-
-        return sortedPicks[0] || null;
+        const sorted = sortPicksByFreshness(available, bunkHist, block.divName, activityProperties);
+        return sorted[0] || null;
     };
 
     // ============================================================================
-    // GENERAL ACTIVITIES
+    // GENERAL ACTIVITY SELECTOR
     // ============================================================================
-
     window.findBestGeneralActivity = function (
         block,
         allActivities,
@@ -190,49 +187,41 @@
         rotationHistory,
         historicalCounts
     ) {
-        const allPossiblePicks = allActivities.map(a => ({
+        const picks = allActivities.map(a => ({
             field: a.field,
             sport: a.sport,
             _activity: a.sport || a.field
         }));
 
-        const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
-        const activitiesDoneToday = getGeneralActivitiesDoneToday(block.bunk);
+        const bunkHist = rotationHistory?.bunks?.[block.bunk] || {};
+        const doneToday = getGeneralActivitiesDoneToday(block.bunk);
 
-        const availablePicks = allPossiblePicks.filter(pick => {
-            const name = pick._activity;
+        const available = picks.filter(pick => {
+            const actName = pick._activity;
 
-            // 🔥 FIXED: Proper canBlockFit signature
-            if (!window.SchedulerCoreUtils?.canBlockFit(
+            // timeline/capacity check
+            if (!window.SchedulerCoreUtils.canBlockFit(
                 block,
                 fieldLabel(pick.field),
                 activityProperties,
-                window.fieldUsageBySlot,        // FIXED
-                name,
+                actName,
                 false
-            )) {
-                return false;
-            }
+            )) return false;
 
-            // Special case for specials (field but no sport)
-            if (pick.field && !pick.sport) {
-                if (isOverUsageLimit(name, block.bunk, activityProperties, historicalCounts, activitiesDoneToday))
+            // max usage (only if special i.e. field but no sport)
+            const isSpecial = pick.field && !pick.sport;
+            if (isSpecial) {
+                if (isOverUsageLimit(actName, block.bunk, activityProperties, historicalCounts, doneToday))
                     return false;
             }
 
-            if (activitiesDoneToday.has(name)) return false;
-
-            return true;
+            // already used today
+            return !doneToday.has(actName);
         });
 
-        const sortedPicks = sortPicksByFreshness(
-            availablePicks,
-            bunkHistory,
-            block.divName,
-            activityProperties
-        );
+        const sorted = sortPicksByFreshness(available, bunkHist, block.divName, activityProperties);
 
-        return sortedPicks[0] || { field: "Free", sport: null, _activity: "Free" };
+        return sorted[0] || { field: "Free", sport: null, _activity: "Free" };
     };
 
 })();
