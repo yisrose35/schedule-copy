@@ -649,7 +649,8 @@
         `;
 
         const config = window.SchedulerCoreUtils.loadAndFilterData();
-        const { availableDivisions, divisions } = config;
+        // FIX: Defensive destructuring here too
+        const { availableDivisions = [], divisions = {} } = config;
 
         const chipBox = document.createElement("div");
         chipBox.className = "chips";
@@ -741,7 +742,8 @@
         box.innerHTML = "";
 
         const config = window.SchedulerCoreUtils.loadAndFilterData();
-        const { divisions, availableDivisions } = config;
+        // FIX: Defensive destructuring here too
+        const { divisions = {}, availableDivisions = [] } = config;
 
         const master = window.loadGlobalSettings?.() || {};
         const fields = master.app1?.fields || [];
