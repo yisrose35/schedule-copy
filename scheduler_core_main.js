@@ -304,7 +304,7 @@ const {
 
         if (window.unifiedTimes.length === 0) return false;
 
-        availableDivisions.forEach(divName => {
+        Object.keys(divisions).forEach(divName => {
             (divisions[divName]?.bunks || []).forEach(bunk => {
                 window.scheduleAssignments[bunk] = new Array(window.unifiedTimes.length);
             });
@@ -700,7 +700,7 @@ const {
             const historyToSave = { ...rotationHistory };
             const timestamp = Date.now();
 
-            availableDivisions.forEach(divName => {
+            Object.keys(divisions).forEach(divName => {
                 (divisions[divName]?.bunks || []).forEach(bunk => {
                     const schedule = window.scheduleAssignments[bunk] || [];
                     let lastActivity = null;
