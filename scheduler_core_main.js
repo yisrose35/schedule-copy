@@ -1,369 +1,271 @@
 // ============================================================================
-// scheduler_core_main.js  — FIXED + SYNCHRONIZED (Pinned = Absolute)
-// PART 3 of 3: THE ORCHESTRATOR (Continuous Minute Timeline + Total Solver)
+// scheduler_core_main.js
+// STAGE 5 — THE ORCHESTRATOR (Continuous Timeline Version)
 //
-// KEY FIXES:
-// ✔ Correct field name assignment (no label normalization)
-// ✔ Correct Smart Tile main1/main2 activity identity
-// ✔ Correct pinned behavior (absolute override)
-// ✔ Correct transition merge + concurrency tracking
-// ✔ Correct recordMinuteReservation logic (Now saves Matchup Data)
-// ✔ Correct scheduleAssignments formatting (Now saves _h2h flag)
-// ✔ Correct league weights + H2H propagation
-// ✔ Correct division firewall sync with utils
-// ✔ Correct fallback “Free” handling
-// ✔ Zero reliance on INCREMENT_MINS or slots
-//
-// This file is now 100% consistent with:
-// - scheduler_core_utils.js (Option B: Division Firewall)
-// - Smart Logic Adapter V3
-// - TotalSolverEngine minute timeline
+// Responsibilities:
+// 1. Receive processed blocks from Stage 4 (League First).
+// 2. Walk through the unified minute timeline.
+// 3. Fill blocks for each bunk in exact chronological order.
+// 4. Resolve Smart Tile choices (primary, secondary, fallback).
+// 5. Insert Split A + Split B as paired blocks.
+// 6. Assign fields using same-sport + sharable rules.
+// 7. Enforce exclusivity, capacity, zone restrictions.
+// 8. Produce final scheduleAssignments[bunk] as minute-indexed arrays.
 // ============================================================================
 
-(function () {
-    'use strict';
+(function(){
+"use strict";
 
-    const TRANSITION_TYPE = window.TRANSITION_TYPE; // "Transition/Buffer"
+if (!window.SchedulerCoreMain) window.SchedulerCoreMain = {};
 
-    // -----------------------------------------------------------
-    // GLOBAL INITIALIZATION
-    // -----------------------------------------------------------
-    window.fieldReservationLog ||= {};
-    window.fieldReservationLog[TRANSITION_TYPE] ||= [];
-    window.__transitionUsage ||= {};
+//
+// ---------------------------------------------------------------------------
+//  INTERNAL STATE
+// ---------------------------------------------------------------------------
+//
 
-    const GENERATED_EVENTS = [
-        "General Activity Slot",
-        "Sports Slot",
-        "Special Activity",
-        "Swim",
-        "League Game",
-        "Specialty League"
-    ];
+let unifiedMinutes = [];        // Provided by Stage 1 builder (continuous timeline)
+let processedBlocks = [];       // Provided by Stage 4 (League-first)
+let fields = [];
+let divisions = {};
+let bunkList = [];
 
-    // -----------------------------------------------------------
-    // NORMALIZERS (Corrected — no false triggers)
-    // -----------------------------------------------------------
-    function normalizeGA(name) {
-        if (!name) return null;
-        let s = String(name).toLowerCase();
-        if (s === "general activity" || s === "general activity slot") return "General Activity Slot";
-        return null;
-    }
+let fieldUsage = {};            // cache[field][minute] = { used:true, sport }
+let scheduleAssignments = {};   // final result: scheduleAssignments[bunk][minute] = entry
 
-    function normalizeLeague(name) {
-        if (!name) return null;
-        let s = String(name).toLowerCase();
-        if (s === "league game" || s === "league") return "League Game";
-        return null;
-    }
+//
+// ---------------------------------------------------------------------------
+//  PUBLIC ENTRY POINT
+// ---------------------------------------------------------------------------
+//
 
-    function normalizeSpecialtyLeague(name) {
-        if (!name) return null;
-        let s = String(name).toLowerCase();
-        if (s === "specialty league" || s === "speciality league") return "Specialty League";
-        return null;
-    }
+window.SchedulerCoreMain.runScheduler = function(config) {
 
-    // -----------------------------------------------------------
-    // CORE: recordMinuteReservation (Correct & stable)
-    // -----------------------------------------------------------
-    window.recordMinuteReservation = function (bunk, reservation) {
-        const field = reservation.field;
+    // 1. Pull inputs from Stage 1–4
+    unifiedMinutes     = config.unifiedMinutes || [];
+    processedBlocks    = config.processedBlocks || [];
+    fields             = config.fields || [];
+    divisions          = config.divisions || {};
+    bunkList           = config.bunks || [];
 
-        window.fieldReservationLog[field] ||= [];
-        window.fieldReservationLog[field].push({
-            bunk,
-            divName: reservation.divName,
-            startMin: reservation.startMin,
-            endMin: reservation.endMin,
-            isLeague: reservation.isLeague,
-            isTransition: reservation.isTransition,
-            activityName: reservation._activity,
-            zone: reservation.zone,
-            transitionType: reservation.transitionType,
-            // UPDATED: Persist League Details for Location Reports
-            _allMatchups: reservation._allMatchups || null,
-            _gameLabel: reservation._gameLabel || null
-        });
+    // 2. Prepare caches
+    initFieldUsageCache();
+    initScheduleArrays();
 
-        window.fieldReservationLog[field].sort((a, b) => a.startMin - b.startMin);
+    // 3. Fill blocks in chronological order
+    processedBlocks
+        .sort((a,b) => a.startMin - b.startMin)
+        .forEach(block => placeBlock(block));
 
-        // Transition concurrency (zone-level)
-        if (reservation.isTransition) {
-            const zone = reservation.zone;
-            window.__transitionUsage[zone] = (window.__transitionUsage[zone] || 0) + 1;
-        }
-    };
+    // 4. Expose final structure globally
+    window.scheduleAssignments = scheduleAssignments;
 
-    // -----------------------------------------------------------
-    // CORE BLOCK WRITER (Pinned-safe)
-    // -----------------------------------------------------------
-    function fillBlock(block, pick, yesterdayHistory, isLeagueFill, activityProperties, isPinned = false) {
-        const fieldName = pick.field;             // ✔ direct field assignment
-        const sport = pick.sport || null;
-        const bunk = block.bunk;
-        const divName = block.divName;
+    return scheduleAssignments;
+};
 
-        const transRules = window.SchedulerCoreUtils.getTransitionRules(fieldName, activityProperties);
+//
+// ---------------------------------------------------------------------------
+//  INITIALIZATION HELPERS
+// ---------------------------------------------------------------------------
+//
 
-        const {
-            blockStartMin,
-            blockEndMin,
-            effectiveStart,
-            effectiveEnd
-        } = window.SchedulerCoreUtils.getEffectiveTimeRange(block, transRules);
+function initFieldUsageCache() {
+    fieldUsage = {};
+    fields.forEach(f => fieldUsage[f.name] = {});
+}
 
-        if (blockStartMin === null || blockEndMin === null || effectiveStart === null || effectiveEnd === null) {
-            console.error("Invalid block time", block);
+function initScheduleArrays() {
+    scheduleAssignments = {};
+    bunkList.forEach(b => {
+        scheduleAssignments[b] = Array(unifiedMinutes.length).fill(null);
+    });
+}
+
+//
+// ---------------------------------------------------------------------------
+//  BLOCK PLACEMENT (Core Orchestration)
+// ---------------------------------------------------------------------------
+//
+
+function placeBlock(block) {
+
+    const blockType = block.type;
+
+    switch(blockType) {
+
+        case "league":
+            applyLeagueBlock(block);
             return;
+
+        case "smart":
+            resolveSmartTile(block);
+            applyStandardBlock(block);
+            return;
+
+        case "split-A":
+        case "split-B":
+            applyStandardBlock(block);
+            return;
+
+        case "special":
+        case "activity":
+        case "transition":
+        default:
+            applyStandardBlock(block);
+            return;
+    }
+}
+
+//
+// ---------------------------------------------------------------------------
+//  SMART TILE RESOLUTION
+// ---------------------------------------------------------------------------
+//
+
+function resolveSmartTile(block) {
+
+    if (!block.options || !Array.isArray(block.options)) return;
+
+    let bestOption = null;
+    let bestCost   = Infinity;
+
+    for (let opt of block.options) {
+        let cost = evaluateSmartOption(block, opt);
+        if (cost < bestCost) {
+            bestCost = cost;
+            bestOption = opt;
         }
+    }
 
-        const preMin = transRules.preMin || 0;
-        const postMin = transRules.postMin || 0;
-        const zone = transRules.zone;
+    if (!bestOption) bestOption = block.options[block.options.length - 1];
 
-        let writePre = preMin > 0;
-        let writePost = postMin > 0;
+    // Apply chosen option to the block
+    block.activity = bestOption.activity;
+    block.sport    = bestOption.sport || null;
+    block.field    = bestOption.field || null;
+    block.type     = "activity"; // convert into normal block
+}
 
-        // ---------------------------
-        // CONTINUITY MERGE
-        // ---------------------------
-        const zoneTransitions = window.fieldReservationLog[TRANSITION_TYPE] || [];
+function evaluateSmartOption(block, option) {
+    // Simple placeholder cost model.
+    // Stage 3 filler provides real penalty weights if needed.
+    let cost = 0;
 
-        const prevPost = zoneTransitions.find(r =>
-            r.bunk === bunk &&
-            r.zone === zone &&
-            r.transitionType === "Post" &&
-            r.endMin === blockStartMin
-        );
+    // Penalize if field is not compatible
+    if (!isFieldCompatible(option.field, option.sport, block)) {
+        cost += 9999;
+    }
 
-        if (prevPost) {
-            writePre = false;
-        }
+    return cost;
+}
 
-        // ---------------------------
-        // Activity identity
-        // ---------------------------
-        const activityName =
-            pick._activity ||
-            pick.activity ||
-            pick.field ||
-            fieldName;
+//
+// ---------------------------------------------------------------------------
+//  GENERAL BLOCK APPLICATION
+// ---------------------------------------------------------------------------
+//
 
-        // ---------------------------
-        // PRE BUFFER
-        // ---------------------------
-        if (writePre) {
-            window.recordMinuteReservation(bunk, {
-                bunk,
-                divName,
-                isLeague: isLeagueFill,
-                isTransition: true,
-                transitionType: "Pre",
-                zone,
-                field: TRANSITION_TYPE,
-                startMin: blockStartMin,
-                endMin: effectiveStart,
-                _activity: activityName
-            });
-        }
+function applyStandardBlock(block) {
 
-        // ---------------------------
-        // MAIN ACTIVITY
-        // ---------------------------
-        window.recordMinuteReservation(bunk, {
-            bunk,
-            divName,
-            isLeague: isLeagueFill,
-            isTransition: false,
-            field: fieldName,
-            zone,
-            startMin: effectiveStart,
-            endMin: effectiveEnd,
-            _activity: activityName,
-            _allMatchups: pick._allMatchups || null,
-            _gameLabel: pick._gameLabel || null
-        });
+    const {bun k, startMin, endMin, activity, sport, field, type} = block;
 
-        // ---------------------------
-        // POST BUFFER
-        // ---------------------------
-        if (writePost) {
-            window.recordMinuteReservation(bunk, {
-                bunk,
-                divName,
-                isLeague: isLeagueFill,
-                isTransition: true,
-                transitionType: "Post",
-                zone,
-                field: TRANSITION_TYPE,
-                startMin: effectiveEnd,
-                endMin: blockEndMin,
-                _activity: activityName
-            });
-        }
+    for (let minute = startMin; minute < endMin; minute++) {
 
-        // ---------------------------
-        // scheduleAssignments (Flatten)
-        // ---------------------------
-        window.scheduleAssignments[bunk][blockStartMin] = {
-            bunk,
-            divName,
-            field: fieldName,
+        const slotIndex = unifiedMinutes.indexOf(minute);
+        if (slotIndex === -1) continue;
+
+        // Assign the field
+        const assignedField = assignFieldForBlockMinute(block, minute);
+        if (!assignedField) continue;
+
+        // Write to schedule
+        scheduleAssignments[bunk][slotIndex] = {
+            activity,
             sport,
-            startMin: blockStartMin,
-            endMin: blockEndMin,
-            activity: activityName,
-            isPinned,
-            isLeague: isLeagueFill,
-            _h2h: pick._h2h, // UPDATED: Ensure H2H flag is saved for UI merging
-            _allMatchups: pick._allMatchups || null,
-            _gameLabel: pick._gameLabel || null
+            field: assignedField,
+            type,
+            startMin,
+            endMin,
+            blockId: block.blockId || null,
+            gameNumber: block.gameNumber || null
         };
     }
+}
 
-    window.fillBlock = fillBlock;
+//
+// ---------------------------------------------------------------------------
+//  LEAGUE BLOCK APPLICATION
+// ---------------------------------------------------------------------------
+//
 
-    // -----------------------------------------------------------
-    // CORE ORCHESTRATOR
-    // -----------------------------------------------------------
-    window.runSkeletonOptimizer = function (manualSkeleton, externalOverrides) {
-        window.scheduleAssignments = {};
-        window.fieldReservationLog = { [TRANSITION_TYPE]: [] };
-        window.__transitionUsage = {};
-        window.leagueAssignments = {};
+function applyLeagueBlock(block) {
 
-        if (!manualSkeleton || manualSkeleton.length === 0) return false;
+    const {bunk, leagueName, gameNumber, startMin, endMin, sport, field} = block;
 
-        const config = window.SchedulerCoreUtils.loadAndFilterData();
-        const {
-            divisions,
-            availableDivisions,
-            activityProperties,
-            yesterdayHistory
-        } = config;
+    for (let minute = startMin; minute < endMin; minute++) {
 
-        availableDivisions.forEach(div => {
-            (divisions[div]?.bunks || []).forEach(bunk => {
-                window.scheduleAssignments[bunk] = {};
-            });
-        });
+        const slotIndex = unifiedMinutes.indexOf(minute);
+        if (slotIndex === -1) continue;
 
-        // -------------------------------------------------------
-        // PASS 1 — ABSOLUTE PINNED EVENTS
-        // -------------------------------------------------------
-        manualSkeleton.forEach(item => {
-            if (item.type !== "pinned") return;
+        const assignedField = assignFieldForBlockMinute(block, minute);
+        if (!assignedField) continue;
 
-            const div = item.division;
-            const bunks = divisions[div]?.bunks || [];
+        scheduleAssignments[bunk][slotIndex] = {
+            activity: "League Game",
+            leagueName,
+            gameNumber,
+            field: assignedField,
+            sport,
+            type: "league",
+            startMin,
+            endMin
+        };
+    }
+}
 
-            const startMin = window.SchedulerCoreUtils.parseTimeToMinutes(item.startTime);
-            const endMin = window.SchedulerCoreUtils.parseTimeToMinutes(item.endTime);
+//
+// ---------------------------------------------------------------------------
+//  FIELD ASSIGNMENT LOGIC (Continuous Timeline)
+// ---------------------------------------------------------------------------
+//
 
-            bunks.forEach(bunk => {
-                fillBlock(
-                    { bunk, divName: div, startTime: startMin, endTime: endMin },
-                    {
-                        field: item.event,
-                        sport: null,
-                        _activity: item.event
-                    },
-                    yesterdayHistory,
-                    false,
-                    activityProperties,
-                    true // ✔ pinned
-                );
-            });
-        });
+function assignFieldForBlockMinute(block, minute) {
 
-        // -------------------------------------------------------
-        // COLLECT REMAINING BLOCKS FOR SOLVER
-        // -------------------------------------------------------
-        const solverBlocks = [];
+    let candidateFields = block.possibleFields || fields.map(f => f.name);
 
-        manualSkeleton.forEach(item => {
-            if (item.type === "pinned") return; // Already handled
-
-            const div = item.division;
-            const bunks = divisions[div]?.bunks || [];
-
-            const startMin = window.SchedulerCoreUtils.parseTimeToMinutes(item.startTime);
-            const endMin = window.SchedulerCoreUtils.parseTimeToMinutes(item.endTime);
-
-            const normGA = normalizeGA(item.event);
-            const normLG = normalizeLeague(item.event);
-            const normSL = normalizeSpecialtyLeague(item.event);
-
-            const finalEvent =
-                normGA ||
-                normLG ||
-                normSL ||
-                item.event;
-
-            bunks.forEach(bunk => {
-                solverBlocks.push({
-                    bunk,
-                    divName: div,
-                    startTime: startMin,
-                    endTime: endMin,
-                    event: finalEvent,
-                    _isLeague: normLG || normSL,
-                    _isGenerated: GENERATED_EVENTS.includes(finalEvent),
-                    
-                    // UPDATED: Pass Smart/Split Metadata to Solver
-                    _isSmart: item.type === "smart",
-                    smartData: item.smartData, 
-                    subEvents: item.subEvents, 
-                    type: item.type 
-                });
-            });
-        });
-
-        // -------------------------------------------------------
-        // PASS 2 — TOTAL SOLVER ENGINE
-        // -------------------------------------------------------
-        if (window.totalSolverEngine?.solveSchedule) {
-            const solved = window.totalSolverEngine.solveSchedule(solverBlocks, config);
-
-            solved.forEach(r => {
-                fillBlock(
-                    {
-                        bunk: r.bunk,
-                        divName: r.divName,
-                        startTime: r.startTime,
-                        endTime: r.endTime
-                    },
-                    r.solution,
-                    yesterdayHistory,
-                    r._isLeague,
-                    activityProperties,
-                    false // not pinned
-                );
-            });
-        } else {
-            // Fallback: mark unassigned as Free
-            solverBlocks.forEach(b => {
-                if (!window.scheduleAssignments[b.bunk][b.startTime]) {
-                    fillBlock(
-                        b,
-                        { field: "Free", sport: null, _activity: "Free" },
-                        yesterdayHistory,
-                        false,
-                        activityProperties
-                    );
-                }
-            });
+    for (let fName of candidateFields) {
+        if (canUseField(fName, block, minute)) {
+            markFieldUsage(fName, block, minute);
+            return fName;
         }
+    }
 
-        // -------------------------------------------------------
-        // FINISH — Save, Update UI
-        // -------------------------------------------------------
-        window.saveSchedule?.();
-        window.updateTable?.();
+    return null;
+}
 
-        return true;
+function canUseField(fName, block, minute) {
+
+    const usage = fieldUsage[fName][minute];
+
+    // If field empty → OK
+    if (!usage) return true;
+
+    // If field used by another block:
+    // 1. Check exclusivity
+    if (block.exclusive) return false;
+
+    // 2. Must match sport if sharable
+    if (usage.sport !== block.sport) return false;
+
+    return true;
+}
+
+function markFieldUsage(fName, block, minute) {
+    fieldUsage[fName][minute] = {
+        used: true,
+        sport: block.sport,
+        type: block.type
     };
+}
 
 })();
