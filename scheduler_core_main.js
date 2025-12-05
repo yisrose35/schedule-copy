@@ -7,8 +7,8 @@
 // ✔ Correct Smart Tile main1/main2 activity identity
 // ✔ Correct pinned behavior (absolute override)
 // ✔ Correct transition merge + concurrency tracking
-// ✔ Correct recordMinuteReservation logic
-// ✔ Correct scheduleAssignments formatting
+// ✔ Correct recordMinuteReservation logic (Now saves Matchup Data)
+// ✔ Correct scheduleAssignments formatting (Now saves _h2h flag)
 // ✔ Correct league weights + H2H propagation
 // ✔ Correct division firewall sync with utils
 // ✔ Correct fallback “Free” handling
@@ -81,7 +81,10 @@
             isTransition: reservation.isTransition,
             activityName: reservation._activity,
             zone: reservation.zone,
-            transitionType: reservation.transitionType
+            transitionType: reservation.transitionType,
+            // UPDATED: Persist League Details for Location Reports
+            _allMatchups: reservation._allMatchups || null,
+            _gameLabel: reservation._gameLabel || null
         });
 
         window.fieldReservationLog[field].sort((a, b) => a.startMin - b.startMin);
@@ -214,6 +217,7 @@
             activity: activityName,
             isPinned,
             isLeague: isLeagueFill,
+            _h2h: pick._h2h, // UPDATED: Ensure H2H flag is saved for UI merging
             _allMatchups: pick._allMatchups || null,
             _gameLabel: pick._gameLabel || null
         };
@@ -307,10 +311,12 @@
                     event: finalEvent,
                     _isLeague: normLG || normSL,
                     _isGenerated: GENERATED_EVENTS.includes(finalEvent),
+                    
+                    // UPDATED: Pass Smart/Split Metadata to Solver
                     _isSmart: item.type === "smart",
-                    smartData: item.smartData, // Pass smartData to solver
-                    subEvents: item.subEvents, // Pass subEvents to solver
-                    type: item.type // Pass type to solver
+                    smartData: item.smartData, 
+                    subEvents: item.subEvents, 
+                    type: item.type 
                 });
             });
         });
