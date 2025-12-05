@@ -7,6 +7,7 @@
 // - Implemented Minimum Duration Check (Issue 1)
 // - Implemented Anchor Time Logic (User Requirement)
 // - FIX: Added null check for 'props' in getTransitionRules to prevent crash.
+// - FIX: Robust check for schedule array in loadAndFilterData (Prevents forEach crash).
 // ============================================================================
 (function() {
     'use strict';
@@ -520,7 +521,11 @@
                 const sched = dayData.scheduleAssignments || {};
                 Object.keys(sched).forEach(b => {
                     if (!rawHistory[b]) rawHistory[b] = {};
-                    (sched[b] || []).forEach(e => {
+                    
+                    // FIXED: Safety check if sched[b] is not an array
+                    const events = Array.isArray(sched[b]) ? sched[b] : [];
+                    
+                    events.forEach(e => {
                         if (e && e._activity && !e.continuation) {
                             if (!rawHistory[b][e._activity]) rawHistory[b][e._activity] = [];
                             rawHistory[b][e._activity].push(dateStr);
