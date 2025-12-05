@@ -9,6 +9,7 @@
 // ✓ League-first solving, then activity blocks
 // ✓ Complete compatibility with Smart Tiles & Minute Timeline
 // ✓ Clean modern design: no legacy scoring, no legacy history writes
+// ✓ FIXED: Field Collision Check in League Matchups
 // ============================================================================
 
 (function () {
@@ -258,7 +259,8 @@ function findOptimalSchedule(cands, current) {
         const available =
             !cur.some(m =>
                 m.t1 === cand.t1 || m.t1 === cand.t2 ||
-                m.t2 === cand.t1 || m.t2 === cand.t2
+                m.t2 === cand.t1 || m.t2 === cand.t2 ||
+                m.field === cand.field // FIXED: Check for FIELD collision
             );
 
         if (available) backtrack(idx + 1, [...cur, cand]);
@@ -302,6 +304,8 @@ Solver.generateDailyMatchups = function (league, repBlock) {
     fieldAvailabilityCache = buildFieldConstraintCache(repBlock, leagueSports);
 
     const viable = [];
+    // Load balancing: track how often we've offered a field in this batch
+    const fieldLoadBalance = {}; 
 
     for (const p of candidates) {
         let minSC = Infinity;
@@ -323,7 +327,19 @@ Solver.generateDailyMatchups = function (league, repBlock) {
             }
         }
 
-        const chosenField = shuffleArray(fieldAvailabilityCache[bestSport])[0];
+        const validFields = fieldAvailabilityCache[bestSport] || [];
+        if(validFields.length === 0) continue;
+
+        // FIXED: Load Balanced Field Selection
+        // 1. Shuffle fields to randomise
+        // 2. Sort by usage count (least used first)
+        const shuffledFields = shuffleArray([...validFields]);
+        shuffledFields.sort((a, b) => {
+            return (fieldLoadBalance[a] || 0) - (fieldLoadBalance[b] || 0);
+        });
+
+        const chosenField = shuffledFields[0];
+        fieldLoadBalance[chosenField] = (fieldLoadBalance[chosenField] || 0) + 1;
 
         viable.push({
             t1: p.t1,
@@ -331,7 +347,7 @@ Solver.generateDailyMatchups = function (league, repBlock) {
             playCount: p.playCount,
             sport: bestSport,
             field: chosenField,
-            _sportConstraintCount: fieldAvailabilityCache[bestSport].length,
+            _sportConstraintCount: validFields.length,
             key: [p.t1, p.t2].sort().join("|")
         });
     }
@@ -368,6 +384,7 @@ Solver.solveLeagueSchedule = function (leagueBlocks) {
         const matches = Solver.generateDailyMatchups(league, rep);
         if (!matches.length) continue;
 
+        // Inter-league collision check (if multiple leagues run same time)
         const available = matches.filter(m => !fieldsUsed.has(m.field));
         if (!available.length) continue;
 
