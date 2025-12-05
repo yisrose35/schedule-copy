@@ -138,15 +138,18 @@
     // ==========================================================================
     function loadDailySkeleton() {
         const daily = window.loadCurrentDailyData?.() || {};
+        
+        // 1. If we have ALREADY edited the skeleton for this specific day, load that.
         if (Array.isArray(daily.manualSkeleton) && daily.manualSkeleton.length > 0) {
             dailyOverrideSkeleton = JSON.parse(JSON.stringify(daily.manualSkeleton));
             return;
         }
 
-        // FALLBACK: Use template
+        // 2. Otherwise, look for a standard template.
         const global = window.loadGlobalSettings?.() || {};
-        const skeletons = global.app1?.savedSkeletons || {};
-        const assign = global.app1?.skeletonAssignments || {};
+        const app1 = global.app1 || {};
+        const skeletons = app1.savedSkeletons || {};
+        const assign = app1.skeletonAssignments || {};
 
         const dateStr = window.currentScheduleDate || "";
         const [yy, mm, dd] = dateStr.split("-").map(Number);
@@ -156,12 +159,23 @@
         const dayName = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][day];
 
         let templateName = assign[dayName] || assign["Default"];
-        if (!templateName || !skeletons[templateName]) {
-            dailyOverrideSkeleton = [];
+        
+        // 3. Try loading the assigned template (e.g. "Monday Schedule")
+        if (templateName && skeletons[templateName]) {
+            dailyOverrideSkeleton = JSON.parse(JSON.stringify(skeletons[templateName]));
             return;
         }
 
-        dailyOverrideSkeleton = JSON.parse(JSON.stringify(skeletons[templateName]));
+        // 4. FALLBACK: Load the "Master Skeleton" from the main app state
+        // This ensures the grid isn't empty if the user hasn't set up templates yet.
+        if (Array.isArray(app1.manualSkeleton) && app1.manualSkeleton.length > 0) {
+            console.log("Daily Adjustments: No specific daily template found, using Global Master Skeleton.");
+            dailyOverrideSkeleton = JSON.parse(JSON.stringify(app1.manualSkeleton));
+            return;
+        }
+
+        // 5. If absolutely nothing exists, start empty.
+        dailyOverrideSkeleton = [];
     }
 
     function saveDailySkeleton() {
