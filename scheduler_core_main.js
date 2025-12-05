@@ -240,28 +240,37 @@
 
         // 1. load config
         const config = window.SchedulerCoreUtils.loadAndFilterData();
-        const {
-            divisions,
-            availableDivisions,
-            activityProperties,
-            allActivities,
-            h2hActivities,
-            fieldsBySport,
-            masterLeagues,
-            masterSpecialtyLeagues,
-            masterSpecials,
-            yesterdayHistory,
-            rotationHistory,
-            disabledLeagues,
-            disabledSpecialtyLeagues,
-            historicalCounts,
-            specialActivityNames,
-            disabledFields,
-            disabledSpecials,
-            dailyFieldAvailability,
-            bunkMetaData,
-            masterZones
-        } = config;
+       // Use the new loader results
+const {
+    divisions,
+    bunks,
+    fields,
+
+    // loader results
+    activities,
+    blocks,
+
+    // the following still come from loader → utils → loader pipeline
+    activityProperties,
+    allActivities,
+    h2hActivities,
+    fieldsBySport,
+    masterLeagues,
+    masterSpecialtyLeagues,
+    masterSpecials,
+    yesterdayHistory,
+    rotationHistory,
+    disabledLeagues,
+    disabledSpecialtyLeagues,
+    historicalCounts,
+    specialActivityNames,
+    disabledFields,
+    disabledSpecials,
+    dailyFieldAvailability,
+    bunkMetaData,
+    masterZones
+} = config;
+
 
         let fieldUsageBySlot = {};
         window.fieldUsageBySlot = fieldUsageBySlot;
