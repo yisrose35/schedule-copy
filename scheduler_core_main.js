@@ -307,7 +307,10 @@
                     event: finalEvent,
                     _isLeague: normLG || normSL,
                     _isGenerated: GENERATED_EVENTS.includes(finalEvent),
-                    _isSmart: item.type === "smart"
+                    _isSmart: item.type === "smart",
+                    smartData: item.smartData, // Pass smartData to solver
+                    subEvents: item.subEvents, // Pass subEvents to solver
+                    type: item.type // Pass type to solver
                 });
             });
         });
