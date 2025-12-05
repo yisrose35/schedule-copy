@@ -87,7 +87,6 @@
             const slot = window.unifiedTimes[i];
             const slotStart = new Date(slot.start).getHours() * 60 + new Date(slot.start).getMinutes();
 
-            // Overlap check: slot starts within [startMin, endMin)
             if (slotStart >= startMin && slotStart < endMin) {
                 slots.push(i);
             }
@@ -99,7 +98,6 @@
         let blockStartMin = (typeof block.startTime === "number") ? block.startTime : null;
         let blockEndMin = (typeof block.endTime === "number") ? block.endTime : null;
 
-        // Fallback to slot-based time if minutes not provided
         if ((blockStartMin == null || blockEndMin == null) && window.unifiedTimes && Array.isArray(block.slots) && block.slots.length > 0) {
             const minIndex = Math.min(...block.slots);
             const maxIndex = Math.max(...block.slots);
@@ -138,7 +136,6 @@
 
         const props = activityProperties[fieldName];
 
-        // FIX: Prevent crash if props or props.transition is missing
         if (!props || !props.transition) {
             return defaultRules;
         }
@@ -146,7 +143,6 @@
         return { ...defaultRules, ...props.transition };
     };
 
-    // Implements Anchor Time Logic (User Requirement)
     Utils.getEffectiveTimeRange = function (block, transitionRules) {
         const { blockStartMin, blockEndMin } = Utils.getBlockTimeRange(block);
 
@@ -210,7 +206,6 @@
         const hasAvailableRules = rules.some(r => r.type === 'Available');
         let isAvailable = !hasAvailableRules;
 
-        // Check Available rules
         for (const rule of rules) {
             if (rule.type === 'Available' && rule.startMin != null && rule.endMin != null) {
                 if (slotStartMin >= rule.startMin && slotEndMin <= rule.endMin) {
@@ -222,7 +217,6 @@
 
         if (!isAvailable) return false;
 
-        // Check Unavailable rules
         for (const rule of rules) {
             if (rule.type === 'Unavailable' && rule.startMin != null && rule.endMin != null) {
                 if (slotStartMin < rule.endMin && slotEndMin > rule.startMin) {
@@ -233,8 +227,6 @@
 
         return true;
     };
-
-    // --- INTERNAL HELPERS ---
 
     function isLeagueAssignment(assignmentObj, activityName) {
         if (assignmentObj) {
@@ -308,14 +300,14 @@
     }
 
     // =================================================================
-    // MAIN CAPACITY CHECK (THE BOUNCER)
+    // MAIN CAPACITY CHECK
     // =================================================================
 
     Utils.canBlockFit = function (block, fieldName, activityProperties, fieldUsageBySlot, proposedActivity, isLeague = false) {
         if (!fieldName) return false;
 
         const props = activityProperties[fieldName];
-        if (!props) return true; // No rules = allowed
+        if (!props) return true;
 
         const transRules = Utils.getTransitionRules(fieldName, activityProperties);
         const {
@@ -326,19 +318,18 @@
             activityDuration
         } = Utils.getEffectiveTimeRange(block, transRules);
 
-        // --- 0. Minimum Duration Check ---
         if (activityDuration < transRules.minDurationMin || activityDuration <= 0) {
             return false;
         }
 
-        // --- 0.5. Transition Concurrency Limit ---
         if (transRules.preMin > 0 || transRules.postMin > 0) {
             const zones = window.getZones?.() || {};
             const zone = zones[transRules.zone];
             const maxConcurrent = zone?.maxConcurrent || 99;
 
             if (maxConcurrent < 99) {
-                const isMerged = blockStartMin > 0 &&
+                const isMerged =
+                    blockStartMin > 0 &&
                     window.scheduleAssignments[block.bunk]?.[block.slots[0] - 1]?._zone === transRules.zone;
 
                 if (!isMerged && (window.__transitionUsage?.[transRules.zone] || 0) >= maxConcurrent) {
@@ -347,7 +338,6 @@
             }
         }
 
-        // --- Capacity Setup ---
         let maxCapacity = 1;
         if (props.sharableWith) {
             if (props.sharableWith.capacity) {
@@ -364,7 +354,6 @@
         const maxHeadcount = sportMetaData[proposedActivity]?.maxCapacity || Infinity;
         const mySize = bunkMetaData[block.bunk]?.size || 0;
 
-        // --- Division & Preference Checks ---
         if (props.preferences?.enabled && props.preferences.exclusive && !props.preferences.list.includes(block.divName)) {
             return false;
         }
@@ -382,7 +371,6 @@
             return false;
         }
 
-        // --- Time Availability Check ---
         if (blockStartMin != null && blockEndMin != null) {
             const rules = (props.timeRules || []).map(r => ({
                 ...r,
@@ -418,7 +406,6 @@
             return false;
         }
 
-        // --- Slot-by-Slot Capacity Scan ---
         const slotsToScan = transRules.occupiesField
             ? Utils.findSlotsForRange(blockStartMin, blockEndMin)
             : Utils.findSlotsForRange(effectiveStart, effectiveEnd);
@@ -428,12 +415,10 @@
         for (const slotIndex of uniqueSlots) {
             if (slotIndex === undefined) return false;
 
-            // Text-based league conflict detection
             if (isFieldTakenByLeagueText(slotIndex, fieldName)) return false;
 
             const usage = getCombinedUsage(slotIndex, fieldName, fieldUsageBySlot);
 
-            // Division firewall
             if (usage.divisions.length > 0 && usage.divisions.some(d => d !== block.divName)) {
                 return false;
             }
@@ -467,7 +452,6 @@
             const myWeight = proposedIsLeague ? maxCapacity : 1;
             if (currentWeight + myWeight > maxCapacity) return false;
 
-            // Headcount limit
             if (maxHeadcount !== Infinity) {
                 let currentHeadcount = 0;
                 Object.keys(usage.bunks).forEach(bName => {
@@ -476,7 +460,6 @@
                 if (currentHeadcount + mySize > maxHeadcount) return false;
             }
 
-            // Time availability per slot
             if (!Utils.isTimeAvailable(slotIndex, props)) return false;
         }
 
@@ -538,7 +521,6 @@
         const specialNamesSet = new Set();
         const specialRules = {};
 
-        // Load special activity rules
         try {
             masterSpecials.forEach(s => {
                 const name = s.name;
@@ -553,7 +535,6 @@
             console.error("Error loading special activity rules:", e);
         }
 
-        // Historical usage calculation
         try {
             const rawHistory = {};
             const allDaily = window.loadAllDailyData?.() || {};
@@ -608,7 +589,6 @@
                 });
             });
 
-            // Apply manual offsets
             Object.keys(manualOffsets).forEach(b => {
                 historicalCounts[b] ??= {};
                 Object.keys(manualOffsets[b]).forEach(act => {
@@ -620,7 +600,6 @@
             console.error("Error calculating historical counts:", e);
         }
 
-        // Build divisions with overrides
         const availableDivisions = (app1Data.availableDivisions || [])
             .filter(divName => !dailyOverrides.bunks?.includes(divName));
 
@@ -632,7 +611,6 @@
                 .filter(bunk => !dailyOverrides.bunks?.includes(bunk));
         });
 
-        // Build activityProperties
         const activityProperties = {};
         const availableActivityNames = [];
 
@@ -669,7 +647,6 @@
                 capacity = 2;
             }
 
-            // Normalize sharableWith
             if (!f.sharableWith) f.sharableWith = {};
             f.sharableWith.capacity = capacity;
 
@@ -701,7 +678,9 @@
 
         window.allSchedulableNames = availableActivityNames;
 
-        // Build fieldsBySport
+        // =====================================================================
+        // >>>>> FIXED LINE HERE <<<<<
+        // =====================================================================
         const fieldsBySport = {};
         masterFields
             .filter(f => availableActivityNames.includes(f.name))
@@ -709,11 +688,10 @@
                 (f.activities || []).forEach(sport => {
                     if (dailyDisabledSportsByField[f.name]?.includes(sport)) return;
                     fieldsBySport[sport] ??= [];
-                    fieldsBySport].push(f.name);
+                    fieldsBySport[sport].push(f.name);   // ✔ FIXED
                 });
             });
 
-        // Build allActivities list
         const allActivities = [
             ...masterFields
                 .filter(f => availableActivityNames.includes(f.name))
@@ -769,7 +747,6 @@
         };
     };
 
-    // Expose globally
     window.SchedulerCoreUtils = Utils;
 
 })();
