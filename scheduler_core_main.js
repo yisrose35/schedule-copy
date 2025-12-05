@@ -7,6 +7,7 @@
 // - Implemented Atomic Block Filling (Pre/Activity/Post).
 // - Added Transition Concurrency Tracking.
 // - FIXED: Smart Tile Integration (Pass 2.5 restored).
+// - FIX: Corrected canBlockFit argument signature (removed fieldUsageBySlot).
 // ============================================================================
 
 (function () {
@@ -590,11 +591,11 @@
                 pick = window.findBestGeneralActivity(block, allActivities, h2hActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
             }
 
+            // FIX #1: Corrected canBlockFit signature: fieldUsageBySlot removed.
             let fits = pick && window.SchedulerCoreUtils.canBlockFit(
                 block,
                 window.SchedulerCoreUtils.fieldLabel(pick.field),
                 activityProperties,
-                fieldUsageBySlot,
                 pick._activity,
                 false
             );
