@@ -254,6 +254,61 @@
         }
         return false;
     }
+// =================================================================
+// TIME AVAILABILITY CHECK (restored function)
+// =================================================================
+Utils.isTimeAvailable = function (slotIndex, fieldProps) {
+    if (!window.unifiedTimes || !window.unifiedTimes[slotIndex]) return false;
+
+    const slot = window.unifiedTimes[slotIndex];
+    const slotStartMin = new Date(slot.start).getHours() * 60 + new Date(slot.start).getMinutes();
+    const slotEndMin = new Date(slot.end).getHours() * 60 + new Date(slot.end).getMinutes();
+
+    const rules = (fieldProps.timeRules || []).map(r => {
+        if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
+        return {
+            ...r,
+            startMin: Utils.parseTimeToMinutes(r.start),
+            endMin: Utils.parseTimeToMinutes(r.end)
+        };
+    });
+
+    // If no time rules exist, availability defaults to fieldProps.available
+    if (rules.length === 0) return fieldProps.available !== false;
+
+    // Must be generally available
+    if (!fieldProps.available) return false;
+
+    // Check explicit "Available" windows
+    const hasAvailableRules = rules.some(r => r.type === 'Available');
+    let isAvailable = !hasAvailableRules;
+
+    for (const rule of rules) {
+        if (rule.type === 'Available' &&
+            rule.startMin != null &&
+            rule.endMin != null &&
+            slotStartMin >= rule.startMin &&
+            slotEndMin <= rule.endMin) {
+            isAvailable = true;
+            break;
+        }
+    }
+
+    if (!isAvailable) return false;
+
+    // Check disallowed overlaps
+    for (const rule of rules) {
+        if (rule.type === 'Unavailable' &&
+            rule.startMin != null &&
+            rule.endMin != null &&
+            slotStartMin < rule.endMin &&
+            slotEndMin > rule.startMin) {
+            return false;
+        }
+    }
+
+    return true;
+};
 
     // =================================================================
     // MAIN CAPACITY CHECK
