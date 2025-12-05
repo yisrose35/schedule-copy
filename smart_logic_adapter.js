@@ -1,117 +1,70 @@
 // ============================================================================
-// smart_logic_adapter.js  — ORIGINAL LOGIC (RESTORED)
-// Compatible with Minute Timeline + Modern Metadata
-// ============================================================================
-//
-// PURPOSE:
-// Convert raw Smart Tile blocks into standardized solver options.
-//
-// Old Logic Restored:
-// - Every smart tile produces PRIMARY, SECONDARY, FALLBACK options
-// - Metadata is preserved (sport, zone, transitions, sharable rules, etc.)
-// - This file does NOT decide anything — it prepares options only
-// - Solver will pick the best option later
-//
-// New Timeline Compatibility:
-// - Works on minute-level start/end times
+// smart_logic_adapter.js (RESTORED CORE — STAGE 2)
+// PURPOSE: Generate Smart Tile option sets (primary, secondary, fallback)
+// NEW: Fully compatible with timeline engine & preserved metadata from Stage 1
+// This is a drop-in file.
 // ============================================================================
 
-(function() {
-    'use strict';
+(function(){
+'use strict';
 
-    // Exposed entry point
-    window.SmartLogicAdapter = {
-        processSmartTiles
+// ---------------------------------------------------------------------------
+// SMART TILE OPTION GENERATION
+// ---------------------------------------------------------------------------
+// The old system ALWAYS produced 2–3 options for Smart Tiles.
+// This adapter does NOT pick the activity — it only generates choices.
+// The solver (Stage 5) will decide the best option.
+// ---------------------------------------------------------------------------
+
+function buildSmartTileOptions(rawBlock) {
+    // Clone to avoid mutation
+    const blk = JSON.parse(JSON.stringify(rawBlock));
+
+    // We expect blk.smartPrimary, blk.smartSecondary, blk.smartFallback to exist
+    // If the user didn’t configure them yet, generate a generic set.
+    // The UI will override these values during configuration.
+
+    const primary = blk.smartPrimary || {
+        type: 'activity',
+        label: 'Primary Activity',
+        sport: null,
+        activity: null
     };
 
-    // ------------------------------------------------------------------------
-    // MAIN: Convert blocks with type:"smart" into option bundles
-    // ------------------------------------------------------------------------
-    function processSmartTiles(blocks) {
+    const secondary = blk.smartSecondary || {
+        type: 'activity',
+        label: 'Secondary Activity',
+        sport: null,
+        activity: null
+    };
 
-        if (!Array.isArray(blocks)) return blocks;
+    const fallback = blk.smartFallback || {
+        type: 'activity',
+        label: 'Fallback',
+        sport: null,
+        activity: null
+    };
 
-        return blocks.map(block => {
-            if (block?.type !== 'smart') {
-                return block; // Non-smart tiles untouched
-            }
+    blk.options = [primary, secondary, fallback];
+    return blk;
+}
 
-            // =================================================================
-            // Old Logic:
-            // Smart Tiles must always produce:
-            //    block.options = [
-            //       { activity: block.primary,   weight: 1 },
-            //       { activity: block.secondary, weight: 2 },
-            //       { activity: block.fallback,  weight: 3 }
-            //    ]
-            //
-            // The final decision happens in solver_main, NOT here.
-            // =================================================================
+// ---------------------------------------------------------------------------
+// MAIN: Wrap every smart block with options set
+// ---------------------------------------------------------------------------
+function applySmartLogicAdapter(skeleton) {
+    if (!Array.isArray(skeleton)) return skeleton;
 
-            const primary   = cleanName(block.primary)   || null;
-            const secondary = cleanName(block.secondary) || null;
-            const fallback  = cleanName(block.fallback)  || null;
+    return skeleton.map(blk => {
+        if (blk.type !== 'smart') return blk;
+        return buildSmartTileOptions(blk);
+    });
+}
 
-            // Build options list exactly like old engine
-            const options = [];
-            if (primary)   options.push(createOption(block, primary,   1));
-            if (secondary) options.push(createOption(block, secondary, 2));
-            if (fallback)  options.push(createOption(block, fallback,  3));
-
-            // MUST always have at least one option
-            if (options.length === 0 && fallback) {
-                options.push(createOption(block, fallback, 3));
-            }
-
-            return {
-                ...block,
-                options,             // Smart Tile options array
-                selected: null,      // Solver fills this later
-                resolvedActivity: null // Solver sets final activity
-            };
-        });
-    }
-
-    // ------------------------------------------------------------------------
-    // Helper: Create a single option object with METADATA COPIED
-    // ------------------------------------------------------------------------
-    function createOption(block, activityName, weight) {
-
-        return {
-            type: 'smart-option',
-
-            // What the solver will try to assign
-            activity: activityName,
-            label: activityName,
-
-            // Weight/pref: lower = more preferred (primary = 1)
-            preference: weight,
-
-            // Metadata from original tile block
-            startMin: block.startMin,
-            endMin: block.endMin,
-            duration: block.duration,
-
-            // Transition rules
-            transition: block.transition ? { ...block.transition } : null,
-
-            // Zone, sharable rules, exclusivity — fully preserved
-            zone: block.zone,
-            sharable: block.sharable ? { ...block.sharable } : null,
-            exclusive: block.exclusive === true,
-
-            // Identifiers
-            parentId: block.id,
-            originalType: 'smart'
-        };
-    }
-
-    // ------------------------------------------------------------------------
-    // Normalizes names for safety
-    // ------------------------------------------------------------------------
-    function cleanName(str) {
-        if (!str) return null;
-        return String(str).trim();
-    }
+// ---------------------------------------------------------------------------
+// EXPORT
+// ---------------------------------------------------------------------------
+// Called by Stage 3 (scheduler_logic_fillers.js) before conversion.
+window.applySmartLogicAdapter = applySmartLogicAdapter;
 
 })();
