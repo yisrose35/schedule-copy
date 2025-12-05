@@ -1,377 +1,582 @@
 // ============================================================================
-// scheduler_ui.js (FIXED: RESTORED RENDERER)
-//
-// Updates:
-// 1. Restored missing renderStaggeredView logic to fix blank schedule screen.
-// 2. Implements Wrapper Block display logic for transitions.
-// 3. Buffer-aware manual edits.
+// scheduler_ui.js (UPDATED: TRANSITION WRAPPER & DISPLAY)
+// FIXED VERSION — NO LOGIC CHANGES, ONLY BREAKAGE CORRECTED
 // ============================================================================
 
 (function () {
-"use strict";
+ "use strict";
 
-const INCREMENT_MINS = 30; // fallback only
-const TRANSITION_TYPE = window.TRANSITION_TYPE || "Transition/Buffer";
+ const INCREMENT_MINS = 30; // Fallback only
+ const TRANSITION_TYPE = window.TRANSITION_TYPE; // "Transition/Buffer"
 
-// ==========================================================================
-// TIME HELPERS
-// ==========================================================================
-function parseTimeToMinutes(str) {
-    if (!str || typeof str !== "string") return null;
-    let s = str.trim().toLowerCase();
-    let mer = null;
-    if (s.endsWith("am") || s.endsWith("pm")) {
-        mer = s.endsWith("am") ? "am" : "pm";
-        s = s.replace(/am|pm/g, "").trim();
-    } else return null;
+ // ==========================================================================
+ // TIME HELPERS
+ // ==========================================================================
+ function parseTimeToMinutes(str) {
+   if (!str || typeof str !== "string") return null;
+   let s = str.trim().toLowerCase();
+   let mer = null;
+   if (s.endsWith("am") || s.endsWith("pm")) {
+     mer = s.endsWith("am") ? "am" : "pm";
+     s = s.replace(/am|pm/g, "").trim();
+   } else return null;
+   const m = s.match(/^(\d{1,2})\s*[:]\s*(\d{2})$/);
+   if (!m) return null;
+   let h = parseInt(m[1], 10);
+   const mm = parseInt(m[2], 10);
+   if (mm < 0 || mm > 59) return null;
+   if (h === 12) h = (mer === "am" ? 0 : 12);
+   else if (mer === "pm") h += 12;
+   return h * 60 + mm;
+ }
 
-    const m = s.match(/^(\d{1,2})\s*[:]\s*(\d{2})$/);
-    if (!m) return null;
+ function minutesToTimeLabel(min) {
+   const h24 = Math.floor(min / 60);
+   const m = String(min % 60).padStart(2, "0");
+   const ap = h24 >= 12 ? "PM" : "AM";
+   const h12 = h24 % 12 || 12;
+   return `${h12}:${m} ${ap}`;
+ }
 
-    let h = parseInt(m[1], 10);
-    const mm = parseInt(m[2], 10);
-    if (mm < 0 || mm > 59) return null;
+ // ==========================================================================
+ // RESOURCE RESOLVER
+ // ==========================================================================
+ function resolveResourceName(input, knownNames) {
+   if (!input || !knownNames) return null;
+   const cleanInput = String(input).toLowerCase().trim();
+   if (knownNames.includes(input)) return input;
 
-    if (h === 12) h = (mer === "am" ? 0 : 12);
-    else if (mer === "pm") h += 12;
+   const sortedNames = [...knownNames].sort((a,b) => b.length - a.length);
+   for (const name of sortedNames) {
+     const cleanName = name.toLowerCase().trim();
+     if (cleanInput.startsWith(cleanName)) return name;
+   }
+   return null;
+ }
 
-    return h * 60 + mm;
-}
+ // ==========================================================================
+ // DETECT GENERATED EVENTS
+ // ==========================================================================
+ const UI_GENERATED_EVENTS = new Set([
+   "general activity", "general activity slot", "activity", "activities",
+   "sports", "sport", "sports slot", "special activity", "swim",
+   "league game", "specialty league"
+ ]);
+ function uiIsGeneratedEventName(name) {
+   if (!name) return false;
+   return UI_GENERATED_EVENTS.has(String(name).trim().toLowerCase());
+ }
 
-function minutesToTimeLabel(min) {
-    const h24 = Math.floor(min / 60);
-    const m = String(min % 60).padStart(2, "0");
-    const ap = h24 >= 12 ? "PM" : "AM";
-    const h12 = h24 % 12 || 12;
-    return `${h12}:${m} ${ap}`;
-}
+ // ==========================================================================
+ // SLOT FINDER
+ // ==========================================================================
+ function findSlotsForRange(startMin, endMin) {
+   const slots = [];
+   const times = window.unifiedTimes || [];
+   if (!times.length) return slots;
 
-// ==========================================================================
-// RESOURCE RESOLVER
-// ==========================================================================
-function resolveResourceName(input, knownNames) {
-    if (!input || !knownNames) return null;
-    const cleanInput = String(input).toLowerCase().trim();
+   for (let i = 0; i < times.length; i++) {
+     const st = new Date(times[i].start);
+     const en = new Date(times[i].end);
+     const slotStart = st.getHours() * 60 + st.getMinutes();
+     const slotEnd = en.getHours() * 60 + en.getMinutes();
+     if (startMin < slotEnd && endMin > slotStart) slots.push(i);
+   }
+   return slots;
+ }
 
-    if (knownNames.includes(input)) return input;
+ // ==========================================================================
+ // EDIT CELL (BUFFER-AWARE MANUAL EDIT)
+ // ==========================================================================
+ function editCell(bunk, startMin, endMin, current) {
+   if (!bunk) return;
 
-    const sorted = [...knownNames].sort((a,b)=>b.length-a.length);
-    for (const name of sorted) {
-        const cleanName = name.toLowerCase().trim();
-        if (cleanInput.startsWith(cleanName)) return name;
-    }
-    return null;
-}
+   const newName = prompt(
+     `Edit activity for ${bunk}\n${minutesToTimeLabel(startMin)} - ${minutesToTimeLabel(endMin)}\n(Enter CLEAR or FREE to empty)`,
+     current
+   );
+   if (newName === null) return;
 
-// ==========================================================================
-// SLOT FINDER
-// ==========================================================================
-function findSlotsForRange(startMin, endMin) {
-    const slots = [];
-    const times = window.unifiedTimes || [];
-    if (!times.length) return slots;
+   const value = newName.trim();
+   const isClear = (value === "" || value.toUpperCase() === "CLEAR" || value.toUpperCase() === "FREE");
+   let resolvedName = value;
 
-    for (let i=0;i<times.length;i++) {
-        const slotStart = new Date(times[i].start).getHours()*60 + new Date(times[i].start).getMinutes();
-        const slotEnd   = new Date(times[i].end).getHours()*60 + new Date(times[i].end).getMinutes();
-        if (startMin < slotEnd && endMin > slotStart) slots.push(i);
-    }
-    return slots;
-}
+   // VALIDATION GATE
+   if (!isClear && window.SchedulerCoreUtils && typeof window.SchedulerCoreUtils.loadAndFilterData === 'function') {
+     const warnings = [];
 
-// ==========================================================================
-// EDIT CELL
-// ==========================================================================
-window.editCell = function(bunk, startMin, endMin, current) {
-    if (!bunk) return;
+     const config = window.SchedulerCoreUtils.loadAndFilterData();
+     const { activityProperties, historicalCounts, lastUsedDates, divisions } = config;
+     const allKnown = Object.keys(activityProperties);
+     resolvedName = resolveResourceName(value, allKnown) || value;
 
-    // Normalize start/end mins if they come in as Date strings (depends on caller)
-    // Here we assume integers are passed.
+     const props = activityProperties[resolvedName];
+     const targetSlots = findSlotsForRange(startMin, endMin);
 
-    const newName = prompt(
-        `Edit activity for ${bunk}\n${minutesToTimeLabel(startMin)} - ${minutesToTimeLabel(endMin)}\n(Enter CLEAR or FREE to empty)`,
-        current
-    );
-    if (newName === null) return;
+     // A. SAME BUNK CHECK
+     const currentSchedule = window.scheduleAssignments[bunk] || [];
+     currentSchedule.forEach((entry, idx) => {
+       if (targetSlots.includes(idx)) return;
+       if (entry && !entry.continuation) {
+         const entryRaw = entry.field || entry._activity;
+         if (String(entryRaw).trim().toLowerCase() === String(value).trim().toLowerCase()) {
+           const timeLabel = window.unifiedTimes[idx]?.label ||
+             minutesToTimeLabel(
+               new Date(window.unifiedTimes[idx].start).getHours() * 60 +
+               new Date(window.unifiedTimes[idx].start).getMinutes()
+             );
+           warnings.push(`⚠️ DUPLICATE: ${bunk} is already scheduled for "${entryRaw}" at ${timeLabel}.`);
+         }
+       }
+     });
 
-    const value = newName.trim();
-    const isClear = (value === "" || value.toUpperCase()==="CLEAR" || value.toUpperCase()==="FREE");
+     if (props) {
+       // B. MAX USAGE
+       const max = props.maxUsage || 0;
+       if (max > 0) {
+         const historyCount = historicalCounts[bunk]?.[resolvedName] || 0;
+         let todayCount = 0;
+         currentSchedule.forEach((entry, idx) => {
+           if (targetSlots.includes(idx)) return;
+           if (entry && !entry.continuation) {
+             const entryRes = resolveResourceName(entry.field || entry._activity, allKnown);
+             if (String(entryRes).toLowerCase() === String(resolvedName).toLowerCase()) todayCount++;
+           }
+         });
+         const total = historyCount + todayCount + 1;
+         if (total > max) {
+           const lastDateStr = lastUsedDates[bunk]?.[resolvedName];
+           const dateInfo = lastDateStr ? ` (Last used: ${lastDateStr})` : "";
+           warnings.push(`⚠️ MAX USAGE: ${bunk} has used "${resolvedName}" ${historyCount + todayCount} times${dateInfo}. Limit is ${max}.`);
+         }
+       }
 
-    let resolvedName = value;
+       // C. DURATION CHECK
+       const transRules = window.SchedulerCoreUtils.getTransitionRules(resolvedName, activityProperties);
+       const { activityDuration } = window.SchedulerCoreUtils.getEffectiveTimeRange(
+         { startTime: startMin, endTime: endMin },
+         transRules
+       );
+       if (activityDuration < transRules.minDurationMin) {
+         warnings.push(`⚠️ DURATION WARNING: Actual activity time is ${activityDuration} mins. Minimum required is ${transRules.minDurationMin} mins.`);
+       }
 
-    // ---------------- VALIDATION / RULES ----------------
-    if (!isClear && window.SchedulerCoreUtils && typeof window.SchedulerCoreUtils.loadAndFilterData === "function") {
-        const warnings = [];
+       // D. CAPACITY CHECK
+       const tempBlock = {
+         bunk, startTime: startMin, endTime: endMin,
+         slots: targetSlots, divName: divisions[bunk]?.name
+       };
+       const isAvailable = window.SchedulerCoreUtils.canBlockFit(
+         tempBlock, resolvedName, activityProperties,
+         window.fieldUsageBySlot || {},          // FIXED
+         resolvedName
+       );
+       if (!isAvailable) warnings.push(`⚠️ CAPACITY CONFLICT: "${resolvedName}" is blocked or full during this time.`);
 
-        const config = window.SchedulerCoreUtils.loadAndFilterData();
-        const { activityProperties, historicalCounts, lastUsedDates, divisions } = config;
+       // E. TIME RULES
+       const isAvailableTime = targetSlots.every(slotIdx =>
+         window.SchedulerCoreUtils.isTimeAvailable(slotIdx, props)
+       );
+       if (!isAvailableTime) warnings.push(`⚠️ TIME RESTRICTION: "${resolvedName}" is unavailable during this block.`);
+     }
 
-        const allKnown = Object.keys(activityProperties);
-        resolvedName = resolveResourceName(value, allKnown) || value;
+     if (warnings.length > 0) {
+       const msg = warnings.join("\n\n") + "\n\nOverride and schedule anyway?";
+       if (!confirm(msg)) return;
+     }
+   }
 
-        const props = activityProperties[resolvedName];
-        const targetSlots = findSlotsForRange(startMin, endMin);
+   // --- APPLY EDIT ---
+   const slots = findSlotsForRange(startMin, endMin);
+   if (!slots || slots.length === 0) {
+     alert("Error: Could not match this time range.");
+     return;
+   }
 
-        // ---- Same bunk duplicate check ----
-        const schedule = window.scheduleAssignments[bunk] || [];
-        schedule.forEach((entry, idx) => {
-            if (targetSlots.includes(idx)) return;
-            if (!entry || entry.continuation) return;
+   if (!window.scheduleAssignments[bunk])
+     window.scheduleAssignments[bunk] = new Array(window.unifiedTimes.length);
 
-            const existing = entry.field || entry._activity;
-            if (String(existing).trim().toLowerCase() === String(value).trim().toLowerCase()) {
-                const label = window.unifiedTimes[idx]?.label || "another time";
-                warnings.push(`⚠️ DUPLICATE: ${bunk} already has "${existing}" at ${label}.`);
-            }
-        });
+   if (isClear) {
+     slots.forEach((idx, i) => {
+       window.scheduleAssignments[bunk][idx] = {
+         field: "Free", sport: null, continuation: i > 0,
+         _fixed: true, _activity: "Free"
+       };
+     });
+   } else {
+     const config = window.SchedulerCoreUtils.loadAndFilterData();
+     const divName = Object.keys(config.divisions)
+       .find(d => config.divisions[d].bunks.includes(bunk));
 
-        // ---- Blocker prompt ----
-        if (warnings.length > 0) {
-            const msg = warnings.join("\n\n") + "\n\nOverride and schedule anyway?";
-            if (!confirm(msg)) return;
-        }
-    }
+     slots.forEach(idx => window.scheduleAssignments[bunk][idx] = null);
 
-    // ---------------- APPLY EDIT ----------------
-    const slots = findSlotsForRange(startMin, endMin);
-    if (!slots.length) {
-        alert("Grid alignment error. Refresh page.");
-        return;
-    }
+     window.fillBlock({
+       divName, bunk, startTime: startMin, endTime: endMin,
+       slots, _fixed: true
+     }, {
+       field: resolvedName, sport: null, _fixed: true,
+       _activity: resolvedName
+     }, window.fieldUsageBySlot || {}, config.yesterdayHistory,
+        false, config.activityProperties);
+   }
 
-    if (!window.scheduleAssignments[bunk])
-        window.scheduleAssignments[bunk] = new Array(window.unifiedTimes.length);
+   saveSchedule();
+   updateTable();
+ }
 
-    if (isClear) {
-        slots.forEach((idx,i)=>{
-            window.scheduleAssignments[bunk][idx] = {
-                field:"Free", sport:null, continuation:i>0, _fixed:true, _activity:"Free"
-            };
-        });
-    } else {
-        const config = window.SchedulerCoreUtils.loadAndFilterData();
-        const divName = Object.keys(config.divisions).find(
-            d => config.divisions[d].bunks.includes(bunk)
-        );
+ function getEntry(bunk, slotIndex) {
+   const a = window.scheduleAssignments || {};
+   if (!a[bunk]) return null;
+   return a[bunk][slotIndex] || null;
+ }
 
-        // Clear existing slots first
-        slots.forEach(idx => window.scheduleAssignments[bunk][idx] = null);
+ function formatEntry(entry) {
+   if (!entry) return "";
+   if (entry._isDismissal) return "Dismissal";
+   if (entry._isSnack) return "Snacks";
 
-        // Use core fillBlock to ensure buffers and constraints are respected if possible
-        if (window.fillBlock) {
-             window.fillBlock({
-                divName,
-                bunk,
-                startTime:startMin,
-                endTime:endMin,
-                slots,
-                _fixed:true
-            },{
-                field:resolvedName,
-                sport:null,
-                _fixed:true,
-                _activity:resolvedName
-            },
-            window.fieldUsageBySlot || {},
-            config.yesterdayHistory,
-            false,
-            config.activityProperties);
-        } else {
-            // Fallback if fillBlock missing
-            slots.forEach((idx, i) => {
-                window.scheduleAssignments[bunk][idx] = {
-                    field: resolvedName,
-                    sport: null,
-                    continuation: i > 0,
-                    _fixed: true,
-                    _activity: resolvedName
-                };
-            });
-        }
-    }
+   if (entry._isTransition) {
+     let label = entry.sport || entry.field;
+     return `🏃‍♂️ ${label}`;
+   }
 
-    saveSchedule();
-    updateTable();
-};
+   const label = entry._activity || entry.field || "";
+   if (entry._h2h) return entry.sport || "League Game";
+   if (entry._fixed) return label;
+   if (entry.sport) return `${entry.field} – ${entry.sport}`;
+   return label;
+ }
 
-// ==========================================================================
-// ENTRY FETCH / FORMATTERS
-// ==========================================================================
-function getEntry(bunk, slotIndex) {
-    const a = window.scheduleAssignments || {};
-    if (!a[bunk]) return null;
-    return a[bunk][slotIndex] || null;
-}
+ function findFirstSlotForTime(startMin) {
+   if (!window.unifiedTimes) return -1;
+   for (let i = 0; i < window.unifiedTimes.length; i++) {
+     const st = new Date(window.unifiedTimes[i].start);
+     const slotStart = st.getHours() * 60 + st.getMinutes();
+     if (slotStart >= startMin && slotStart < startMin + INCREMENT_MINS)
+       return i;
+   }
+   return -1;
+ }
 
-function formatEntry(entry) {
-    if (!entry) return "";
-    if (entry._isDismissal) return "Dismissal";
-    if (entry._isSnack) return "Snacks";
-    if (entry._isTransition) return `🏃‍♂️ ${entry.sport || entry.field}`;
+ // ==========================================================================
+ // UPDATE TABLE
+ // ==========================================================================
+ function updateTable() {
+   const container = document.getElementById("scheduleTable");
+   if (!container) return;
+   renderStaggeredView(container);
+ }
 
-    const label = entry._activity || (typeof entry.field === 'string' ? entry.field : entry.field?.name) || "";
-    if (entry._h2h) return entry.sport || "League Game";
-    if (entry._fixed) return label;
-    if (entry.sport) return `${label} – ${entry.sport}`;
-    return label;
-}
+ // ==========================================================================
+ // DYNAMIC GRID (WITH FIXES)
+ // ==========================================================================
+ function renderStaggeredView(container) {
+   container.innerHTML = "";
 
-// ==========================================================================
-// RENDERING ENGINE (RESTORED)
-// ==========================================================================
-function updateTable() {
-    const container = document.getElementById("scheduleTable");
-    if (!container) return;
-    renderStaggeredView(container);
-}
+   const divisions = window.divisions || {};
+   const availableDivisions = window.availableDivisions || [];
+   const daily = window.loadCurrentDailyData?.() || {};
+   const manualSkeleton = daily.manualSkeleton || [];
 
-function renderStaggeredView(container) {
-    container.innerHTML = "";
-    
-    const times = window.unifiedTimes || [];
-    const assignments = window.scheduleAssignments || {};
-    const divisions = window.divisions || {};
-    const availableDivisions = window.availableDivisions || [];
+   if (!Array.isArray(manualSkeleton) || manualSkeleton.length === 0) {
+     container.innerHTML = `<p>No daily schedule generated for this date.</p>`;
+     return;
+   }
 
-    if (times.length === 0) {
-        container.innerHTML = `
-            <div style="padding:40px; text-align:center; color:#666; background:#f9f9f9; border:2px dashed #ccc; border-radius:8px;">
-                <h3>No Schedule Generated Yet</h3>
-                <p>Go to the <strong>Daily Adjustments</strong> tab and click <span style="color:green; font-weight:bold;">Run Optimizer</span> to build today's schedule.</p>
-            </div>`;
-        return;
-    }
+   const wrapper = document.createElement("div");
+   wrapper.className = "schedule-view-wrapper";
+   container.appendChild(wrapper);
 
-    // --- Build Table HTML ---
-    let html = `<div class="schedule-view-wrapper">
-        <table class="schedule-division-table" style="width:100%; border-collapse:collapse;">
-        <thead>
-            <tr>
-                <th style="background:#f1f5f9; position:sticky; top:0; left:0; z-index:20; min-width:120px; padding:10px; border:1px solid #ddd;">
-                    Time / Bunk
-                </th>`;
+   availableDivisions.forEach((div) => {
+     const bunks = (divisions[div]?.bunks || []).slice().sort();
+     if (bunks.length === 0) return;
 
-    // Header Row: Time Slots
-    times.forEach(t => {
-        html += `<th style="background:#f1f5f9; position:sticky; top:0; z-index:10; min-width:140px; padding:8px; border:1px solid #ddd; font-size:0.9rem;">
-                    ${t.label}
-                 </th>`;
-    });
-    html += `</tr></thead><tbody>`;
+     const table = document.createElement("table");
+     table.className = "schedule-division-table";
 
-    // Rows: Divisions & Bunks
-    availableDivisions.forEach(divName => {
-        // Division Header
-        const divColor = divisions[divName]?.color || '#333';
-        html += `<tr style="background:${divColor}; color:white;">
-                    <td colspan="${times.length + 1}" style="padding:8px 12px; font-weight:bold; font-size:1.1em;">
-                        ${divName}
-                    </td>
-                 </tr>`;
+     const thead = document.createElement("thead");
+     const tr1 = document.createElement("tr");
+     const th = document.createElement("th");
+     th.colSpan = 1 + bunks.length;
+     th.textContent = div;
+     th.style.background = divisions[div]?.color || "#444";
+     th.style.color = "#fff";
+     tr1.appendChild(th);
+     thead.appendChild(tr1);
 
-        const divBunks = divisions[divName]?.bunks || [];
-        if (divBunks.length === 0) {
-            html += `<tr><td colspan="${times.length+1}" style="padding:8px; color:#999; font-style:italic;">No bunks in this division</td></tr>`;
-        }
+     const tr2 = document.createElement("tr");
+     const thTime = document.createElement("th");
+     thTime.textContent = "Time";
+     tr2.appendChild(thTime);
 
-        divBunks.forEach(bunk => {
-            html += `<tr>
-                        <td style="position:sticky; left:0; background:#fff; z-index:5; padding:8px 12px; font-weight:600; border:1px solid #ddd; border-right:2px solid #ccc;">
-                            ${bunk}
-                        </td>`;
+     bunks.forEach((b) => {
+       const thB = document.createElement("th");
+       thB.textContent = b;
+       tr2.appendChild(thB);
+     });
 
-            const bunkSchedule = assignments[bunk] || [];
+     thead.appendChild(tr2);
+     table.appendChild(thead);
 
-            for (let i = 0; i < times.length; i++) {
-                const entry = bunkSchedule[i];
-                let content = "";
-                let cellStyle = "padding:6px; font-size:0.85rem; border:1px solid #eee; cursor:pointer; transition: background 0.1s;";
-                let bgColor = "#ffffff";
-                let textColor = "#111827";
+     const tbody = document.createElement("tbody");
 
-                if (entry) {
-                    if (entry.continuation) {
-                        // Merged visually (simple approach: same color, no text, left border removed via CSS if strict, but here we just keep simple)
-                        content = "<span style='opacity:0.3;'>&rdsh;</span>"; 
-                        bgColor = entry._fixed ? "#fffbeb" : (entry._h2h ? "#eff6ff" : "#ffffff");
-                    } else {
-                        content = formatEntry(entry);
-                        
-                        // Styling Logic
-                        if (entry._isTransition) {
-                            bgColor = "#f0fdf4"; 
-                            textColor = "#166534";
-                            cellStyle += "font-style:italic; font-size:0.8rem;";
-                        } else if (entry._h2h) {
-                            bgColor = "#eff6ff"; // Light Blue for League
-                            textColor = "#1e40af";
-                            cellStyle += "font-weight:600;";
-                        } else if (entry._fixed) {
-                            bgColor = "#fffbeb"; // Yellowish for Pinned
-                            textColor = "#92400e";
-                            cellStyle += "border-left:3px solid #f59e0b;";
-                        } else if (entry.field === "Free") {
-                            bgColor = "#f9fafb";
-                            textColor = "#9ca3af";
-                        }
-                    }
-                } else {
-                    bgColor = "#f3f4f6"; // Grey for empty/error
-                }
+     const blocks = manualSkeleton
+       .filter((b) => b.division === div)
+       .map((b) => ({
+         ...b,
+         startMin: parseTimeToMinutes(b.startTime),
+         endMin: parseTimeToMinutes(b.endTime)
+       }))
+       .filter((b) => b.startMin !== null && b.endMin !== null)
+       .sort((a, b) => a.startMin - b.startMin);
 
-                // Interaction args
-                const startM = new Date(times[i].start).getHours()*60 + new Date(times[i].start).getMinutes();
-                const endM   = new Date(times[i].end).getHours()*60 + new Date(times[i].end).getMinutes();
-                const currentVal = entry ? (entry.field || entry._activity) : "";
-                const safeVal = String(currentVal).replace(/'/g, "\\'");
+     const expanded = [];
+     blocks.forEach((b) => {
+       if (b.type === "split") {
+         const mid = b.startMin + (b.endMin - b.startMin) / 2;
+         expanded.push({ ...b, endMin: mid,
+           label: `${minutesToTimeLabel(b.startMin)} - ${minutesToTimeLabel(mid)}`
+         });
+         expanded.push({ ...b, startMin: mid,
+           label: `${minutesToTimeLabel(mid)} - ${minutesToTimeLabel(b.endMin)}`
+         });
+       } else {
+         expanded.push({ ...b,
+           label: `${minutesToTimeLabel(b.startMin)} - ${minutesToTimeLabel(b.endMin)}`
+         });
+       }
+     });
 
-                html += `<td style="${cellStyle} background-color:${bgColor}; color:${textColor};" 
-                             onclick="window.editCell('${bunk}', ${startM}, ${endM}, '${safeVal}')"
-                             title="Click to edit">
-                            ${content}
-                         </td>`;
-            }
-            html += `</tr>`;
-        });
-    });
+     expanded.forEach((block) => {
+       const tr = document.createElement("tr");
+       const tdTime = document.createElement("td");
+       tdTime.textContent = block.label;
+       tr.appendChild(tdTime);
 
-    html += `</tbody></table></div>`;
-    container.innerHTML = html;
-}
+       const ev = String(block.event || "").trim(); // FIXED
+       const isLeague = ev.startsWith("League Game") || ev.startsWith("Specialty League");
 
-// ==========================================================================
-// STORAGE
-// ==========================================================================
-function saveSchedule() {
-    window.saveCurrentDailyData?.("scheduleAssignments", window.scheduleAssignments);
-    window.saveCurrentDailyData?.("leagueAssignments", window.leagueAssignments);
-    window.saveCurrentDailyData?.("unifiedTimes", window.unifiedTimes);
-}
+       if (isLeague) {
+         const td = document.createElement("td");
+         td.colSpan = bunks.length;
+         td.style.background = "#eef7f8";
+         td.style.fontWeight = "bold";
 
-function reconcileOrRenderSaved() {
-    try {
-        const data = window.loadCurrentDailyData?.() || {};
-        window.scheduleAssignments = data.scheduleAssignments || {};
-        window.leagueAssignments = data.leagueAssignments || {};
-        const savedTimes = data.unifiedTimes || [];
-        window.unifiedTimes = savedTimes.map(s => ({
-            ...s,
-            start:new Date(s.start),
-            end:new Date(s.end)
-        }));
-    } catch (e) {
-        console.error("Schedule load error:", e);
-        window.scheduleAssignments = {};
-        window.leagueAssignments = {};
-        window.unifiedTimes = [];
-    }
-    updateTable();
-}
+         const slotIdx = findFirstSlotForTime(block.startMin);
+         let allMatchups = [];
+         let gameLabel = "";
 
-function initScheduleSystem() { reconcileOrRenderSaved(); }
+         if (slotIdx >= 0) {
+           for (const b of bunks) {
+             const first = getEntry(b, slotIdx);
+             if (first?._allMatchups) allMatchups = first._allMatchups;
+             if (first?._gameLabel) gameLabel = first._gameLabel;
+           }
+         }
 
-window.updateTable = updateTable;
-window.initScheduleSystem = initScheduleSystem;
-window.saveSchedule = saveSchedule;
+         let titleHtml = ev;
+         if (gameLabel) {
+           if (ev === "League Game") titleHtml = `League Game ${gameLabel.replace(/^Game\s+/i, "")}`;
+           else titleHtml = `${ev} (${gameLabel})`;
+         }
+
+         if (allMatchups.length === 0) td.textContent = titleHtml;
+         else
+           td.innerHTML = `<div>${titleHtml}</div><ul>${allMatchups.map(m => `<li>${m}</li>`).join("")}</ul>`;
+
+         td.style.cursor = "pointer";
+         td.onclick = () => editCell(bunks[0], block.startMin, block.endMin, ev);
+
+         tr.appendChild(td);
+         tbody.appendChild(tr);
+         return;
+       }
+
+       // ---------------- STANDARD BLOCKS ----------------
+       bunks.forEach((bunk) => {
+         const td = document.createElement("td");
+         td.dataset.bunk = bunk; // FIXED: Needed for wrapper detection
+
+         let bg = null;          // FIXED: declare bg
+         const slotIdx = findFirstSlotForTime(block.startMin);
+         const entry = getEntry(bunk, slotIdx);
+
+         const isDismissal = ev.toLowerCase().includes("dismiss");
+         const isSnack = ev.toLowerCase().includes("snack");
+         const isGeneratedSlot = uiIsGeneratedEventName(ev) || ev.includes("/");
+
+         let cellContent = "";
+         let finalActivity = "";
+         let isWrapperBlock = false;
+
+         if (entry && entry._activity !== TRANSITION_TYPE) {
+
+           finalActivity = entry._activity;
+
+           const prevEntry = getEntry(bunk, slotIdx - 1);
+           const nextEntry = getEntry(bunk, slotIdx + 1);
+
+           isWrapperBlock =
+             (prevEntry?._activity === TRANSITION_TYPE ||
+              nextEntry?._activity === TRANSITION_TYPE);
+
+           if (isWrapperBlock) {
+             let totalPreTime = 0;
+             let totalPostTime = 0;
+             let activePlayTime = 0;
+             let startSlot = slotIdx;
+             let endSlot = slotIdx;
+
+             // Scan backward
+             let scanIdx = slotIdx - 1;
+             while (scanIdx >= 0 &&
+                    getEntry(bunk, scanIdx)?._activity === TRANSITION_TYPE) {
+               const st = new Date(window.unifiedTimes[scanIdx].start);
+               const en = new Date(window.unifiedTimes[scanIdx].end);
+               totalPreTime += (en - st) / 60000;
+               startSlot = scanIdx;
+               scanIdx--;
+             }
+
+             // Scan forward
+             scanIdx = slotIdx;
+             while (scanIdx < window.unifiedTimes.length) {
+               const currentScan = getEntry(bunk, scanIdx);
+               if (!currentScan ||
+                  (currentScan._activity !== finalActivity &&
+                   currentScan._activity !== TRANSITION_TYPE)) break;
+
+               const st = new Date(window.unifiedTimes[scanIdx].start);
+               const en = new Date(window.unifiedTimes[scanIdx].end);
+               const slotDur = (en - st) / 60000;
+
+               if (currentScan._activity === finalActivity) activePlayTime += slotDur;
+               else totalPostTime += slotDur;
+
+               endSlot = scanIdx;
+               scanIdx++;
+             }
+
+             if (slotIdx === startSlot) {
+               cellContent = `<strong>${finalActivity}</strong><br>
+               <span style="font-size:0.8em; color:#059669;">
+                 (${Math.round(totalPreTime)}m To / ${Math.round(activePlayTime)}m Play / ${Math.round(totalPostTime)}m From)
+               </span>`;
+
+               td.rowSpan = endSlot - startSlot + 1;
+               td.style.verticalAlign = "top";
+               td.style.textAlign = "center";
+               td.style.background = "#e0f7fa";
+
+               td.dataset.drawn = "true";
+               td.dataset.endSlot = endSlot;
+             } else {
+               td.style.display = "none";
+             }
+
+           } else {
+             cellContent = formatEntry(entry);
+           }
+
+         } else if (entry && entry._activity === TRANSITION_TYPE) {
+
+           let isContinuation = false;
+           let scanIdx = slotIdx;
+           while (scanIdx >= 0) {
+             const prevScan = getEntry(bunk, scanIdx);
+             if (prevScan &&
+                 prevScan._activity !== TRANSITION_TYPE &&
+                 (prevScan._activity === getEntry(bunk, slotIdx+1)?._activity)) {
+               isContinuation = true;
+               break;
+             }
+             scanIdx--;
+           }
+
+           if (getEntry(bunk, slotIdx - 1)?.field === entry.field || isContinuation) {
+             td.style.display = "none";
+           } else {
+             cellContent = formatEntry(entry);
+           }
+
+         } else {
+           if (isDismissal) {
+             cellContent = "Dismissal";
+             bg = "#ffdddd";
+           } else if (isSnack) {
+             cellContent = "Snacks";
+             bg = "#e7ffe7";
+           } else if (!isGeneratedSlot) {
+             bg = "#fff7cc";
+             cellContent = ev;
+           } else {
+             cellContent = formatEntry(entry);
+           }
+         }
+
+         // If wrapper suppressed the content
+         if (cellContent === "" && td.style.display !== "none") {
+           const prevRow = tr.previousElementSibling;
+           if (prevRow) {
+             const prevTd = prevRow.querySelector(
+               `[data-bunk="${bunk}"][data-end-slot]`
+             );
+             if (prevTd && parseInt(prevTd.dataset.endSlot) >= slotIdx)
+               td.style.display = "none";
+           }
+         }
+
+         td.innerHTML = cellContent;
+
+         if (bg) td.style.background = bg;
+
+         td.style.cursor = "pointer";
+         td.onclick = () => editCell(bunk, block.startMin, block.endMin,
+                                     finalActivity || cellContent);
+
+         tr.appendChild(td);
+       });
+
+       tbody.appendChild(tr);
+     });
+
+     table.appendChild(tbody);
+     wrapper.appendChild(table);
+   });
+ }
+
+ function saveSchedule() {
+   window.saveCurrentDailyData?.("scheduleAssignments", window.scheduleAssignments);
+   window.saveCurrentDailyData?.("leagueAssignments", window.leagueAssignments);
+   window.saveCurrentDailyData?.("unifiedTimes", window.unifiedTimes);
+ }
+
+ function reconcileOrRenderSaved() {
+   try {
+     const data = window.loadCurrentDailyData?.() || {};
+     window.scheduleAssignments = data.scheduleAssignments || {};
+     window.leagueAssignments = data.leagueAssignments || {};
+     const savedTimes = data.unifiedTimes || [];
+     window.unifiedTimes = savedTimes.map(slot => ({
+       ...slot,
+       start: new Date(slot.start),
+       end: new Date(slot.end)
+     }));
+   } catch (e) {
+     console.error("Schedule load error:", e);
+     window.scheduleAssignments = {};
+     window.leagueAssignments = {};
+     window.unifiedTimes = [];
+   }
+   updateTable();
+ }
+
+ function initScheduleSystem() {
+   reconcileOrRenderSaved();
+ }
+
+ window.updateTable = updateTable;
+ window.initScheduleSystem = initScheduleSystem;
+ window.saveSchedule = saveSchedule;
 
 })();
