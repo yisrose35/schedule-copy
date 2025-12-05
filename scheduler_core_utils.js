@@ -1,13 +1,15 @@
 // ============================================================================
 // scheduler_core_utils.js
-// PART 1 of 3: THE FOUNDATION
+// THE FOUNDATION (Unified / Fully Patched Version)
 //
-// UPDATES:
-// - Added Transition Logic, Zone Handshake, Buffer Occupancy, Concurrency Check
-// - Implemented Minimum Duration Check (Issue 1)
-// - Implemented Anchor Time Logic (User Requirement)
-// - FIX: Added null check for 'props' in getTransitionRules to prevent crash.
-// - FIX: Added array-normalization for historical counts (prevents crash)
+// UPDATES INCLUDED IN THIS VERSION:
+// - Transition Logic, Zone Handshake, Buffer Occupancy
+// - Minimum Duration Check
+// - Anchor Time Logic
+// - FIX: null check on props in getTransitionRules
+// - FIX: historical counts normalization (object → array)
+// - FIX: sports mapping (activities[], sports[], sport)
+// - FIX: allActivities rebuilt using same logic
 // ============================================================================
 
 (function () {
@@ -53,7 +55,6 @@
             if (hh === 12) hh = mer === "am" ? 0 : 12;
             else if (mer === "pm") hh += 12;
         }
-
         return hh * 60 + mm;
     };
 
@@ -87,7 +88,6 @@
         for (let i = 0; i < window.unifiedTimes.length; i++) {
             const slot = window.unifiedTimes[i];
             const slotStart = new Date(slot.start).getHours() * 60 + new Date(slot.start).getMinutes();
-
             if (slotStart >= startMin && slotStart < endMin) {
                 slots.push(i);
             }
@@ -97,18 +97,23 @@
 
     Utils.getBlockTimeRange = function (block) {
         let blockStartMin = (typeof block.startTime === "number") ? block.startTime : null;
-        let blockEndMin = (typeof block.endTime === "number") ? block.endTime : null;
+        let blockEndMin   = (typeof block.endTime   === "number") ? block.endTime   : null;
 
-        if ((blockStartMin == null || blockEndMin == null) && window.unifiedTimes && Array.isArray(block.slots) && block.slots.length > 0) {
+        if ((blockStartMin == null || blockEndMin == null) &&
+            window.unifiedTimes &&
+            Array.isArray(block.slots) &&
+            block.slots.length > 0) {
+
             const minIndex = Math.min(...block.slots);
             const maxIndex = Math.max(...block.slots);
 
             const firstSlot = window.unifiedTimes[minIndex];
-            const lastSlot = window.unifiedTimes[maxIndex];
+            const lastSlot  = window.unifiedTimes[maxIndex];
 
             if (firstSlot && lastSlot) {
                 const firstStart = new Date(firstSlot.start);
                 blockStartMin = firstStart.getHours() * 60 + firstStart.getMinutes();
+
                 const lastEnd = new Date(lastSlot.end);
                 blockEndMin = lastEnd.getHours() * 60 + lastEnd.getMinutes();
             }
@@ -118,7 +123,7 @@
     };
 
     // =================================================================
-    // 2. NEW TRANSITION / BUFFER LOGIC
+    // 2. TRANSITION / BUFFER LOGIC
     // =================================================================
 
     Utils.getTransitionRules = function (fieldName, activityProperties) {
@@ -136,10 +141,7 @@
         }
 
         const props = activityProperties[fieldName];
-
-        if (!props || !props.transition) {
-            return defaultRules;
-        }
+        if (!props || !props.transition) return defaultRules;
 
         return { ...defaultRules, ...props.transition };
     };
@@ -150,7 +152,7 @@
         if (blockStartMin === null || blockEndMin === null) {
             return {
                 effectiveStart: blockStartMin,
-                effectiveEnd: blockEndMin,
+                effectiveEnd:   blockEndMin,
                 blockStartMin,
                 blockEndMin,
                 activityDuration: 0,
@@ -159,14 +161,14 @@
             };
         }
 
-        const preMin = transitionRules.preMin || 0;
+        const preMin  = transitionRules.preMin  || 0;
         const postMin = transitionRules.postMin || 0;
 
         const totalDuration = blockEndMin - blockStartMin;
-        const totalBuffer = preMin + postMin;
+        const totalBuffer   = preMin + postMin;
 
         const effectiveStart = blockStartMin + preMin;
-        const effectiveEnd = blockEndMin - postMin;
+        const effectiveEnd   = blockEndMin - postMin;
         const activityDuration = effectiveEnd - effectiveStart;
 
         return {
@@ -181,7 +183,7 @@
     };
 
     // =================================================================
-    // 3. CONSTRAINT LOGIC
+    // 3. CAPACITY / CONSTRAINT LOGIC
     // =================================================================
 
     Utils.isTimeAvailable = function (slotIndex, fieldProps) {
@@ -189,40 +191,43 @@
 
         const slot = window.unifiedTimes[slotIndex];
         const slotStartMin = new Date(slot.start).getHours() * 60 + new Date(slot.start).getMinutes();
-        const slotEndMin = new Date(slot.end).getHours() * 60 + new Date(slot.end).getMinutes();
+        const slotEndMin   = new Date(slot.end).getHours()   * 60 + new Date(slot.end).getMinutes();
 
         const rules = (fieldProps.timeRules || []).map(r => {
             if (typeof r.startMin === "number" && typeof r.endMin === "number") return r;
             return {
                 ...r,
                 startMin: Utils.parseTimeToMinutes(r.start),
-                endMin: Utils.parseTimeToMinutes(r.end)
+                endMin:   Utils.parseTimeToMinutes(r.end)
             };
         });
 
         if (rules.length === 0) return fieldProps.available !== false;
-
         if (!fieldProps.available) return false;
 
-        const hasAvailableRules = rules.some(r => r.type === 'Available');
+        const hasAvailableRules = rules.some(r => r.type === "Available");
         let isAvailable = !hasAvailableRules;
 
         for (const rule of rules) {
-            if (rule.type === 'Available' && rule.startMin != null && rule.endMin != null) {
-                if (slotStartMin >= rule.startMin && slotEndMin <= rule.endMin) {
-                    isAvailable = true;
-                    break;
-                }
+            if (rule.type === "Available" &&
+                rule.startMin != null &&
+                rule.endMin   != null &&
+                slotStartMin >= rule.startMin &&
+                slotEndMin   <= rule.endMin) {
+                isAvailable = true;
+                break;
             }
         }
 
         if (!isAvailable) return false;
 
         for (const rule of rules) {
-            if (rule.type === 'Unavailable' && rule.startMin != null && rule.endMin != null) {
-                if (slotStartMin < rule.endMin && slotEndMin > rule.startMin) {
-                    return false;
-                }
+            if (rule.type === "Unavailable" &&
+                rule.startMin != null &&
+                rule.endMin   != null &&
+                slotStartMin < rule.endMin &&
+                slotEndMin   > rule.startMin) {
+                return false;
             }
         }
 
@@ -232,7 +237,9 @@
     function isLeagueAssignment(assignmentObj, activityName) {
         if (assignmentObj) {
             if (assignmentObj._gameLabel || assignmentObj._allMatchups) return true;
-            if (assignmentObj._activity && String(assignmentObj._activity).toLowerCase().includes("league")) return true;
+            if (assignmentObj._activity &&
+                String(assignmentObj._activity).toLowerCase().includes("league"))
+                return true;
         }
         const s = String(activityName || "").toLowerCase();
         return s.includes("league game") || s.includes("specialty league");
@@ -260,11 +267,15 @@
             if (keyRoot === targetRoot) {
                 const u = slotData[key];
                 combined.count += (u.count || 0);
+
                 if (Array.isArray(u.divisions)) {
                     u.divisions.forEach(d => {
-                        if (!combined.divisions.includes(d)) combined.divisions.push(d);
+                        if (!combined.divisions.includes(d)) {
+                            combined.divisions.push(d);
+                        }
                     });
                 }
+
                 if (u.bunks) {
                     Object.assign(combined.bunks, u.bunks);
                 }
@@ -286,8 +297,8 @@
 
             const textToCheck = [
                 entry._allMatchups || "",
-                entry._gameLabel || "",
-                entry.description || ""
+                entry._gameLabel   || "",
+                entry.description  || ""
             ].join(" ");
 
             if (textToCheck.length > 5 && textToCheck.includes("@")) {
@@ -297,6 +308,7 @@
                 }
             }
         }
+
         return false;
     }
 
@@ -343,7 +355,7 @@
         if (props.sharableWith) {
             if (props.sharableWith.capacity) {
                 maxCapacity = parseInt(props.sharableWith.capacity);
-            } else if (props.sharableWith.type === 'all' || props.sharableWith.type === 'custom') {
+            } else if (props.sharableWith.type === "all" || props.sharableWith.type === "custom") {
                 maxCapacity = 2;
             }
         } else if (props.sharable) {
@@ -355,19 +367,25 @@
         const maxHeadcount = sportMetaData[proposedActivity]?.maxCapacity || Infinity;
         const mySize = bunkMetaData[block.bunk]?.size || 0;
 
-        if (props.preferences?.enabled && props.preferences.exclusive && !props.preferences.list.includes(block.divName)) {
+        if (props.preferences?.enabled &&
+            props.preferences.exclusive &&
+            !props.preferences.list.includes(block.divName)) {
             return false;
         }
 
-        if (Array.isArray(props.allowedDivisions) && props.allowedDivisions.length > 0 && !props.allowedDivisions.includes(block.divName)) {
+        if (Array.isArray(props.allowedDivisions) &&
+            props.allowedDivisions.length > 0 &&
+            !props.allowedDivisions.includes(block.divName)) {
             return false;
         }
 
-        if (props.limitUsage?.enabled && !props.limitUsage.divisions[block.divName]) {
+        if (props.limitUsage?.enabled &&
+            !props.limitUsage.divisions[block.divName]) {
             return false;
         }
 
-        if (props.limitUsage?.enabled && Array.isArray(props.limitUsage.divisions[block.divName]) &&
+        if (props.limitUsage?.enabled &&
+            Array.isArray(props.limitUsage.divisions[block.divName]) &&
             !props.limitUsage.divisions[block.divName].includes(block.bunk)) {
             return false;
         }
@@ -376,31 +394,35 @@
             const rules = (props.timeRules || []).map(r => ({
                 ...r,
                 startMin: typeof r.startMin === "number" ? r.startMin : Utils.parseTimeToMinutes(r.start),
-                endMin: typeof r.endMin === "number" ? r.endMin : Utils.parseTimeToMinutes(r.end)
+                endMin:   typeof r.endMin   === "number" ? r.endMin   : Utils.parseTimeToMinutes(r.end)
             }));
 
             if (rules.length > 0 && !props.available) return false;
 
-            const hasAvailableRules = rules.some(r => r.type === 'Available');
+            const hasAvailableRules = rules.some(r => r.type === "Available");
             let insideAvailable = !hasAvailableRules;
 
             if (hasAvailableRules) {
                 for (const rule of rules) {
-                    if (rule.type === 'Available' && rule.startMin != null && rule.endMin != null) {
-                        if (blockStartMin >= rule.startMin && blockEndMin <= rule.endMin) {
-                            insideAvailable = true;
-                            break;
-                        }
+                    if (rule.type === "Available" &&
+                        rule.startMin != null &&
+                        rule.endMin   != null &&
+                        blockStartMin >= rule.startMin &&
+                        blockEndMin   <= rule.endMin) {
+                        insideAvailable = true;
+                        break;
                     }
                 }
                 if (!insideAvailable) return false;
             }
 
             for (const rule of rules) {
-                if (rule.type === 'Unavailable' && rule.startMin != null && rule.endMin != null) {
-                    if (blockStartMin < rule.endMin && blockEndMin > rule.startMin) {
-                        return false;
-                    }
+                if (rule.type === "Unavailable" &&
+                    rule.startMin != null &&
+                    rule.endMin   != null &&
+                    blockStartMin < rule.endMin &&
+                    blockEndMin   > rule.startMin) {
+                    return false;
                 }
             }
         } else if (!props.available) {
@@ -426,6 +448,7 @@
 
             let currentWeight = 0;
             const existingBunks = Object.keys(usage.bunks);
+
             const myProposedObj = { _gameLabel: block._gameLabel, _activity: proposedActivity };
             const proposedIsLeague = isLeagueAssignment(myProposedObj, proposedActivity);
 
@@ -437,8 +460,8 @@
 
                 const myLabel = block._gameLabel || (String(proposedActivity).includes("League") ? proposedActivity : null);
                 const theirLabel = actualAssignment?._gameLabel || actualAssignment?._activity;
-                const isSameGame = myLabel && theirLabel && String(myLabel) === String(theirLabel);
 
+                const isSameGame = myLabel && theirLabel && String(myLabel) === String(theirLabel);
                 const existingIsLeague = isLeagueAssignment(actualAssignment, activityName);
 
                 if ((existingIsLeague || proposedIsLeague) && !isSameGame) {
@@ -468,7 +491,14 @@
     };
 
     Utils.canLeagueGameFit = function (block, fieldName, fieldUsageBySlot, activityProperties) {
-        return Utils.canBlockFit(block, fieldName, activityProperties, fieldUsageBySlot, "League Game", true);
+        return Utils.canBlockFit(
+            block,
+            fieldName,
+            activityProperties,
+            fieldUsageBySlot,
+            "League Game",
+            true
+        );
     };
 
     // =================================================================
@@ -478,36 +508,37 @@
     function parseTimeRule(rule) {
         if (!rule) return null;
         if (typeof rule.startMin === "number" && typeof rule.endMin === "number") return rule;
+
         return {
             ...rule,
             startMin: Utils.parseTimeToMinutes(rule.start),
-            endMin: Utils.parseTimeToMinutes(rule.end)
+            endMin:   Utils.parseTimeToMinutes(rule.end)
         };
     }
 
     Utils.loadAndFilterData = function () {
         const globalSettings = window.loadGlobalSettings?.() || {};
-        const app1Data = globalSettings.app1 || {};
+        const app1Data       = globalSettings.app1 || {};
 
-        const masterFields = app1Data.fields || [];
-        const masterDivisions = app1Data.divisions || {};
+        const masterFields   = app1Data.fields || [];
+        const masterDivisions= app1Data.divisions || {};
         const masterSpecials = app1Data.specialActivities || [];
-        const masterLeagues = globalSettings.leaguesByName || {};
+        const masterLeagues  = globalSettings.leaguesByName || {};
         const masterSpecialtyLeagues = globalSettings.specialtyLeagues || {};
-        const bunkMetaData = app1Data.bunkMetaData || {};
-        const sportMetaData = app1Data.sportMetaData || {};
+        const bunkMetaData   = app1Data.bunkMetaData || {};
+        const sportMetaData  = app1Data.sportMetaData || {};
 
         Utils._bunkMetaData = bunkMetaData;
         Utils._sportMetaData = sportMetaData;
 
-        const dailyData = window.loadCurrentDailyData?.() || {};
+        const dailyData      = window.loadCurrentDailyData?.() || {};
         const dailyFieldAvailability = dailyData.dailyFieldAvailability || {};
         const dailyOverrides = dailyData.overrides || {};
         const disabledLeagues = dailyOverrides.leagues || [];
         const disabledSpecialtyLeagues = dailyData.disabledSpecialtyLeagues || [];
         const dailyDisabledSportsByField = dailyData.dailyDisabledSportsByField || {};
-        const disabledFields = dailyOverrides.disabledFields || [];
-        const disabledSpecials = dailyOverrides.disabledSpecials || [];
+        const disabledFields  = dailyOverrides.disabledFields || [];
+        const disabledSpecials= dailyOverrides.disabledSpecials || [];
 
         const rotationHistoryRaw = window.loadRotationHistory?.() || {};
         const rotationHistory = {
@@ -517,6 +548,11 @@
             leagueTeamLastSport: rotationHistoryRaw.leagueTeamLastSport || {}
         };
 
+        //
+        // ================================================================
+        // HISTORICAL COUNTS (PATCHED)
+        // ================================================================
+        //
         const historicalCounts = {};
         const specialActivityNames = [];
         const specialNamesSet = new Set();
@@ -536,9 +572,6 @@
             console.error("Error loading special activity rules:", e);
         }
 
-        // =====================================================================
-        // HISTORICAL COUNTS (PATCHED)
-        // =====================================================================
         try {
             const rawHistory = {};
             const allDaily = window.loadAllDailyData?.() || {};
@@ -553,7 +586,7 @@
                     const raw = sched[b];
                     let arr = [];
 
-                    // PATCH: Safely normalize `sched[b]` to an array
+                    // safety normalization
                     if (Array.isArray(raw)) {
                         arr = raw;
                     } else if (raw && typeof raw === "object") {
@@ -583,14 +616,14 @@
 
                 Object.keys(rawHistory[b]).forEach(act => {
                     const dates = rawHistory[b][act].sort();
-                    const rule = specialRules[act];
+                    const rule  = specialRules[act];
 
                     if (!rule || rule.frequencyWeeks === 0) {
                         historicalCounts[b][act] = dates.length;
                     } else {
                         const windowDays = rule.frequencyWeeks * 7;
-                        let windowCount = 0;
-                        let windowStart = null;
+                        let windowCount  = 0;
+                        let windowStart  = null;
 
                         for (const dStr of dates) {
                             const d = new Date(dStr);
@@ -602,12 +635,16 @@
                             }
                         }
 
-                        const daysSinceLast = windowStart ? Math.ceil((todayDate - windowStart) / 86400000) : Infinity;
+                        const daysSinceLast = windowStart
+                            ? Math.ceil((todayDate - windowStart) / 86400000)
+                            : Infinity;
+
                         historicalCounts[b][act] = daysSinceLast <= windowDays ? windowCount : 0;
                     }
 
                     if (specialNamesSet.has(act)) {
-                        historicalCounts[b]['_totalSpecials'] = (historicalCounts[b]['_totalSpecials'] || 0) + 1;
+                        historicalCounts[b]["_totalSpecials"] =
+                            (historicalCounts[b]["_totalSpecials"] || 0) + 1;
                     }
                 });
             });
@@ -616,16 +653,19 @@
                 historicalCounts[b] ??= {};
                 Object.keys(manualOffsets[b]).forEach(act => {
                     const offset = manualOffsets[b][act] || 0;
-                    historicalCounts[b][act] = Math.max(0, (historicalCounts[b][act] || 0) + offset);
+                    historicalCounts[b][act] =
+                        Math.max(0, (historicalCounts[b][act] || 0) + offset);
                 });
             });
         } catch (e) {
             console.error("Error calculating historical counts:", e);
         }
 
-        // =====================================================================
-        // REMAINDER OF ORIGINAL FUNCTION (UNCHANGED)
-        // =====================================================================
+        //
+        // ================================================================
+        // REMAINDER OF DATA LOAD
+        // ================================================================
+        //
 
         const availableDivisions = (app1Data.availableDivisions || [])
             .filter(divName => !dailyOverrides.bunks?.includes(divName));
@@ -657,7 +697,8 @@
             let allowedDivisions = null;
             if (Array.isArray(f.allowedDivisions) && f.allowedDivisions.length > 0) {
                 allowedDivisions = f.allowedDivisions;
-            } else if (f.divisionAvailability?.mode === 'specific' && Array.isArray(f.divisionAvailability.divisions)) {
+            } else if (f.divisionAvailability?.mode === "specific" &&
+                       Array.isArray(f.divisionAvailability.divisions)) {
                 allowedDivisions = f.divisionAvailability.divisions;
             } else if (Array.isArray(f.sharableWith?.divisions)) {
                 allowedDivisions = f.sharableWith.divisions;
@@ -670,7 +711,9 @@
             let capacity = 1;
             if (f.sharableWith?.capacity) {
                 capacity = parseInt(f.sharableWith.capacity);
-            } else if (f.sharableWith?.type === 'all' || f.sharableWith?.type === 'custom' || f.sharable) {
+            } else if (f.sharableWith?.type === "all" ||
+                       f.sharableWith?.type === "custom" ||
+                       f.sharable) {
                 capacity = 2;
             }
 
@@ -688,12 +731,18 @@
 
             activityProperties[f.name] = {
                 available: isMasterAvailable,
-                sharable: !!f.sharable || f.sharableWith?.type === 'all' || f.sharableWith?.type === 'custom',
+                sharable: !!f.sharable ||
+                          f.sharableWith?.type === "all" ||
+                          f.sharableWith?.type === "custom",
                 sharableWith: f.sharableWith,
                 maxUsage: f.maxUsage || 0,
                 allowedDivisions,
                 limitUsage: safeLimitUsage,
-                preferences: f.preferences || { enabled: false, exclusive: false, list: [] },
+                preferences: f.preferences || {
+                    enabled: false,
+                    exclusive: false,
+                    list: []
+                },
                 timeRules: finalRules,
                 transition
             };
@@ -705,29 +754,49 @@
 
         window.allSchedulableNames = availableActivityNames;
 
-        // =====================================================================
-        // >>>>> FIXED LINE FROM YOUR VERSION <<<<<
-        // =====================================================================
+        //
+        // ================================================================
+        // FIXED sports mapping
+        // ================================================================
+        //
         const fieldsBySport = {};
         masterFields
             .filter(f => availableActivityNames.includes(f.name))
             .forEach(f => {
-                (f.activities || []).forEach(sport => {
+                const activityList =
+                    f.activities ||
+                    f.sports ||
+                    (f.sport ? [f.sport] : []);
+
+                activityList.forEach(sport => {
                     if (dailyDisabledSportsByField[f.name]?.includes(sport)) return;
                     fieldsBySport[sport] ??= [];
-                    fieldsBySport[sport].push(f.name);   // ✔ FIXED
+                    fieldsBySport[sport].push(f.name);
                 });
             });
 
+        //
+        // ================================================================
+        // FIXED allActivities generation
+        // ================================================================
+        //
         const allActivities = [
             ...masterFields
                 .filter(f => availableActivityNames.includes(f.name))
-                .flatMap(f => (f.activities || []).map(act => ({
-                    type: "field",
-                    field: f.name,
-                    sport: act
-                })))
+                .flatMap(f => {
+                    const activityList =
+                        f.activities ||
+                        f.sports ||
+                        (f.sport ? [f.sport] : []);
+
+                    return activityList.map(act => ({
+                        type: "field",
+                        field: f.name,
+                        sport: act
+                    }));
+                })
                 .filter(a => !dailyDisabledSportsByField[a.field]?.includes(a.sport)),
+
             ...masterSpecials
                 .filter(s => availableActivityNames.includes(s.name))
                 .map(sa => ({
@@ -742,7 +811,7 @@
         const yesterdayData = window.loadPreviousDailyData?.() || {};
         const yesterdayHistory = {
             schedule: yesterdayData.scheduleAssignments || {},
-            leagues: yesterdayData.leagueAssignments || {}
+            leagues:   yesterdayData.leagueAssignments   || {}
         };
 
         const masterZones = window.getZones?.() || {};
