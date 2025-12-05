@@ -756,33 +756,32 @@ Utils.loadAndFilterData = function () {
 
         const masterZones = window.getZones?.() || {};
 
-        return {
-            divisions,
-            availableDivisions,
-            activityProperties,
-            allActivities,
-            h2hActivities,
-            fieldsBySport,
-            masterLeagues,
-            masterSpecialtyLeagues,
-            masterSpecials,
-            yesterdayHistory,
-            rotationHistory,
-            disabledLeagues,
-            disabledSpecialtyLeagues,
-            historicalCounts,
-            specialActivityNames,
-            disabledFields,
-            disabledSpecials,
-            dailyFieldAvailability,
-            dailyDisabledSportsByField,
-            masterFields,
-            bunkMetaData,
-            sportMetaData,
-            masterZones
-        };
+            return {
+        divisions,
+        availableDivisions,
+        activityProperties,
+        allActivities,
+        h2hActivities,
+        fieldsBySport,
+        masterLeagues,
+        masterSpecialtyLeagues,
+        masterSpecials,
+        yesterdayHistory,
+        rotationHistory,
+        disabledLeagues,
+        disabledSpecialtyLeagues,
+        historicalCounts,
+        specialActivityNames,
+        disabledFields,
+        disabledSpecials,
+        dailyFieldAvailability,
+        dailyDisabledSportsByField,
+        masterFields,
+        bunkMetaData,
+        sportMetaData,
+        masterZones
     };
+}
 
-    window.SchedulerCoreUtils = Utils;
-
+window.SchedulerCoreUtils = Utils;   // ✔ keep only this
 })();
