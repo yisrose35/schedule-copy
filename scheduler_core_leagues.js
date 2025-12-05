@@ -133,7 +133,7 @@
 
             // Determine current game/round number
             let gameNumber = 1;
-            if (typeof window.getLeagueCurrentRound 'function') {
+            if (typeof window.getLeagueCurrentRound === 'function') {
                 gameNumber = window.getLeagueCurrentRound(leagueEntry.name);
             } else if (window.leagueRoundState?.[leagueEntry.name]) {
                 gameNumber = window.leagueRoundState[leagueEntry.name].currentRound || 1;
@@ -141,7 +141,7 @@
             const gameLabel = `Game ${gameNumber}`;
 
             // Get matchups
-            const matchups = (typeof window.getLeagueMatchups 'function')
+            const matchups = (typeof window.getLeagueMatchups === 'function')
                 ? (window.getLeagueMatchups(leagueEntry.name, teams) || [])
                 : Leagues.pairRoundRobin(teams);
 
@@ -150,15 +150,15 @@
             const picksByTeam = {};
             const fields = leagueEntry.fields || [];
 
-            // Assign fields to matchups
             matchups.forEach((pair, i) => {
                 const [a, b] = pair;
-                if (a "BYE" || b "BYE") {
+
+                if (a === "BYE" || b === "BYE") {
                     allMatchupLabels.push(`${a} vs ${b} (BYE)`);
                     return;
                 }
 
-                const label = `${a} vs ${bestSport})`;
+                const label = `${a} vs ${b} (${bestSport})`;
                 let finalField = null;
 
                 if (fields.length > 0) {
@@ -185,7 +185,6 @@
                 picksByTeam[b] = pick;
             });
 
-            // Fallback for bunks with no game
             const noGamePick = {
                 field: "No Game",
                 sport: null,
@@ -221,7 +220,7 @@
         } = context;
 
         const leagueBlocks = schedulableSlotBlocks.filter(
-            b => b.event "League Game" && !b.processed
+            b => b.event === "League Game" && !b.processed
         );
 
         // Group by league name + time slot
@@ -263,7 +262,7 @@
 
             const sports = league.sports || [];
 
-            // Find division from first bunk
+            // Find division
             const firstBunk = allBunks[0];
             const divName = Object.keys(divisions).find(d =>
                 divisions[d].bunks.includes(firstBunk)
@@ -279,7 +278,7 @@
 
             // Determine current round
             let gameNumber = 1;
-            if (typeof window.getLeagueCurrentRound 'function') {
+            if (typeof window.getLeagueCurrentRound === 'function') {
                 gameNumber = window.getLeagueCurrentRound(leagueName);
             } else if (window.leagueRoundState?.[leagueName]) {
                 gameNumber = window.leagueRoundState[leagueName].currentRound || 1;
@@ -287,20 +286,19 @@
             const gameLabel = `Game ${gameNumber}`;
 
             // Get matchups
-            let matchups = (typeof window.getLeagueMatchups "function")
+            let matchups = (typeof window.getLeagueMatchups === "function")
                 ? (window.getLeagueMatchups(leagueName, leagueTeams) || [])
                 : Leagues.coreGetNextLeagueRound(leagueName, leagueTeams);
 
             const allMatchupLabels = [];
             const finalAssignments = [];
 
-            // Critical: Prevent field conflicts within same league + time
             const fieldsUsedInThisBatch = new Set();
 
             matchups.forEach((pair, i) => {
                 const [a, b] = pair;
 
-                if (a "BYE" || b "BYE") {
+                if (a === "BYE" || b === "BYE") {
                     allMatchupLabels.push(`${a} vs ${b} (BYE)`);
                     return;
                 }
@@ -314,21 +312,18 @@
                 let finalSport = preferredSport;
                 let finalField = null;
 
-                // Try each sport until we find an available + unique field
                 for (const s of candidateSports) {
                     const possibleFields = fieldsBySport[s] || [];
 
                     for (const f of possibleFields) {
-                        // 1. Not already used in this batch
                         if (fieldsUsedInThisBatch.has(f)) continue;
 
-                        // 2. Globally available via Timeline
                         if (window.SchedulerCoreUtils?.canBlockFit(
                             blockBase,
                             f,
                             activityProperties,
                             s,
-                            true  // isLeague = true
+                            true
                         )) {
                             finalSport = s;
                             finalField = f;
@@ -339,14 +334,13 @@
                     if (finalField) break;
                 }
 
-                // Lock field if found
                 if (finalField) {
                     fieldsUsedInThisBatch.add(finalField);
                 }
 
                 const label = finalField
                     ? `${a} vs ${b} (${finalSport}) @ ${finalField}`
-                    : `${a} vs ${b} (No Field)`;
+                    : `${a} vs ${b} (${finalSport}) (No Field)`;
 
                 allMatchupLabels.push(label);
 
@@ -359,7 +353,6 @@
                 });
             });
 
-            // Map assignments back to bunks (assumes linear pairing)
             const picksByTeam = {};
             let ptr = 0;
 
@@ -383,7 +376,6 @@
                 picksByTeam[bunkB] = pick;
             });
 
-            // Handle leftover bunks (odd number, etc.)
             const noGamePick = {
                 field: "No Game",
                 sport: null,
@@ -400,7 +392,6 @@
         });
     };
 
-    // Expose globally
     window.SchedulerCoreLeagues = Leagues;
 
 })();
