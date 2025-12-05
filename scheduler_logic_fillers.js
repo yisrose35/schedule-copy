@@ -1,11 +1,11 @@
-// =================================================================
+// ============================================================================
 // scheduler_logic_fillers.js
 //
 // UPDATED:
 // - Adapted for Timeline Architecture.
-// - Removed 'fieldUsageBySlot' from canBlockFit calls (Timeline handles state).
-// - Added 'isLeague = false' flag to canBlockFit calls.
-// =================================================================
+// - Restored proper canBlockFit signature.
+// - FIXED all argument ordering bugs for canBlockFit.
+// ============================================================================
 
 (function () {
     'use strict';
@@ -43,21 +43,17 @@
         });
     }
 
-    // --- HELPER: Check Usage Limit (Safety Net for Generator) ---
+    // --- SAFETY: Max usage checker ---
     function isOverUsageLimit(activityName, bunk, activityProperties, historicalCounts, activitiesDoneToday) {
         const props = activityProperties[activityName];
         const max = props?.maxUsage || 0; // 0 means unlimited
 
         if (max === 0) return false;
 
-        // SAFETY: Handle missing historical data gracefully
-        const safeHistory = historicalCounts || {};
-        const pastCount = safeHistory[bunk]?.[activityName] || 0;
+        const pastCount = historicalCounts?.[bunk]?.[activityName] || 0;
 
-        // Already hit limit in previous days?
         if (pastCount >= max) return true;
 
-        // About to exceed limit today?
         if (activitiesDoneToday.has(activityName) && pastCount + 1 >= max) {
             return true;
         }
@@ -77,9 +73,9 @@
         return activities;
     }
 
-    // ================================================================
-    // Exported Functions
-    // ================================================================
+    // ============================================================================
+    // SPECIAL ACTIVITIES
+    // ============================================================================
 
     window.findBestSpecial = function (
         block,
@@ -103,33 +99,39 @@
         const availablePicks = specials.filter(pick => {
             const name = pick._activity;
 
-            // 1. Timeline constraint check (not a league)
+            // 🔥 FIXED: Proper canBlockFit signature
             if (!window.SchedulerCoreUtils?.canBlockFit(
                 block,
                 fieldLabel(pick.field),
                 activityProperties,
+                window.fieldUsageBySlot,       // FIXED
                 name,
-                false // isLeague
+                false
             )) {
                 return false;
             }
 
-            // 2. Max usage limit
-            if (isOverUsageLimit(name, block.bunk, activityProperties, historicalCounts, activitiesDoneToday)) {
+            if (isOverUsageLimit(name, block.bunk, activityProperties, historicalCounts, activitiesDoneToday))
                 return false;
-            }
 
-            // 3. Already done today
-            if (activitiesDoneToday.has(name)) {
-                return false;
-            }
+            if (activitiesDoneToday.has(name)) return false;
 
             return true;
         });
 
-        const sortedPicks = sortPicksByFreshness(availablePicks, bunkHistory, block.divName, activityProperties);
+        const sortedPicks = sortPicksByFreshness(
+            availablePicks,
+            bunkHistory,
+            block.divName,
+            activityProperties
+        );
+
         return sortedPicks[0] || null;
     };
+
+    // ============================================================================
+    // SPORTS
+    // ============================================================================
 
     window.findBestSportActivity = function (
         block,
@@ -150,19 +152,34 @@
         const bunkHistory = rotationHistory?.bunks?.[block.bunk] || {};
         const activitiesDoneToday = getGeneralActivitiesDoneToday(block.bunk);
 
-        const availablePicks = sports.filter(pick =>
-            window.SchedulerCoreUtils?.canBlockFit(
-                block,
-                fieldLabel(pick.field),
-                activityProperties,
-                pick._activity,
-                false
-            ) && !activitiesDoneToday.has(pick._activity)
+        const availablePicks = sports.filter(pick => {
+            // 🔥 FIXED: Proper canBlockFit signature
+            return (
+                window.SchedulerCoreUtils?.canBlockFit(
+                    block,
+                    fieldLabel(pick.field),
+                    activityProperties,
+                    window.fieldUsageBySlot,      // FIXED
+                    pick._activity,
+                    false
+                ) &&
+                !activitiesDoneToday.has(pick._activity)
+            );
+        });
+
+        const sortedPicks = sortPicksByFreshness(
+            availablePicks,
+            bunkHistory,
+            block.divName,
+            activityProperties
         );
 
-        const sortedPicks = sortPicksByFreshness(availablePicks, bunkHistory, block.divName, activityProperties);
         return sortedPicks[0] || null;
     };
+
+    // ============================================================================
+    // GENERAL ACTIVITIES
+    // ============================================================================
 
     window.findBestGeneralActivity = function (
         block,
@@ -185,28 +202,35 @@
         const availablePicks = allPossiblePicks.filter(pick => {
             const name = pick._activity;
 
-            // Core Timeline validation
+            // 🔥 FIXED: Proper canBlockFit signature
             if (!window.SchedulerCoreUtils?.canBlockFit(
                 block,
                 fieldLabel(pick.field),
                 activityProperties,
+                window.fieldUsageBySlot,        // FIXED
                 name,
                 false
             )) {
                 return false;
             }
 
-            // Special-case: if this is a special activity (no sport), check maxUsage
+            // Special case for specials (field but no sport)
             if (pick.field && !pick.sport) {
-                if (isOverUsageLimit(name, block.bunk, activityProperties, historicalCounts, activitiesDoneToday)) {
+                if (isOverUsageLimit(name, block.bunk, activityProperties, historicalCounts, activitiesDoneToday))
                     return false;
-                }
             }
 
-            return !activitiesDoneToday.has(name);
+            if (activitiesDoneToday.has(name)) return false;
+
+            return true;
         });
 
-        const sortedPicks = sortPicksByFreshness(availablePicks, bunkHistory, block.divName, activityProperties);
+        const sortedPicks = sortPicksByFreshness(
+            availablePicks,
+            bunkHistory,
+            block.divName,
+            activityProperties
+        );
 
         return sortedPicks[0] || { field: "Free", sport: null, _activity: "Free" };
     };
