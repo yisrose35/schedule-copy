@@ -529,8 +529,7 @@ Utils.loadAndFilterData = function () {
     return result;
 };
 
-// Export Utils object globally
-window.SchedulerCoreUtils = Utils;
+
 
 
         // =====================================================================
