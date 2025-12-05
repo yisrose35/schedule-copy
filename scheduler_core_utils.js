@@ -2,12 +2,11 @@
 // scheduler_core_utils.js
 // PART 1 of 3: THE FOUNDATION
 //
-// UPDATED:
-// - Added Transition Logic, Zone Handshake, Buffer Occupancy, Concurrency Check
-// - Implemented Minimum Duration Check (Issue 1)
-// - Implemented Anchor Time Logic (User Requirement)
-// - FIX: Added null check for 'props' in getTransitionRules to prevent crash.
-// - FIX: Robust check for schedule array in loadAndFilterData (Prevents forEach crash).
+// UPDATED (V2.0 FIXES):
+// - FIXED: Overly strict Division Firewall removed, replaced with rule-based logic.
+// - NEW: League Exclusivity Enforcement: If an assignment is League-related, it consumes 
+//        maxCapacity, making the field unshareable for that slot.
+// - Fixed several capacity and division restriction checks for accuracy.
 // ============================================================================
 (function() {
     'use strict';
@@ -42,6 +41,7 @@
         if (Number.isNaN(hh) || Number.isNaN(mm) || mm < 0 || mm > 59) return null;
         if (mer) {
             if (hh === 12) hh = (mer === "am") ? 0 : 12;
+            else if (hh === 12) hh = 12; // 12 PM stays 12
             else if (mer === "pm") hh += 12;
         }
         return hh * 60 + mm;
@@ -76,8 +76,10 @@
             const slot = window.unifiedTimes[i];
             const d = new Date(slot.start);
             const slotStart = d.getHours() * 60 + d.getMinutes();
+            const slotEnd = new Date(slot.end).getHours() * 60 + new Date(slot.end).getMinutes(); // Actual end of the slot
+
             // Check if the slot *overlaps* the range [startMin, endMin)
-            if (slotStart >= startMin && slotStart < endMin) {
+            if (slotStart < endMin && slotEnd > startMin) {
                 slots.push(i);
             }
         }
@@ -98,9 +100,9 @@
             const lastSlot = window.unifiedTimes[maxIndex];
             if (firstSlot && lastSlot) {
                 const firstStart = new Date(firstSlot.start);
-                const lastStart = new Date(lastSlot.start);
+                const lastEnd = new Date(lastSlot.end);
                 blockStartMin = firstStart.getHours() * 60 + firstStart.getMinutes();
-                blockEndMin = new Date(lastSlot.end).getHours() * 60 + new Date(lastSlot.end).getMinutes();
+                blockEndMin = lastEnd.getHours() * 60 + lastEnd.getMinutes();
             }
         }
         return { blockStartMin, blockEndMin };
@@ -148,7 +150,6 @@
         const postMin = transitionRules.postMin || 0;
         
         const totalDuration = blockEndMin - blockStartMin;
-        const totalBuffer = preMin + postMin;
 
         // **USER REQUIREMENT: Anchor Time Logic**
         // blockStartMin is the start of Pre-Buffer
@@ -156,6 +157,7 @@
         const effectiveEnd = blockEndMin - postMin;
         
         const activityDuration = effectiveEnd - effectiveStart;
+        const totalBuffer = preMin + postMin;
 
         return { blockStartMin, blockEndMin, effectiveStart, effectiveEnd, activityDuration, totalDuration, totalBuffer };
     };
@@ -210,18 +212,22 @@
     // Detects if an assignment is a League Game (Deep Check)
     function isLeagueAssignment(assignmentObj, activityName) {
         if (assignmentObj) {
-            if (assignmentObj._gameLabel || assignmentObj._allMatchups) return true;
+            // Check for flags set by fillBlock (most reliable)
+            if (assignmentObj._h2h || assignmentObj._gameLabel) return true;
             if (assignmentObj._activity && String(assignmentObj._activity).toLowerCase().includes("league")) return true;
         }
+        // Check activity name if flags are absent (e.g., in proposed picks)
         const s = String(activityName || "").toLowerCase();
-        if (s.includes("league game") || s.includes("specialty league")) return true;
+        if (s.includes("league game") || s.includes("specialty league") || s.includes("h2h")) return true;
         return false;
     }
 
     function calculateAssignmentWeight(activityName, assignmentObj, maxCapacity) {
+        // If it's a League Game, its weight is maxCapacity to ensure exclusivity
         if (isLeagueAssignment(assignmentObj, activityName)) {
             return maxCapacity;
         }
+        // Otherwise, weight is 1
         return 1;
     }
 
@@ -269,7 +275,7 @@
             const entry = window.scheduleAssignments[bunk][slotIndex];
             if (entry) {
                 const textToCheck = (entry._allMatchups || "") + " " + (entry._gameLabel || "") + " " + (entry.description || "");
-                if (textToCheck.length > 5 && textToCheck.includes("@")) {
+                if (isLeagueAssignment(entry, entry._activity)) {
                     const lowerText = textToCheck.toLowerCase();
                     if (lowerText.includes("@ " + targetRoot) || lowerText.includes("@" + targetRoot)) {
                         return true; 
@@ -290,6 +296,8 @@
 
         const transRules = Utils.getTransitionRules(fieldName, activityProperties);
         const { blockStartMin, blockEndMin, effectiveStart, effectiveEnd, activityDuration } = Utils.getEffectiveTimeRange(block, transRules);
+        
+        const proposedIsLeague = isLeagueAssignment({_activity: proposedActivity, _h2h: proposedActivity?.toLowerCase().includes('league')}, proposedActivity);
 
         // --- 0. PRE-CHECK: MINIMUM DURATION (Issue 1) ---
         if (activityDuration < transRules.minDurationMin) { 
@@ -320,13 +328,11 @@
         }
 
         let maxCapacity = 1;
-        if (props.sharableWith) {
-            if (props.sharableWith.capacity) maxCapacity = parseInt(props.sharableWith.capacity);
-            else if (props.sharable || props.sharableWith.type === 'all' || props.sharableWith.type === 'custom') maxCapacity = 2;
-        } else if (props.sharable) {
-            maxCapacity = 2;
-        }
-
+        const sharableWith = props.sharableWith || {};
+        
+        if (sharableWith.capacity) maxCapacity = parseInt(sharableWith.capacity);
+        else if (sharableWith.type === 'all' || sharableWith.type === 'custom' || props.sharable) maxCapacity = 2;
+        
         const bunkMetaData = window.SchedulerCoreUtils._bunkMetaData || {};
         const sportMetaData = window.SchedulerCoreUtils._sportMetaData || {};
         const maxHeadcount = sportMetaData[proposedActivity]?.maxCapacity || Infinity;
@@ -379,6 +385,8 @@
         // 1. DYNAMIC SLOT ITERATION (Check only the OCCUPIED slots)
         // =========================================================
         const slotsToScan = [];
+        const transRules = Utils.getTransitionRules(fieldName, activityProperties);
+        
         if (transRules.occupiesField) {
             // Buffer Occupies Field (Scan ALL slots in block range, including buffers)
             slotsToScan.push(...Utils.findSlotsForRange(blockStartMin, blockEndMin));
@@ -398,42 +406,67 @@
 
             const usage = getCombinedUsage(slotIndex, fieldName, fieldUsageBySlot);
             
-            // --- STRICT DIVISION FIREWALL ---
+            // --- Division Co-occupancy Firewall (REVISED LOGIC) ---
             if (usage.divisions && usage.divisions.length > 0) {
-                if (usage.divisions.some(d => d !== block.divName)) {
-                    return false; 
+                const sharableDivs = sharableWith.divisions || [];
+                const isCustomSharing = sharableWith.type === 'custom';
+
+                // 1. Proposed Division Check: If custom sharing is active, the proposed division must be on the list.
+                if (isCustomSharing && !sharableDivs.includes(block.divName)) {
+                     return false; 
+                }
+                
+                // 2. Existing Division Co-occupancy Check (only relevant if maxCapacity > 1):
+                if (maxCapacity > 1 && isCustomSharing) {
+                    for (const existingDiv of usage.divisions) {
+                        if (existingDiv !== block.divName && !sharableDivs.includes(existingDiv)) {
+                             // Found an existing division that is NOT on the allowed list, reject co-occupancy.
+                             return false;
+                        }
+                    }
+                } else if (maxCapacity === 1) {
+                    // For non-sharable fields (cap=1), any existing division means automatic conflict.
+                    if (usage.divisions.some(d => d !== block.divName)) {
+                        return false; 
+                    }
                 }
             }
 
             let currentWeight = 0;
             const existingBunks = Object.keys(usage.bunks);
-            const myProposedObj = { _gameLabel: block._gameLabel, _activity: proposedActivity };
-            const proposedIsLeague = isLeagueAssignment(myProposedObj, proposedActivity);
-
+            
             for (const existingBunk of existingBunks) {
                 const activityName = usage.bunks[existingBunk];
                 const actualAssignment = window.scheduleAssignments[existingBunk]?.[slotIndex];
                 if (existingBunk === block.bunk) continue;
 
-                const myLabel = block._gameLabel || (String(proposedActivity).includes("League") ? proposedActivity : null);
+                const myLabel = block._gameLabel || (proposedIsLeague ? proposedActivity : null);
                 const theirLabel = actualAssignment?._gameLabel || actualAssignment?._activity;
                 const isSameGame = (myLabel && theirLabel && String(myLabel) === String(theirLabel));
 
                 const existingIsLeague = isLeagueAssignment(actualAssignment, activityName);
 
+                // If either is a league game, they must be the same game/matchup to co-exist (which should not happen 
+                // unless maxCapacity > 1 AND they are both assigned the same field, but league fill logic should prevent this).
+                // A simpler/safer check: If any existing assignment is a League, it blocks non-League and different League games.
                 if (existingIsLeague && !isSameGame) return false;
-                if (proposedIsLeague && !isSameGame) return false;
-
+                if (proposedIsLeague && !existingIsLeague) return false;
+                
+                // If it's the same league game being assigned to multiple bunks in the same time slot, 
+                // their weight is already factored in and doesn't count against capacity again.
                 if (!isSameGame) {
                     currentWeight += calculateAssignmentWeight(activityName, actualAssignment, maxCapacity);
                 }
             }
-
+            
+            // --- League Weight Enforcement (Final Capacity Check) ---
             let myWeight = proposedIsLeague ? maxCapacity : 1;
+            
             if (currentWeight + myWeight > maxCapacity) {
                 return false; 
             }
             
+            // --- Headcount Check ---
             if (maxHeadcount !== Infinity) {
                 let currentHeadcount = 0;
                 Object.keys(usage.bunks).forEach(bName => {
@@ -442,6 +475,7 @@
                 if (currentHeadcount + mySize > maxHeadcount) return false;
             }
 
+            // --- Time Availability Check (Redundant check but kept for safety) ---
             if (!Utils.isTimeAvailable(slotIndex, props)) return false;
         }
 
@@ -663,7 +697,7 @@
             } else if (f.sharable) {
                 capacity = 2;
             }
-            if(!f.sharableWith) f.sharableWith = { capacity: capacity };
+            if(!f.sharableWith) f.sharableWith = { capacity: capacity, type: 'not_sharable', divisions: [] };
             else f.sharableWith.capacity = capacity;
             
             // NEW: Transition rules
