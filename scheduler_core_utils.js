@@ -7,6 +7,7 @@
 // - Implemented Minimum Duration Check (Issue 1)
 // - Implemented Anchor Time Logic (User Requirement)
 // - FIX: Added null check for 'props' in getTransitionRules to prevent crash.
+// - FIX: Added array-normalization for historical counts (prevents crash)
 // ============================================================================
 
 (function () {
@@ -535,6 +536,9 @@
             console.error("Error loading special activity rules:", e);
         }
 
+        // =====================================================================
+        // HISTORICAL COUNTS (PATCHED)
+        // =====================================================================
         try {
             const rawHistory = {};
             const allDaily = window.loadAllDailyData?.() || {};
@@ -542,9 +546,27 @@
 
             Object.entries(allDaily).forEach(([dateStr, dayData]) => {
                 const sched = dayData.scheduleAssignments || {};
+
                 Object.keys(sched).forEach(b => {
                     rawHistory[b] ??= {};
-                    (sched[b] || []).forEach(e => {
+
+                    const raw = sched[b];
+                    let arr = [];
+
+                    // PATCH: Safely normalize `sched[b]` to an array
+                    if (Array.isArray(raw)) {
+                        arr = raw;
+                    } else if (raw && typeof raw === "object") {
+                        const numericKeys = Object.keys(raw)
+                            .filter(k => /^\d+$/.test(k))
+                            .sort((a, b) => Number(a) - Number(b));
+
+                        arr = numericKeys.map(k => raw[k]);
+                    } else {
+                        arr = [];
+                    }
+
+                    arr.forEach(e => {
                         if (e?._activity && !e.continuation) {
                             rawHistory[b][e._activity] ??= [];
                             rawHistory[b][e._activity].push(dateStr);
@@ -558,6 +580,7 @@
 
             Object.keys(rawHistory).forEach(b => {
                 historicalCounts[b] = {};
+
                 Object.keys(rawHistory[b]).forEach(act => {
                     const dates = rawHistory[b][act].sort();
                     const rule = specialRules[act];
@@ -599,6 +622,10 @@
         } catch (e) {
             console.error("Error calculating historical counts:", e);
         }
+
+        // =====================================================================
+        // REMAINDER OF ORIGINAL FUNCTION (UNCHANGED)
+        // =====================================================================
 
         const availableDivisions = (app1Data.availableDivisions || [])
             .filter(divName => !dailyOverrides.bunks?.includes(divName));
@@ -679,7 +706,7 @@
         window.allSchedulableNames = availableActivityNames;
 
         // =====================================================================
-        // >>>>> FIXED LINE HERE <<<<<
+        // >>>>> FIXED LINE FROM YOUR VERSION <<<<<
         // =====================================================================
         const fieldsBySport = {};
         masterFields
