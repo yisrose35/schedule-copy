@@ -196,6 +196,12 @@
     // MAIN EXPORT (UPDATED)
     // =================================================================
     window.runSkeletonOptimizer = function(manualSkeleton, externalOverrides) {
+        if (!window.SchedulerCoreUtils) {
+            console.error("SchedulerCoreUtils is missing. scheduler_core_utils.js likely failed to load.");
+            alert("Critical Error: Scheduler Utilities not loaded. Check console for syntax errors in scheduler_core_utils.js.");
+            return false;
+        }
+
         window.scheduleAssignments = {};
         window.leagueAssignments = {};
         window.unifiedTimes = [];
