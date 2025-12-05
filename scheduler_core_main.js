@@ -3,33 +3,30 @@
 // PART 3 of 3: THE ORCHESTRATOR (Main Entry)
 //
 // UPDATES:
-// - Continuous Transition Merging (Zone Handshake).
-// - Atomic Block Filling (Pre/Activity/Post).
-// - Transition Concurrency Tracking.
-// - Smart Tile Integration (Pass 2.5 restored).
+// - Implemented Continuous Transition Merging (Zone Handshake.
+// - Implemented Atomic Block Filling (Pre/Activity/Post).
+// - Added Transition Concurrency Tracking.
+// - FIXED: Smart Tile Integration (Pass 2.5 restored).
 // ============================================================================
 
 (function () {
-    "use strict";
+    'use strict';
 
-    // ========================================================================
-    // CONSTANTS
-    // ========================================================================
     const GENERATED_EVENTS = [
-        "General Activity Slot",
-        "Sports Slot",
-        "Special Activity",
-        "Swim",
-        "League Game",
-        "Specialty League"
+        'General Activity Slot',
+        'Sports Slot',
+        'Special Activity',
+        'Swim',
+        'League Game',
+        'Specialty League'
     ];
 
     const INCREMENT_MINS = 30;
     const TRANSITION_TYPE = window.TRANSITION_TYPE; // "Transition/Buffer"
 
-    // ========================================================================
+    // =================================================================
     // LOCAL HELPERS
-    // ========================================================================
+    // =================================================================
 
     function fieldLabel(f) {
         return window.SchedulerCoreUtils.fieldLabel(f);
@@ -37,106 +34,81 @@
 
     function normalizeGA(name) {
         if (!name) return null;
-        const s = String(name).toLowerCase().replace(/\s+/g, "");
+        const s = String(name).toLowerCase().replace(/\s+/g, '');
         const keys = [
-            "generalactivity",
-            "activity",
-            "activyty",
-            "activty",
-            "activityslot",
-            "genactivity",
-            "genact",
-            "ga"
+            "generalactivity", "activity", "activyty", "activty",
+            "activityslot", "genactivity", "genact", "ga"
         ];
         return keys.some(k => s.includes(k)) ? "General Activity Slot" : null;
     }
 
     function normalizeLeague(name) {
         if (!name) return null;
-        const s = String(name).toLowerCase().replace(/\s+/g, "");
+        const s = String(name).toLowerCase().replace(/\s+/g, '');
         const keys = ["leaguegame", "leaguegameslot", "leagame", "lg", "lgame"];
         return keys.some(k => s.includes(k)) ? "League Game" : null;
     }
 
     function normalizeSpecialtyLeague(name) {
         if (!name) return null;
-        const s = String(name).toLowerCase().replace(/\s+/g, "");
-        const keys = [
-            "specialtyleague",
-            "specialityleague",
-            "specleague",
-            "specialleague",
-            "sleauge"
-        ];
+        const s = String(name).toLowerCase().replace(/\s+/g, '');
+        const keys = ["specialtyleague", "specialityleague", "specleague", "specialleague", "sleauge"];
         return keys.some(k => s.includes(k)) ? "Specialty League" : null;
     }
 
-    function shuffleArray(arr) {
-        if (!Array.isArray(arr)) return [];
-        const a = arr.slice();
-        for (let i = a.length - 1; i > 0; i--) {
+    function shuffleArray(array) {
+        if (!Array.isArray(array)) return [];
+        const arr = array.slice();
+        for (let i = arr.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
-            [a[i], a[j]] = [a[j], a[i]];
+            [arr[i], arr[j]] = [arr[j], arr[i]];
         }
-        return a;
+        return arr;
     }
 
     function getGeneralActivitiesDoneToday(bunkName) {
-        const set = new Set();
+        const done = new Set();
         const sched = window.scheduleAssignments[bunkName];
         if (Array.isArray(sched)) {
             sched.forEach(s => {
-                if (s && s._activity) set.add(s._activity);
+                if (s?._activity) done.add(s._activity);
             });
         }
-        return set;
+        return done;
     }
 
     function sortPicksByFreshness(picks, bunkHistory) {
         return picks.sort((a, b) => {
-            const tA = bunkHistory[a._activity] || 0;
-            const tB = bunkHistory[b._activity] || 0;
-            if (tA !== tB) return tA - tB;
+            const timeA = bunkHistory[a._activity] || 0;
+            const timeB = bunkHistory[b._activity] || 0;
+            if (timeA !== timeB) return timeA - timeB;
             return Math.random() - 0.5;
         });
     }
 
-    function sortPicksByIsolation(picks, slotIndex, fieldUsageBySlot) {
+    // Prioritizes EMPTY fields first, then shared
+    function sortPicksByIsolation(picks, slotIndex, fieldUsageBySlot, activityProperties) {
         return picks.sort((a, b) => {
             const nameA = fieldLabel(a.field);
             const nameB = fieldLabel(b.field);
-            const usageA = fieldUsageBySlot[slotIndex]?.[nameA]?.count || 0;
-            const usageB = fieldUsageBySlot[slotIndex]?.[nameB]?.count || 0;
-            return usageA - usageB; // emptier fields preferred
+            const usageA = fieldUsageBySlot[slotIndex]?.[nameA] || { count: 0 };
+            const usageB = fieldUsageBySlot[slotIndex]?.[nameB] || { count: 0 };
+            return usageA.count - usageB.count; // Lower count = better
         });
     }
 
-    // ========================================================================
-    // FILL BLOCK
-    // ========================================================================
-    function fillBlock(
-        block,
-        pick,
-        fieldUsageBySlot,
-        yesterdayHistory,
-        isLeagueFill = false,
-        activityProperties
-    ) {
-        const fieldName = fieldLabel(pick.field);
+    // =================================================================
+    // FILL BLOCK — Atomic Writer with Buffer & Continuity Support
+    // =================================================================
+
+    function fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, isLeagueFill = false, activityProperties) {
+        const fieldName = window.SchedulerCoreUtils.fieldLabel(pick.field);
         const sport = pick.sport;
         const bunk = block.bunk;
 
-        const transRules = window.SchedulerCoreUtils.getTransitionRules(
-            fieldName,
-            activityProperties
-        );
-
-        const {
-            blockStartMin,
-            blockEndMin,
-            effectiveStart,
-            effectiveEnd
-        } = window.SchedulerCoreUtils.getEffectiveTimeRange(block, transRules);
+        const transRules = window.SchedulerCoreUtils.getTransitionRules(fieldName, activityProperties);
+        const { blockStartMin, blockEndMin, effectiveStart, effectiveEnd } =
+            window.SchedulerCoreUtils.getEffectiveTimeRange(block, transRules);
 
         const preMin = transRules.preMin || 0;
         const postMin = transRules.postMin || 0;
@@ -145,77 +117,58 @@
         let writePre = preMin > 0;
         let writePost = postMin > 0;
 
-        // --------------------------------------------------------------------
-        // CONTINUITY MERGE CHECK (Zone Handshake)
-        // --------------------------------------------------------------------
-        const firstSlot = block.slots[0];
-        const prev = window.scheduleAssignments[bunk]?.[firstSlot - 1];
+        // --- CONTINUITY CHECK: Merge with previous Post-Buffer ---
+        const firstSlotIndex = block.slots[0];
+        const prevEntry = window.scheduleAssignments[bunk]?.[firstSlotIndex - 1];
 
-        if (writePre && firstSlot > 0) {
+        if (writePre && firstSlotIndex > 0) {
             if (
-                prev?._zone === zone &&
-                prev?._activity === TRANSITION_TYPE &&
-                prev?._transitionType === "Post"
+                prevEntry?._zone === zone &&
+                prevEntry?._activity === TRANSITION_TYPE &&
+                prevEntry?._transitionType === 'Post'
             ) {
                 writePre = false;
 
-                // Remove prior Post-buffer to merge transitions
-                const prevSlots = window.SchedulerCoreUtils.findSlotsForRange(
+                // Clear overlapping post-buffer from previous activity
+                const prevPostSlots = window.SchedulerCoreUtils.findSlotsForRange(
                     blockStartMin - postMin,
                     blockStartMin
                 );
-
-                prevSlots.forEach(idx => {
-                    if (
-                        window.scheduleAssignments[bunk][idx]?._transitionType ===
-                        "Post"
-                    ) {
-                        window.scheduleAssignments[bunk][idx] = null;
+                prevPostSlots.forEach(slotIndex => {
+                    if (window.scheduleAssignments[bunk][slotIndex]?._transitionType === 'Post') {
+                        window.scheduleAssignments[bunk][slotIndex] = null;
                     }
                 });
             }
         }
 
-        // --------------------------------------------------------------------
-        // 1. PRE-BUFFER
-        // --------------------------------------------------------------------
+        // 1. Write Pre-Buffer
         if (writePre) {
-            const preSlots = window.SchedulerCoreUtils.findSlotsForRange(
-                blockStartMin,
-                effectiveStart
-            );
-
-            preSlots.forEach((idx, i) => {
-                window.scheduleAssignments[bunk][idx] = {
+            const preSlots = window.SchedulerCoreUtils.findSlotsForRange(blockStartMin, effectiveStart);
+            preSlots.forEach((slotIndex, idx) => {
+                window.scheduleAssignments[bunk][slotIndex] = {
                     field: TRANSITION_TYPE,
                     sport: transRules.label,
-                    continuation: i > 0,
+                    continuation: idx > 0,
                     _fixed: true,
                     _activity: TRANSITION_TYPE,
                     _isTransition: true,
-                    _transitionType: "Pre",
+                    _transitionType: 'Pre',
                     _zone: zone,
                     _endTime: effectiveStart
                 };
             });
         }
 
-        // --------------------------------------------------------------------
-        // 2. ACTIVITY
-        // --------------------------------------------------------------------
-        const activitySlots = window.SchedulerCoreUtils.findSlotsForRange(
-            effectiveStart,
-            effectiveEnd
-        );
-
-        activitySlots.forEach((idx, i) => {
-            const existing = window.scheduleAssignments[bunk][idx];
-
+        // 2. Write Main Activity
+        const activitySlots = window.SchedulerCoreUtils.findSlotsForRange(effectiveStart, effectiveEnd);
+        activitySlots.forEach((slotIndex, idx) => {
+            const existing = window.scheduleAssignments[bunk][slotIndex];
             if (!existing || existing._isTransition) {
-                window.scheduleAssignments[bunk][idx] = {
+                window.scheduleAssignments[bunk][slotIndex] = {
                     field: fieldName,
                     sport: sport,
-                    continuation: i > 0,
+                    continuation: idx > 0,
                     _fixed: pick._fixed || false,
                     _h2h: pick._h2h || false,
                     _activity: pick._activity || fieldName,
@@ -227,10 +180,10 @@
 
                 if (!isLeagueFill && transRules.occupiesField) {
                     window.registerSingleSlotUsage(
-                        idx,
+                        slotIndex,
                         fieldName,
                         block.divName,
-                        block.bunk,
+                        bunk,
                         pick._activity,
                         fieldUsageBySlot,
                         activityProperties
@@ -239,35 +192,29 @@
             }
         });
 
-        // --------------------------------------------------------------------
-        // 3. POST-BUFFER
-        // --------------------------------------------------------------------
+        // 3. Write Post-Buffer
         if (writePost) {
-            const postSlots = window.SchedulerCoreUtils.findSlotsForRange(
-                effectiveEnd,
-                blockEndMin
-            );
-
-            postSlots.forEach((idx, i) => {
-                window.scheduleAssignments[bunk][idx] = {
+            const postSlots = window.SchedulerCoreUtils.findSlotsForRange(effectiveEnd, blockEndMin);
+            postSlots.forEach((slotIndex, idx) => {
+                window.scheduleAssignments[bunk][slotIndex] = {
                     field: TRANSITION_TYPE,
                     sport: transRules.label,
-                    continuation: i > 0,
+                    continuation: idx > 0,
                     _fixed: true,
                     _activity: TRANSITION_TYPE,
                     _isTransition: true,
-                    _transitionType: "Post",
+                    _transitionType: 'Post',
                     _zone: zone,
                     _endTime: blockEndMin
                 };
             });
         }
 
-        // Field usage for non-buffer-occupying activities
+        // Register usage even if field not occupied (e.g. swim)
         if (!isLeagueFill && !transRules.occupiesField) {
-            activitySlots.forEach(idx => {
+            activitySlots.forEach(slotIndex => {
                 window.registerSingleSlotUsage(
-                    idx,
+                    slotIndex,
                     fieldName,
                     block.divName,
                     bunk,
@@ -281,24 +228,20 @@
 
     window.fillBlock = fillBlock;
 
-    // ========================================================================
-    // MAIN EXPORT
-    // ========================================================================
+    // =================================================================
+    // MAIN ENTRY POINT
+    // =================================================================
+
     window.runSkeletonOptimizer = function (manualSkeleton, externalOverrides) {
-        // --------------------------------------------------------------------
-        // INITIALIZE GLOBAL STATE
-        // --------------------------------------------------------------------
         window.scheduleAssignments = {};
         window.leagueAssignments = {};
         window.unifiedTimes = [];
+        const dailyLeagueSportsUsage = {};
 
         if (!manualSkeleton || manualSkeleton.length === 0) return false;
 
-        // --------------------------------------------------------------------
-        // 1. LOAD ALL CONFIG
-        // --------------------------------------------------------------------
+        // 1. Load and filter data
         const config = window.SchedulerCoreUtils.loadAndFilterData();
-
         const {
             divisions,
             availableDivisions,
@@ -327,12 +270,8 @@
         window.activityProperties = activityProperties;
         window.registerSingleSlotUsage = registerSingleSlotUsage;
 
-        // --------------------------------------------------------------------
-        // 2. BUILD TIME GRID
-        // --------------------------------------------------------------------
-        const timePoints = new Set();
-        timePoints.add(540); // 9:00
-        timePoints.add(960); // 16:00
+        // 2. Build unified time grid
+        const timePoints = new Set([540, 960]); // 9:00 & 16:00
 
         manualSkeleton.forEach(item => {
             const s = window.SchedulerCoreUtils.parseTimeToMinutes(item.startTime);
@@ -341,85 +280,50 @@
             if (e !== null) timePoints.add(e);
         });
 
-        const sorted = Array.from(timePoints).sort((a, b) => a - b);
+        const sortedPoints = Array.from(timePoints).sort((a, b) => a - b);
         window.unifiedTimes = [];
 
-        for (let i = 0; i < sorted.length - 1; i++) {
-            const start = sorted[i];
-            const end = sorted[i + 1];
-
+        for (let i = 0; i < sortedPoints.length - 1; i++) {
+            const start = sortedPoints[i];
+            const end = sortedPoints[i + 1];
             if (end - start >= 5) {
                 window.unifiedTimes.push({
                     start: window.SchedulerCoreUtils.minutesToDate(start),
                     end: window.SchedulerCoreUtils.minutesToDate(end),
-                    label:
-                        `${window.SchedulerCoreUtils.fmtTime(
-                            window.SchedulerCoreUtils.minutesToDate(start)
-                        )} - ${window.SchedulerCoreUtils.fmtTime(
-                            window.SchedulerCoreUtils.minutesToDate(end)
-                        )}`
+                    label: `${window.SchedulerCoreUtils.fmtTime(window.SchedulerCoreUtils.minutesToDate(start))} - ${window.SchedulerCoreUtils.fmtTime(window.SchedulerCoreUtils.minutesToDate(end))}`
                 });
             }
         }
 
         if (window.unifiedTimes.length === 0) return false;
 
-        // Allocate schedule arrays
-        availableDivisions.forEach(div => {
-            const bunks = divisions[div]?.bunks || [];
-            bunks.forEach(bunk => {
-                window.scheduleAssignments[bunk] = new Array(
-                    window.unifiedTimes.length
-                );
+        // Initialize schedule arrays
+        availableDivisions.forEach(divName => {
+            (divisions[divName]?.bunks || []).forEach(bunk => {
+                window.scheduleAssignments[bunk] = new Array(window.unifiedTimes.length);
             });
         });
 
-        // --------------------------------------------------------------------
-        // 3. PASS 1.5 — DAILY OVERRIDES
-        // --------------------------------------------------------------------
-        const bunkOverrides =
-            window.loadCurrentDailyData?.().bunkActivityOverrides || [];
-
+        // 3. Pass 1.5 — Bunk Overrides (Manual Pins)
+        const bunkOverrides = window.loadCurrentDailyData?.().bunkActivityOverrides || [];
         bunkOverrides.forEach(override => {
             const fieldName = override.activity;
-            const transRules = window.SchedulerCoreUtils.getTransitionRules(
-                fieldName,
-                activityProperties
+            const transRules = window.SchedulerCoreUtils.getTransitionRules(fieldName, activityProperties);
+            const startMin = window.SchedulerCoreUtils.parseTimeToMinutes(override.startTime);
+            const endMin = window.SchedulerCoreUtils.parseTimeToMinutes(override.endTime);
+            const { effectiveStart, effectiveEnd } = window.SchedulerCoreUtils.getEffectiveTimeRange(
+                { startTime: startMin, endTime: endMin },
+                transRules
             );
 
-            const startMin = window.SchedulerCoreUtils.parseTimeToMinutes(
-                override.startTime
-            );
-            const endMin = window.SchedulerCoreUtils.parseTimeToMinutes(
-                override.endTime
-            );
-
-            const slots = window.SchedulerCoreUtils.findSlotsForRange(
-                startMin,
-                endMin
-            );
-
+            const slots = window.SchedulerCoreUtils.findSlotsForRange(startMin, endMin);
             const bunk = override.bunk;
-            const divName = Object.keys(divisions).find(d =>
-                divisions[d].bunks.includes(bunk)
-            );
+            const divName = Object.keys(divisions).find(d => divisions[d].bunks.includes(bunk));
 
             if (window.scheduleAssignments[bunk] && slots.length > 0) {
                 fillBlock(
-                    {
-                        divName,
-                        bunk,
-                        startTime: startMin,
-                        endTime: endMin,
-                        slots
-                    },
-                    {
-                        field: fieldName,
-                        sport: null,
-                        _fixed: true,
-                        _h2h: false,
-                        _activity: fieldName
-                    },
+                    { divName, bunk, startTime: startMin, endTime: endMin, slots },
+                    { field: fieldName, sport: null, _fixed: true, _h2h: false, _activity: fieldName },
                     fieldUsageBySlot,
                     yesterdayHistory,
                     false,
@@ -428,76 +332,51 @@
             }
         });
 
-        // --------------------------------------------------------------------
-        // 4. PASS 2 — PARSE SKELETON
-        // --------------------------------------------------------------------
+        // 4. Pass 2 — Skeleton Parsing
         const schedulableSlotBlocks = [];
 
         manualSkeleton.forEach(item => {
-            const bunks = divisions[item.division]?.bunks || [];
-            if (!bunks.length) return;
+            const allBunks = divisions[item.division]?.bunks || [];
+            if (!allBunks.length) return;
 
-            const startMin = window.SchedulerCoreUtils.parseTimeToMinutes(
-                item.startTime
-            );
-            const endMin = window.SchedulerCoreUtils.parseTimeToMinutes(
-                item.endTime
-            );
-
-            const slots = window.SchedulerCoreUtils.findSlotsForRange(
-                startMin,
-                endMin
-            );
-
-            if (!slots.length) return;
+            const startMin = window.SchedulerCoreUtils.parseTimeToMinutes(item.startTime);
+            const endMin = window.SchedulerCoreUtils.parseTimeToMinutes(item.endTime);
+            const allSlots = window.SchedulerCoreUtils.findSlotsForRange(startMin, endMin);
+            if (allSlots.length === 0) return;
 
             const normGA = normalizeGA(item.event);
-            const normLg = normalizeLeague(item.event);
-            const normSL = normalizeSpecialtyLeague(item.event);
-
-            const finalEvent =
-                normGA || normSL || normLg || item.event;
+            const normLeague = normalizeLeague(item.event);
+            const normSpecLg = normalizeSpecialtyLeague(item.event);
+            const finalEventName = normGA || normSpecLg || normLeague || item.event;
 
             const isGeneratedEvent =
-                GENERATED_EVENTS.includes(finalEvent) ||
-                normGA ||
-                normLg ||
-                normSL;
+                GENERATED_EVENTS.includes(finalEventName) ||
+                normGA === "General Activity Slot" ||
+                normLeague === "League Game" ||
+                normSpecLg === "Specialty League";
 
-            const transRules = window.SchedulerCoreUtils.getTransitionRules(
-                item.event,
-                activityProperties
-            );
-
+            const transRules = window.SchedulerCoreUtils.getTransitionRules(item.event, activityProperties);
             const hasBuffer = transRules.preMin > 0 || transRules.postMin > 0;
 
-            // ----------------------------------------------------------------
-            // Pinned/manual events
-            // ----------------------------------------------------------------
-            if (
-                (item.type === "pinned" || !isGeneratedEvent) &&
-                item.type !== "smart" &&
-                !hasBuffer
-            ) {
-                if (disabledFields.includes(item.event)) return;
-                if (disabledSpecials.includes(item.event)) return;
+            // Pinned / Fixed Events (no buffer)
+            if ((item.type === 'pinned' || !isGeneratedEvent) && item.type !== 'smart' && !hasBuffer) {
+                if (disabledFields.includes(item.event) || disabledSpecials.includes(item.event)) return;
 
-                bunks.forEach(bunk => {
-                    slots.forEach((idx, i) => {
-                        if (!window.scheduleAssignments[bunk][idx]) {
-                            window.scheduleAssignments[bunk][idx] = {
+                allBunks.forEach(bunk => {
+                    allSlots.forEach((slotIndex, idx) => {
+                        if (!window.scheduleAssignments[bunk][slotIndex]) {
+                            window.scheduleAssignments[bunk][slotIndex] = {
                                 field: { name: item.event },
                                 sport: null,
-                                continuation: i > 0,
+                                continuation: idx > 0,
                                 _fixed: true,
                                 _h2h: false,
                                 vs: null,
                                 _activity: item.event,
                                 _endTime: endMin
                             };
-
                             registerSingleSlotUsage(
-                                idx,
+                                slotIndex,
                                 item.event,
                                 item.division,
                                 bunk,
@@ -508,49 +387,25 @@
                         }
                     });
                 });
-
-                return;
             }
-
-            // ----------------------------------------------------------------
-            // SPLIT BLOCK HANDLING
-            // ----------------------------------------------------------------
-            if (item.type === "split") {
-                const midB = Math.ceil(bunks.length / 2);
-                const bunksTop = bunks.slice(0, midB);
-                const bunksBot = bunks.slice(midB);
-
-                const midS = Math.ceil(slots.length / 2);
-                const slotsFirst = slots.slice(0, midS);
-                const slotsSecond = slots.slice(midS);
+            // Split blocks (e.g. Swim/GA split)
+            else if (item.type === 'split') {
+                const mid = Math.ceil(allBunks.length / 2);
+                const bunksTop = allBunks.slice(0, mid);
+                const bunksBottom = allBunks.slice(mid);
+                const slotMid = Math.ceil(allSlots.length / 2);
+                const slotsFirst = allSlots.slice(0, slotMid);
+                const slotsSecond = allSlots.slice(slotMid);
 
                 const swimLabel = "Swim";
-                const gaLabel =
-                    normalizeGA(item.subEvents[1].event) ||
-                    "General Activity Slot";
+                const gaLabel = normalizeGA(item.subEvents[1]?.event) || "General Activity Slot";
 
-                function pinEvent(bunksArr, slotArr, evName) {
-                    const { blockStartMin, blockEndMin } =
-                        window.SchedulerCoreUtils.getBlockTimeRange({
-                            slots: slotArr
-                        });
-
-                    bunksArr.forEach(bunk => {
+                function pinEvent(bunks, slots, eventName) {
+                    const { blockStartMin, blockEndMin } = window.SchedulerCoreUtils.getBlockTimeRange({ slots });
+                    bunks.forEach(bunk => {
                         fillBlock(
-                            {
-                                divName: item.division,
-                                bunk,
-                                startTime: blockStartMin,
-                                endTime: blockEndMin,
-                                slots: slotArr
-                            },
-                            {
-                                field: evName,
-                                sport: null,
-                                _fixed: true,
-                                _h2h: false,
-                                _activity: evName
-                            },
+                            { divName: item.division, bunk, startTime: blockStartMin, endTime: blockEndMin, slots },
+                            { field: eventName, sport: null, _fixed: true, _h2h: false, _activity: eventName },
                             fieldUsageBySlot,
                             yesterdayHistory,
                             false,
@@ -559,78 +414,52 @@
                     });
                 }
 
-                function pushGenerated(bunksArr, slotArr, evName) {
-                    const { blockStartMin, blockEndMin } =
-                        window.SchedulerCoreUtils.getBlockTimeRange({
-                            slots: slotArr
-                        });
-
-                    bunksArr.forEach(bunk => {
+                function pushGenerated(bunks, slots, eventName) {
+                    const { blockStartMin, blockEndMin } = window.SchedulerCoreUtils.getBlockTimeRange({ slots });
+                    bunks.forEach(bunk => {
                         schedulableSlotBlocks.push({
                             divName: item.division,
                             bunk,
-                            event: evName,
+                            event: eventName,
                             startTime: blockStartMin,
                             endTime: blockEndMin,
-                            slots: slotArr
+                            slots
                         });
                     });
                 }
 
-                // TOP/Bottom schedule invert
                 pinEvent(bunksTop, slotsFirst, swimLabel);
-                pushGenerated(bunksBot, slotsFirst, gaLabel);
+                pushGenerated(bunksBottom, slotsFirst, gaLabel);
                 pushGenerated(bunksTop, slotsSecond, gaLabel);
-                pinEvent(bunksBot, slotsSecond, swimLabel);
-
-                return;
+                pinEvent(bunksBottom, slotsSecond, swimLabel);
             }
+            // Generated / Buffered blocks
+            else if ((item.type === 'slot' && isGeneratedEvent) || hasBuffer) {
+                let normalizedEvent = normSpecLg || normLeague || normGA || item.event;
 
-            // ----------------------------------------------------------------
-            // GENERATED BLOCKS + BUF-FEATURE BLOCKS
-            // ----------------------------------------------------------------
-            const normalized =
-                normalizeSpecialtyLeague(item.event) ||
-                normalizeLeague(item.event) ||
-                normalizeGA(item.event) ||
-                item.event;
-
-            if (item.type === "slot" && isGeneratedEvent || hasBuffer) {
-                bunks.forEach(bunk => {
+                allBunks.forEach(bunk => {
                     schedulableSlotBlocks.push({
                         divName: item.division,
                         bunk,
-                        event: normalized,
+                        event: normalizedEvent,
                         startTime: startMin,
                         endTime: endMin,
-                        slots,
+                        slots: allSlots,
                         _transRules: transRules
                     });
                 });
             }
         });
 
-        // --------------------------------------------------------------------
-        // 5. PASS 2.5 — SMART TILE INTEGRATION
-        // --------------------------------------------------------------------
+        // 5. Pass 2.5 — Smart Tiles (RESTORED!)
         let smartJobs = [];
-
-        if (
-            window.SmartLogicAdapter &&
-            typeof window.SmartLogicAdapter.preprocessSmartTiles === "function"
-        ) {
-            smartJobs = window.SmartLogicAdapter.preprocessSmartTiles(
-                manualSkeleton,
-                externalOverrides,
-                masterSpecials
-            );
-        }
+        if (window.SmartLogicAdapter?.preprocessSmartTiles?.(manualSkeleton, externalOverrides, masterSpecials) || [];
 
         smartJobs.forEach(job => {
-            const bunks = window.divisions[job.division]?.bunks || [];
+            const bunks = divisions[job.division]?.bunks || [];
             if (!bunks.length) return;
 
-            const adapterResult = SmartLogicAdapter.generateAssignments(
+            const result = window.SmartLogicAdapter.generateAssignments(
                 bunks,
                 job,
                 historicalCounts,
@@ -641,15 +470,10 @@
                 yesterdayHistory
             );
 
-            const { block1Assignments, block2Assignments } = adapterResult;
-            if (!block1Assignments || !block2Assignments) return;
+            const { block1Assignments, block2Assignments } = result || {};
 
             function pushGenerated(bunk, event, startMin, endMin) {
-                const slots = window.SchedulerCoreUtils.findSlotsForRange(
-                    startMin,
-                    endMin
-                );
-
+                const slots = window.SchedulerCoreUtils.findSlotsForRange(startMin, endMin);
                 schedulableSlotBlocks.push({
                     divName: job.division,
                     bunk,
@@ -661,37 +485,19 @@
                 });
             }
 
-            // ----- BLOCK A -----
-            const slotsA = window.SchedulerCoreUtils.findSlotsForRange(
-                job.blockA.startMin,
-                job.blockA.endMin
-            );
-
-            Object.entries(block1Assignments).forEach(([bunk, act]) => {
+            const slotsA = window.SchedulerCoreUtils.findSlotsForRange(job.blockA.startMin, job.blockA.endMin);
+            Object.entries(block1Assignments || {}).forEach(([bunk, act]) => {
                 const lower = act.toLowerCase();
-
-                if (lower.includes("sport"))
+                if (lower.includes("sport")) {
                     pushGenerated(bunk, "Sports Slot", job.blockA.startMin, job.blockA.endMin);
-                else if (lower.includes("special"))
+                } else if (lower.includes("special")) {
                     pushGenerated(bunk, "Special Activity Slot", job.blockA.startMin, job.blockA.endMin);
-                else if (lower.includes("general activity"))
+                } else if (lower.includes("general activity")) {
                     pushGenerated(bunk, "General Activity Slot", job.blockA.startMin, job.blockA.endMin);
-                else {
+                } else {
                     fillBlock(
-                        {
-                            divName: job.division,
-                            bunk,
-                            startTime: job.blockA.startMin,
-                            endTime: job.blockA.endMin,
-                            slots: slotsA
-                        },
-                        {
-                            field: act,
-                            sport: null,
-                            _fixed: true,
-                            _h2h: false,
-                            _activity: act
-                        },
+                        { divName: job.division, bunk, startTime: job.blockA.startMin, endTime: job.blockA.endMin, slots: slotsA },
+                        { field: act, sport: null, _fixed: true, _h2h: false, _activity: act },
                         fieldUsageBySlot,
                         yesterdayHistory,
                         false,
@@ -700,38 +506,20 @@
                 }
             });
 
-            // ----- BLOCK B -----
-            if (job.blockB) {
-                const slotsB = window.SchedulerCoreUtils.findSlotsForRange(
-                    job.blockB.startMin,
-                    job.blockB.endMin
-                );
-
+            if (job.blockB && block2Assignments) {
+                const slotsB = window.SchedulerCoreUtils.findSlotsForRange(job.blockB.startMin, job.blockB.endMin);
                 Object.entries(block2Assignments).forEach(([bunk, act]) => {
                     const lower = act.toLowerCase();
-
-                    if (lower.includes("sport"))
+                    if (lower.includes("sport")) {
                         pushGenerated(bunk, "Sports Slot", job.blockB.startMin, job.blockB.endMin);
-                    else if (lower.includes("special"))
+                    } else if (lower.includes("special")) {
                         pushGenerated(bunk, "Special Activity Slot", job.blockB.startMin, job.blockB.endMin);
-                    else if (lower.includes("general activity"))
+                    } else if (lower.includes("general activity")) {
                         pushGenerated(bunk, "General Activity Slot", job.blockB.startMin, job.blockB.endMin);
-                    else {
+                    } else {
                         fillBlock(
-                            {
-                                divName: job.division,
-                                bunk,
-                                startTime: job.blockB.startMin,
-                                endTime: job.blockB.endMin,
-                                slots: slotsB
-                            },
-                            {
-                                field: act,
-                                sport: null,
-                                _fixed: true,
-                                _h2h: false,
-                                _activity: act
-                            },
+                            { divName: job.division, bunk, startTime: job.blockB.startMin, endTime: job.blockB.endMin, slots: slotsB },
+                            { field: act, sport: null, _fixed: true, _h2h: false, _activity: act },
                             fieldUsageBySlot,
                             yesterdayHistory,
                             false,
@@ -742,9 +530,7 @@
             }
         });
 
-        // --------------------------------------------------------------------
-        // 6. PASS 3 & 3.5 — LEAGUES
-        // --------------------------------------------------------------------
+        // 6. Pass 3 & 3.5 — League Processing
         const leagueContext = {
             schedulableSlotBlocks,
             fieldUsageBySlot,
@@ -757,35 +543,27 @@
             yesterdayHistory,
             divisions,
             fieldsBySport,
-            dailyLeagueSportsUsage: {},
+            dailyLeagueSportsUsage,
             fillBlock
         };
 
-        window.SchedulerCoreLeagues.processSpecialtyLeagues(leagueContext);
-        window.SchedulerCoreLeagues.processRegularLeagues(leagueContext);
+        window.SchedulerCoreLeagues?.processSpecialtyLeagues?.(leagueContext);
+        window.SchedulerCoreLeagues?.processRegularLeagues?.(leagueContext);
 
-        // --------------------------------------------------------------------
-        // 7. PASS 4 — REMAINING GENERATED BLOCKS
-        // --------------------------------------------------------------------
+        // 7. Pass 4 — Fill Remaining Generated Blocks
         const remainingBlocks = schedulableSlotBlocks.filter(
-            b =>
-                b.event !== "League Game" &&
-                b.event !== "Specialty League" &&
-                !b.processed
+            b => !['League Game', 'Specialty League'].includes(b.event) && !b.processed
         );
 
         remainingBlocks.sort((a, b) => {
             if (a.startTime !== b.startTime) return a.startTime - b.startTime;
-
             if (a.fromSmartTile && !b.fromSmartTile) return -1;
             if (!a.fromSmartTile && b.fromSmartTile) return 1;
-
             const sizeA = bunkMetaData[a.bunk]?.size || 0;
             const sizeB = bunkMetaData[b.bunk]?.size || 0;
             if (sizeA !== sizeB) return sizeB - sizeA;
-
-            const countA = historicalCounts[a.bunk]?.["_totalSpecials"] || 0;
-            const countB = historicalCounts[b.bunk]?.["_totalSpecials"] || 0;
+            const countA = historicalCounts[a.bunk]?.['_totalSpecials'] || 0;
+            const countB = historicalCounts[b.bunk]?.['_totalSpecials'] || 0;
             return countA - countB;
         });
 
@@ -794,143 +572,77 @@
         for (const block of remainingBlocks) {
             if (!block.slots?.length) continue;
             if (!window.scheduleAssignments[block.bunk]) continue;
-
-            const first = window.scheduleAssignments[block.bunk][block.slots[0]];
-            if (first && first._activity !== TRANSITION_TYPE) continue;
+            if (window.scheduleAssignments[block.bunk][block.slots[0]]?._activity !== TRANSITION_TYPE) continue;
 
             let pick = null;
 
-            if (
-                block.event === "Special Activity" ||
-                block.event === "Special Activity Slot"
-            ) {
-                pick = window.findBestSpecial(
-                    block,
-                    allActivities,
-                    fieldUsageBySlot,
-                    yesterdayHistory,
-                    activityProperties,
-                    rotationHistory,
-                    divisions,
-                    historicalCounts
-                );
-            } else if (block.event === "Sports Slot" || block.event === "Sports") {
-                pick = window.findBestSportActivity(
-                    block,
-                    allActivities,
-                    fieldUsageBySlot,
-                    yesterdayHistory,
-                    activityProperties,
-                    rotationHistory,
-                    divisions,
-                    historicalCounts
-                );
+            if (block.event === 'Special Activity' || block.event === 'Special Activity Slot') {
+                pick = window.findBestSpecial?.(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
+            } else if (block.event === 'Sports Slot' || block.event === 'Sports') {
+                pick = window.findBestSportActivity?.(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
             }
 
             if (!pick) {
-                pick = window.findBestGeneralActivity(
-                    block,
-                    allActivities,
-                    h2hActivities,
-                    fieldUsageBySlot,
-                    yesterdayHistory,
-                    activityProperties,
-                    rotationHistory,
-                    divisions,
-                    historicalCounts
-                );
+                pick = window.findBestGeneralActivity(block, allActivities, h2hActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, divisions, historicalCounts);
             }
 
-            let fits =
-                pick &&
-                window.SchedulerCoreUtils.canBlockFit(
-                    block,
-                    fieldLabel(pick.field),
-                    activityProperties,
-                    fieldUsageBySlot,
-                    pick._activity
-                );
-
-            // ----------------------------------------------------------------
-            // TRANSITION CONCURRENCY CHECK
-            // ----------------------------------------------------------------
-            const transRules = window.SchedulerCoreUtils.getTransitionRules(
-                fieldLabel(pick?.field),
-                activityProperties
+            let fits = pick && window.SchedulerCoreUtils.canBlockFit(
+                block,
+                window.SchedulerCoreUtils.fieldLabel(pick.field),
+                activityProperties,
+                fieldUsageBySlot,
+                pick._activity,
+                false // isLeague = false
             );
 
+            // Transition concurrency limit check
+            const transRules = window.SchedulerCoreUtils.getTransitionRules(fieldLabel(pick?.field), activityProperties);
             if (pick && (transRules.preMin > 0 || transRules.postMin > 0)) {
                 const zone = transRules.zone;
                 const maxConcurrent = masterZones[zone]?.maxConcurrent || 99;
 
                 if (maxConcurrent < 99) {
-                    const { blockStartMin } =
-                        window.SchedulerCoreUtils.getBlockTimeRange(block);
+                    const { blockStartMin } = window.SchedulerCoreUtils.getBlockTimeRange(block);
+                    const isMerged = blockStartMin > 0 &&
+                        window.scheduleAssignments[block.bunk]?.[block.slots[0] - 1]?._zone === zone;
 
-                    const merged =
-                        blockStartMin > 0 &&
-                        window.scheduleAssignments[block.bunk]?.[block.slots[0] - 1]
-                            ?._zone === zone;
-
-                    if (!merged) {
-                        if ((window.__transitionUsage[zone] || 0) + 1 > maxConcurrent) {
-                            fits = false;
-                        }
+                    if (!isMerged && (window.__transitionUsage[zone] || 0) + 1 > maxConcurrent) {
+                        fits = false;
                     }
                 }
             }
 
-            // ----------------------------------------------------------------
-            // APPLY PICK OR MARK FREE
-            // ----------------------------------------------------------------
+            if (!fits) pick = null;
+
             if (fits && pick) {
-                // count transition
+                // Track transition usage
                 if (transRules.preMin > 0 || transRules.postMin > 0) {
-                    const { blockStartMin } =
-                        window.SchedulerCoreUtils.getBlockTimeRange(block);
+                    const { blockStartMin } = window.SchedulerCoreUtils.getBlockTimeRange(block);
+                    const isMerged = blockStartMin > 0 &&
+                        window.scheduleAssignments[block.bunk]?.[block.slots[0] - 1]?._zone === transRules.zone;
 
-                    const merged =
-                        blockStartMin > 0 &&
-                        window.scheduleAssignments[block.bunk]?.[
-                            block.slots[0] - 1
-                        ]?._zone === transRules.zone;
-
-                    if (!merged) {
-                        window.__transitionUsage[transRules.zone] =
-                            (window.__transitionUsage[transRules.zone] || 0) + 1;
+                    if (!isMerged) {
+                        window.__transitionUsage[transRules.zone] = (window.__transitionUsage[transRules.zone] || 0) + 1;
                     }
                 }
 
-                fillBlock(
-                    block,
-                    pick,
-                    fieldUsageBySlot,
-                    yesterdayHistory,
-                    false,
-                    activityProperties
-                );
+                fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, false, activityProperties);
 
                 // Update historical counts
                 if (pick._activity && block.bunk) {
-                    historicalCounts[block.bunk] =
-                        historicalCounts[block.bunk] || {};
+                    historicalCounts[block.bunk] ??= {};
+                    historicalCounts[block.bunk][pick._activity] = (historicalCounts[block.bunk][pick._activity] || 0) + 1;
 
-                    historicalCounts[block.bunk][pick._activity] =
-                        (historicalCounts[block.bunk][pick._activity] || 0) + 1;
-
-                    if (masterSpecials.some(s => s.name === pick._activity)) {
-                        historicalCounts[block.bunk]["_totalSpecials"] =
-                            (historicalCounts[block.bunk]["_totalSpecials"] || 0) + 1;
+                    const isSpecial = masterSpecials.some(s => s.name === pick._activity);
+                    if (isSpecial) {
+                        historicalCounts[block.bunk]['_totalSpecials'] = (historicalCounts[block.bunk]['_totalSpecials'] || 0) + 1;
                     }
                 }
             } else {
-                if (
-                    window.scheduleAssignments[block.bunk]?.[block.slots[0]]
-                        ?._activity === TRANSITION_TYPE
-                ) {
+                // Fallback to Free
+                if (window.scheduleAssignments[block.bunk]?.[block.slots[0]]?._activity === TRANSITION_TYPE) {
                     window.scheduleAssignments[block.bunk][block.slots[0]] = null;
                 }
-
                 fillBlock(
                     block,
                     { field: "Free", sport: null, _activity: "Free" },
@@ -942,62 +654,44 @@
             }
         }
 
-        // --------------------------------------------------------------------
-        // 8. PASS 5 — ROTATION HISTORY SAVE
-        // --------------------------------------------------------------------
+        // 8. Pass 5 — Update Rotation History
         try {
-            const history = rotationHistory;
-            const stamp = Date.now();
+            const historyToSave = { ...rotationHistory };
+            const timestamp = Date.now();
 
-            availableDivisions.forEach(div => {
-                divisions[div]?.bunks?.forEach(bunk => {
+            availableDivisions.forEach(divName => {
+                (divisions[divName]?.bunks || []).forEach(bunk => {
                     const schedule = window.scheduleAssignments[bunk] || [];
-                    let last = null;
+                    let lastActivity = null;
 
-                    schedule.forEach(entry => {
-                        if (
-                            entry &&
-                            entry._activity &&
-                            entry._activity !== last &&
-                            entry._activity !== TRANSITION_TYPE
-                        ) {
-                            const name = entry._activity;
-                            last = name;
+                    for (const entry of schedule) {
+                        if (entry?._activity && entry._activity !== lastActivity && entry._activity !== TRANSITION_TYPE) {
+                            const activityName = entry._activity;
+                            lastActivity = activityName;
 
-                            history.bunks[bunk] = history.bunks[bunk] || {};
-                            history.bunks[bunk][name] = stamp;
+                            historyToSave.bunks ??= {};
+                            historyToSave.bunks[bunk] ??= {};
+                            historyToSave.bunks[bunk][activityName] = timestamp;
 
-                            if (
-                                entry._h2h &&
-                                name !== "League" &&
-                                name !== "No Game"
-                            ) {
+                            if (entry._h2h && !["League", "No Game"].includes(activityName)) {
                                 const leagueEntry = Object.entries(masterLeagues).find(
-                                    ([lg, obj]) =>
-                                        obj.enabled &&
-                                        obj.divisions &&
-                                        obj.divisions.includes(div)
+                                    ([_, l]) => l.enabled && l.divisions?.includes(divName)
                                 );
-
                                 if (leagueEntry) {
                                     const lgName = leagueEntry[0];
-                                    history.leagues[lgName] =
-                                        history.leagues[lgName] || {};
-                                    history.leagues[lgName][name] = stamp;
+                                    historyToSave.leagues ??= {};
+                                    historyToSave.leagues[lgName] ??= {};
+                                    historyToSave.leagues[lgName][activityName] = timestamp;
                                 }
                             }
-                        } else if (
-                            entry &&
-                            !entry.continuation &&
-                            entry._activity !== TRANSITION_TYPE
-                        ) {
-                            last = null;
+                        } else if (entry && !entry.continuation && entry._activity !== TRANSITION_TYPE) {
+                            lastActivity = null;
                         }
-                    });
+                    }
                 });
             });
 
-            window.saveRotationHistory?.(history);
+            window.saveRotationHistory?.(historyToSave);
             console.log("Smart Scheduler: Rotation history updated.");
         } catch (e) {
             console.error("Smart Scheduler: Failed to update rotation history.", e);
@@ -1010,44 +704,21 @@
         return true;
     };
 
-    // ========================================================================
-    // REGISTER FIELD USAGE
-    // ========================================================================
-    function registerSingleSlotUsage(
-        slotIndex,
-        fieldName,
-        divName,
-        bunkName,
-        activityName,
-        fieldUsageBySlot,
-        activityProperties
-    ) {
-        if (
-            !fieldName ||
-            !window.allSchedulableNames ||
-            !window.allSchedulableNames.includes(fieldName)
-        )
-            return;
+    // =================================================================
+    // Helper: Register field usage per slot
+    // =================================================================
 
-        fieldUsageBySlot[slotIndex] = fieldUsageBySlot[slotIndex] || {};
+    function registerSingleSlotUsage(slotIndex, fieldName, divName, bunkName, activityName, fieldUsageBySlot, activityProperties) {
+        if (!fieldName || !window.allSchedulableNames?.includes(fieldName)) return;
 
-        const usage =
-            fieldUsageBySlot[slotIndex][fieldName] || {
-                count: 0,
-                divisions: [],
-                bunks: {}
-            };
+        fieldUsageBySlot[slotIndex] ??= {};
+        const usage = fieldUsageBySlot[slotIndex][fieldName] ?? { count: 0, divisions: [], bunks: {} };
 
         const props = activityProperties[fieldName];
-        const cap =
-            props?.sharableWith?.capacity ??
-            (props?.sharableWith?.type === "all"
-                ? 2
-                : props?.sharable
-                ? 2
-                : 1);
+        const sharableCap = props?.sharableWith?.capacity ??
+            (props?.sharableWith?.type === "all" ? 2 : props?.sharable ? 2 : 1);
 
-        if (usage.count < cap) {
+        if (usage.count < sharableCap) {
             usage.count++;
             if (bunkName) usage.bunks[bunkName] = activityName || fieldName;
             if (divName && !usage.divisions.includes(divName)) {
@@ -1056,4 +727,5 @@
             fieldUsageBySlot[slotIndex][fieldName] = usage;
         }
     }
+
 })();
