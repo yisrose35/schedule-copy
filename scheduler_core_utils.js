@@ -63,6 +63,17 @@
         if (f && typeof f === "object" && typeof f.name === "string") return f.name;
         return "";
     };
+    Utils.fmtTime = function (d) {
+    if (!d) return "";
+    if (typeof d === 'string') d = new Date(d);
+
+    let h = d.getHours();
+    let m = d.getMinutes().toString().padStart(2, "0");
+    const ap = h >= 12 ? "PM" : "AM";
+    h = h % 12 || 12;
+    return `${h}:${m} ${ap}`;
+};
+
 
     Utils.minutesToDate = function (mins) {
         const d = new Date(1970, 0, 1, 0, 0, 0);
