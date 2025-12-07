@@ -4,6 +4,7 @@
 //
 // UPDATES:
 // - Automatically scrapes 'fields' to populate 'masterActivities' with sports.
+// - CRITICAL FIX: Loads Fields into 'activityProperties' so Fillers can validate them.
 // - Ensures allActivities list is complete so the solver has options.
 // ============================================================================
 
@@ -198,6 +199,7 @@
     function buildActivityProperties() {
         const props = {};
 
+        // 1. Load Activities
         masterActivities.forEach(act => {
             const name = act.name;
             props[name] = {
@@ -216,6 +218,23 @@
                 frequencyWeeks: act.frequencyWeeks || 0
             };
         });
+
+        // 2. Load FIELDS (Crucial for Fillers to validate field existence)
+        if (Array.isArray(fields)) {
+            fields.forEach(f => {
+                props[f.name] = {
+                    available: f.available !== false,
+                    sharable: false, // Fields handle sharing via sharableWith usually
+                    sharableWith: f.sharableWith || { type: 'not_sharable' },
+                    allowedDivisions: [], // Fields usually open unless restricted by preferences
+                    transition: f.transition || null,
+                    preferences: f.preferences || null,
+                    limitUsage: f.limitUsage || null,
+                    timeRules: f.timeRules || [],
+                    minDurationMin: 0
+                };
+            });
+        }
 
         return props;
     }
