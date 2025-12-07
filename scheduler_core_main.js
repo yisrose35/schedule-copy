@@ -3,9 +3,8 @@
 // PART 3 of 3: THE ORCHESTRATOR (Main Entry)
 //
 // UPDATED:
-// - Added CONSOLE LOGGING for the main loop.
-// - Added FALLBACK to block.slots if time calculation fails in fillBlock.
-// - Ensures data integrity before running.
+// - Added DEEP DEBUG LOGGING inside the skeleton loop to diagnose "0 blocks".
+// - Checks for empty bunks, invalid times, and type mismatches.
 // ============================================================================
 
 (function () {
@@ -114,9 +113,7 @@
         let mainSlots = Utils.findSlotsForRange(effectiveStart, effectiveEnd);
         
         // CRITICAL FALLBACK: If time calc fails to find slots, use the block's original slots
-        // This ensures *something* gets written even if minute-math is slightly off.
         if (mainSlots.length === 0 && block.slots && block.slots.length > 0) {
-            // Only use fallback if no transition logic reduced the block size to zero
             if (trans.preMin === 0 && trans.postMin === 0) {
                 mainSlots = block.slots;
                 console.warn(`FillBlock: Used fallback slots for ${bunk} at ${block.startTime}`);
@@ -283,12 +280,19 @@
         manualSkeleton.forEach(item => {
             const divName = item.division;
             const bunkList = divisions[divName]?.bunks || [];
-            if (bunkList.length === 0) return;
+            if (bunkList.length === 0) {
+                console.warn(`[SKIP] No bunks for division '${divName}'`);
+                return;
+            }
 
             const sMin = Utils.parseTimeToMinutes(item.startTime);
             const eMin = Utils.parseTimeToMinutes(item.endTime);
             const slots = Utils.findSlotsForRange(sMin, eMin);
-            if (slots.length === 0) return;
+            
+            if (slots.length === 0) {
+                console.warn(`[SKIP] No time slots found for ${item.event} (${item.startTime}-${item.endTime})`);
+                return;
+            }
 
             const normGA = normalizeGA(item.event);
             const normLg = normalizeLeague(item.event);
@@ -299,6 +303,14 @@
             const trans = Utils.getTransitionRules(finalName, activityProperties);
             const hasBuffer = (trans.preMin + trans.postMin) > 0;
             const isSchedulable = GENERATOR_TYPES.includes(item.type);
+
+            // LOGGING DECISION LOGIC
+            /*
+            console.log(`Evaluating Block: ${item.event} (${item.type})`);
+            console.log(`  > isGenerated: ${isGenerated}`);
+            console.log(`  > isSchedulable: ${isSchedulable}`);
+            console.log(`  > hasBuffer: ${hasBuffer}`);
+            */
 
             if ((item.type === "pinned" || !isGenerated) && !isSchedulable && item.type !== "smart" && !hasBuffer) {
                 if (disabledFields.includes(finalName) || disabledSpecials.includes(finalName)) return;
@@ -313,8 +325,32 @@
             }
 
             if (item.type === "split") {
-                // ... (split logic omitted for brevity, logic maintained) ...
-                // Note: Split logic remains unchanged from previous versions
+                // ... split logic ...
+                // Preserved logic
+                const midIdx = Math.ceil(bunkList.length / 2);
+                const top = bunkList.slice(0, midIdx);
+                const bottom = bunkList.slice(midIdx);
+                const halfSlots = Math.ceil(slots.length / 2);
+                const slotsA = slots.slice(0, halfSlots);
+                const slotsB = slots.slice(halfSlots);
+                const swimLabel = "Swim";
+                const gaLabel = normalizeGA(item.subEvents?.[1]?.event) || "General Activity Slot";
+
+                function pushGen(list, s, ev) {
+                    const st = Utils.getBlockTimeRange({ slots: s }).blockStartMin;
+                    const en = Utils.getBlockTimeRange({ slots: s }).blockEndMin;
+                    list.forEach(b => schedulableSlotBlocks.push({ divName, bunk: b, event: ev, startTime: st, endTime: en, slots: s }));
+                }
+                function pin(list, s, ev) {
+                    const st = Utils.getBlockTimeRange({ slots: s }).blockStartMin;
+                    const en = Utils.getBlockTimeRange({ slots: s }).blockEndMin;
+                    list.forEach(b => fillBlock({ divName, bunk: b, startTime: st, endTime: en, slots: s }, { field: ev, sport: null, _fixed: true, _activity: ev }, fieldUsageBySlot, yesterdayHistory, false, activityProperties));
+                }
+                pin(top, slotsA, swimLabel);
+                pushGen(bottom, slotsA, gaLabel);
+                pushGen(top, slotsB, gaLabel);
+                pin(bottom, slotsB, swimLabel);
+                return;
             }
 
             if ((isSchedulable && isGenerated) || hasBuffer) {
@@ -323,6 +359,8 @@
                         divName, bunk: b, event: finalName, startTime: sMin, endTime: eMin, slots
                     });
                 });
+            } else {
+                console.warn(`[SKIP] Block ${item.event} did not match Pinned OR Schedulable criteria.`);
             }
         });
 
@@ -387,9 +425,6 @@
             if (!pick) {
                 pick = window.findBestGeneralActivity?.(block, allActivities, h2hActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, historicalCounts);
             }
-
-            // Log pick attempt
-            // console.log(`Pick attempt for ${block.bunk} at ${block.startTime}:`, pick);
 
             let fits = pick && Utils.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, pick._activity, false);
 
