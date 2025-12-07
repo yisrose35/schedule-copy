@@ -156,29 +156,34 @@ function calculatePenaltyCost(block, pick) {
         }
     }
 
-   
-
-    // 7. SMART SHARING LOGIC
-    if (currentOccupancy === 0) { 
-        // Super bonus for exclusive use
+    // ---------------------------------------------------------
+    // 7. SMART SHARING LOGIC (Dispersal Fix)
+    // ---------------------------------------------------------
+    if (currentOccupancy === 0) { // EXCLUSIVE USE (Primary Goal: Disperse to an empty field)
+        // Super bonus to ensure absolute lowest cost.
         penalty -= 10000; 
 
-    } else if (currentOccupancy === 1) { 
+    } else if (currentOccupancy === 1) { // SHARING WITH ONE OTHER BUNK (Secondary Goal: Only if exclusive impossible)
         
-        let shareCost = 15000; // Base penalty for sharing
+        let shareCost = 15000; // Base penalty for sharing (Significantly higher than exclusive use)
         
         if (closestNeighborDistance === 1) {
-            shareCost = 500; // Neighbor preference
+            // Low cost for neighbor sharing
+            shareCost = 500; 
         } else if (closestNeighborDistance > 1 && closestNeighborDistance <= 5) {
+            // Medium cost for nearby sharing
             shareCost = 5000;
         }
         
         penalty += shareCost; 
 
-    } else if (currentOccupancy >= 2) { 
-        // Veto for over-capacity
+    } else if (currentOccupancy >= 2) { // Already two or more bunks there (Last Resort)
+        // High penalty to prevent over-scheduling past capacity 2.
         penalty += 20000; 
     }
+
+    return penalty;
+}
 
 // ============================================================================
 // LEAGUE HELPERS
