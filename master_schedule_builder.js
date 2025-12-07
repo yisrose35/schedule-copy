@@ -496,6 +496,8 @@
                 if (newEvent) {
                     dailySkeleton.push(newEvent);
                     saveDraftToLocalStorage();
+                    window.saveCurrentDailyData?.("manualSkeleton", dailySkeleton);
+
                     renderGrid();
                 }
             };
@@ -510,6 +512,8 @@
                     const id = el.dataset.id;
                     dailySkeleton = dailySkeleton.filter(x => x.id !== id);
                     saveDraftToLocalStorage();
+                    window.saveCurrentDailyData?.("manualSkeleton", dailySkeleton);
+
                     renderGrid();
                 }
             };
@@ -535,6 +539,8 @@
         if (all[name]) dailySkeleton = JSON.parse(JSON.stringify(all[name]));
         renderGrid();
         saveDraftToLocalStorage();
+        window.saveCurrentDailyData?.("manualSkeleton", dailySkeleton);
+
     }
 
     function parseTimeToMinutes(str) {
