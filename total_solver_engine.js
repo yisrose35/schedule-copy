@@ -1,5 +1,5 @@
 // ============================================================================
-// total_solver_engine.js (GCM DEBUG VERSION)
+// total_solver_engine.js (GCM "FORCE FIT" VERSION)
 // Backtracking Constraint Solver + League Engine
 // ----------------------------------------------------------------------------
 // FEATURES (Modern Architecture):
@@ -12,7 +12,7 @@
 // ✓ Clean modern design: no legacy scoring, no legacy history writes
 // ✓ FIXED: Field Collision Check in League Matchups
 // ✓ FIXED: Timeout Safety (Returns partial schedule instead of blank)
-// ✓ DEBUG: Logging enabled for candidate generation
+// ✓ DEBUG: Diagnostic Logging + Force Fit Mode
 // ============================================================================
 
 (function () {
@@ -20,12 +20,18 @@
 
     const Solver = {};
     const MAX_MATCHUP_ITERATIONS = 2000;
+    
+    // !!! GCM CONFIGURATION !!!
+    // Set this to TRUE to ignore size/age constraints and fill the schedule.
+    // Set to FALSE to respect strict capacity rules.
+    const FORCE_FIT_MODE = true; 
 
     // Runtime globals
     let globalConfig = null;
     let activityProperties = {};
     let allCandidateOptions = [];
     let fieldAvailabilityCache = {};
+    let hasLoggedConstraintIssue = false; // Limit log spam
 
     // ============================================================================
     // HELPERS
@@ -217,7 +223,9 @@
                     activityProperties,
                     cand.activityName
                 );
-                if (fits) cache[sport].push(cand.field);
+                // In League too, we might want force fit, but usually leagues are stricter.
+                // We apply FORCE_FIT_MODE here too if needed, but typically leagues fit fine.
+                if (fits || FORCE_FIT_MODE) cache[sport].push(cand.field);
             }
         }
 
@@ -471,8 +479,22 @@
                 activityProperties,
                 cand.activityName
             );
+            
+            // --- GCM DIAGNOSTICS ---
+            // If it fails fit check, we log the first one to help the user debug.
+            if (!fits && !hasLoggedConstraintIssue && !cand.field.includes("Gym")) {
+                const bMeta = globalConfig.bunkMetaData?.[block.bunk] || {};
+                const fMeta = activityProperties?.[cand.field] || {};
+                console.warn(`[GCM DIAGNOSTIC] Rejected ${cand.field} for ${block.bunk}.`);
+                console.warn(`   > Bunk Info: Size=${bMeta.size || '?'}, Div=${bMeta.division || '?'}`);
+                console.warn(`   > Field Info: Cap=${fMeta.capacity || '?'}, MinAge=${fMeta.minAge || '?'}`);
+                hasLoggedConstraintIssue = true; // Stop spamming
+            }
+            // -----------------------
 
-            if (fits) {
+            // THE FORCE FIT FIX:
+            // If FORCE_FIT_MODE is true, we accept the option even if 'fits' is false.
+            if (fits || FORCE_FIT_MODE) {
                 const pick = {
                     field: cand.field,
                     sport: cand.sport,
@@ -534,6 +556,7 @@
     Solver.solveSchedule = function (allBlocks, config) {
         globalConfig = config;
         activityProperties = config.activityProperties || {};
+        hasLoggedConstraintIssue = false; // Reset log flag per run
 
         // Reset Counters
         let iterations = 0;
@@ -550,15 +573,6 @@
         config.masterSpecials?.forEach(s => {
             allCandidateOptions.push({ field: s.name, sport: null, activityName: s.name, type: "special" });
         });
-
-        // =========================================================
-        // DEBUG: GCM DIAGNOSTIC LOG
-        // =========================================================
-        console.log("DEBUG: GCM ENGINE - Candidate Options Loaded:", allCandidateOptions);
-        if (allCandidateOptions.length === 0) {
-             console.error("DEBUG: CRITICAL - No candidate options found! Check masterFields.");
-        }
-        // =========================================================
 
         if (!window.leagueRoundState) window.leagueRoundState = {};
         if (!globalConfig.rotationHistory) globalConfig.rotationHistory = {};
