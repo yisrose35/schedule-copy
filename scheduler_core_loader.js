@@ -1,12 +1,11 @@
 // ============================================================================
-// scheduler_core_loader.js
+// scheduler_core_loader.js (GCM PATCHED)
 // FULL REWRITE — SPEC-COMPLIANT LOADER FOR ORCHESTRATOR V3
 //
-// GOALS:
-// - Normalizes divisions (array OR map).
+// FIXES:
+// - Sets default Field Capacity to 999 (instead of 1) to prevent false-negative fit checks.
 // - Ensures masterActivities includes generics (GA / Sports / Special).
 // - Ensures activityProperties contains BOTH activities and fields.
-// - Provides safe defaults so other modules never crash on missing keys.
 // ============================================================================
 
 (function () {
@@ -106,7 +105,7 @@
 
     // ------------------------------------------------------------------------
     // 2. TIME MAPPINGS (for legacy block generation; not unifiedTimes)
-// ------------------------------------------------------------------------
+    // ------------------------------------------------------------------------
     function toMin(t) {
         if (!t) return 0;
         const [h, m] = t.split(":").map(Number);
@@ -143,7 +142,7 @@
 
     // ------------------------------------------------------------------------
     // 4. LEGACY SCHEDULABLE BLOCKS (still used by some tools)
-// ------------------------------------------------------------------------
+    // ------------------------------------------------------------------------
     function generateSchedulableBlocks(filtered, bunks, TimeMappings, increments) {
         const blocks = [];
         bunks.forEach(bunk => {
@@ -173,7 +172,7 @@
 
     // ------------------------------------------------------------------------
     // 5. ACTIVITY PROPERTIES (the backbone for canBlockFit / capacities)
-// ------------------------------------------------------------------------
+    // ------------------------------------------------------------------------
     function buildActivityProperties(masterActivities, fields) {
         const props = {};
 
@@ -182,7 +181,8 @@
             return {
                 available: true,
                 sharable: false,
-                sharableWith: { type: 'not_sharable', capacity: 1 },
+                // GCM FIX: Default capacity to 999 (Infinite) unless overridden
+                sharableWith: { type: 'not_sharable', capacity: 999 }, 
                 preferredDivisions: [],
                 allowedDivisions: [],
                 allowedFields: null,
@@ -224,11 +224,15 @@
             fields.forEach(f => {
                 if (!f || !f.name) return;
                 const name = f.name;
-                // Fields are resources, not "named activities"
+                
+                // Fields are resources. 
+                // GCM FIX: Ensure we accept existing capacity if defined, else default high.
+                const existingCap = f.sharableWith?.capacity || (f.capacity ? parseInt(f.capacity) : 999);
+                
                 props[name] = makeDefaultProps({
                     available: f.available !== false,
-                    sharable: false,
-                    sharableWith: f.sharableWith || { type: 'not_sharable', capacity: 1 },
+                    sharable: f.sharable || false,
+                    sharableWith: f.sharableWith || { type: 'not_sharable', capacity: existingCap },
                     allowedDivisions: [],  // by default, no restriction
                     transition: f.transition || null,
                     preferences: f.preferences || null,
@@ -247,7 +251,7 @@
 
     // ------------------------------------------------------------------------
     // 6. FIELDS BY SPORT (for league / sport mapping)
-// ------------------------------------------------------------------------
+    // ------------------------------------------------------------------------
     function buildFieldsBySport(masterActivities, fields) {
         const map = {};
         if (!Array.isArray(fields)) return map;
