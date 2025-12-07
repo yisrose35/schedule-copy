@@ -5,6 +5,8 @@
 // UPDATED:
 // - Fixed registerSingleSlotUsage (Removed missing global check)
 // - Correctly uses activityProperties for validation
+// - Robust transition and fillBlock logic
+// - INJECTS METADATA into Utils for capacity checks
 // ============================================================================
 
 (function () {
@@ -13,7 +15,7 @@
     const TRANSITION_TYPE = window.TRANSITION_TYPE || "Transition/Buffer";
 
     // -------------------------------------------------------------------------
-    // Normalizers for generated event types
+    // Normalizers
     // -------------------------------------------------------------------------
     function normalizeGA(name) {
         if (!name) return null;
@@ -191,6 +193,10 @@
             dailyFieldAvailability,
             masterZones
         } = config;
+
+        // --- INJECT METADATA INTO UTILS FOR CAPACITY CHECKS ---
+        window.SchedulerCoreUtils._bunkMetaData = bunkMetaData;
+        window.SchedulerCoreUtils._sportMetaData = config.sportMetaData || {};
 
         window.fieldUsageBySlot = {};
         let fieldUsageBySlot = window.fieldUsageBySlot;
@@ -503,6 +509,14 @@
             const slots = block.slots;
             if (!slots || slots.length === 0) continue;
 
+            // *** FIXED LOGIC ***
+            // We check the first slot of the block.
+            // If it is occupied (truthy) AND that occupation is NOT a transition, we skip.
+            // This means:
+            // - If it is undefined/null (Empty) -> Proceed (Don't skip)
+            // - If it is "Transition" -> Proceed (Don't skip, we can merge)
+            // - If it is "Sports" -> Skip (Already filled)
+            
             const existingSlot = window.scheduleAssignments[block.bunk][slots[0]];
 
             if (existingSlot && existingSlot._activity !== TRANSITION_TYPE) {
