@@ -1,6 +1,10 @@
 // ============================================================================
 // scheduler_core_loader.js
 // FULL REWRITE — SPEC-COMPLIANT LOADER FOR ORCHESTRATOR V3
+//
+// UPDATES:
+// - Automatically scrapes 'fields' to populate 'masterActivities' with sports.
+// - Ensures allActivities list is complete so the solver has options.
 // ============================================================================
 
 (function () {
@@ -51,16 +55,48 @@
         window.loadZones?.() || {};
 
     // ------------------------------------------------------------------------
-    // 1. BUILD MASTER ACTIVITIES
+    // 1. BUILD MASTER ACTIVITIES (Fixed to include Field Sports)
     // ------------------------------------------------------------------------
     function buildMasterActivities() {
         let list = [];
+        const seenNames = new Set();
 
+        // 1. App defined activities
         if (Array.isArray(app1.activities)) {
-            list = list.concat(app1.activities);
+            app1.activities.forEach(a => {
+                if(a && a.name && !seenNames.has(a.name)) {
+                    list.push(a);
+                    seenNames.add(a.name);
+                }
+            });
         }
+
+        // 2. Special Activities
         if (Array.isArray(specials)) {
-            list = list.concat(specials);
+            specials.forEach(s => {
+                if(s && s.name && !seenNames.has(s.name)) {
+                    list.push({ ...s, type: 'Special' });
+                    seenNames.add(s.name);
+                }
+            });
+        }
+
+        // 3. AUTO-DISCOVER SPORTS FROM FIELDS (Crucial Fix)
+        if (Array.isArray(fields)) {
+            fields.forEach(f => {
+                if (Array.isArray(f.activities)) {
+                    f.activities.forEach(sportName => {
+                        if (sportName && !seenNames.has(sportName)) {
+                            list.push({
+                                name: sportName,
+                                type: 'field', // treated as sport/field activity
+                                allowedFields: [f.name] // initially just this field, normalized later
+                            });
+                            seenNames.add(sportName);
+                        }
+                    });
+                }
+            });
         }
 
         return list
@@ -70,7 +106,9 @@
                 duration: a.duration || defaultDurations[a.name] || increments,
                 type: a.type || "General",
                 allowedFields: a.allowedFields || a.fields || null,
-                divisions: a.divisions || null
+                divisions: a.divisions || null,
+                // Pass through properties for utils
+                ...a
             }));
     }
 
@@ -163,9 +201,9 @@
         masterActivities.forEach(act => {
             const name = act.name;
             props[name] = {
-                available: true,
-                sharable: false,
-                sharableWith: null,
+                available: act.available !== false,
+                sharable: act.sharable || false,
+                sharableWith: act.sharableWith || null,
                 preferredDivisions: act.divisions || [],
                 allowedDivisions: act.divisions || [],
                 allowedFields: act.allowedFields || null,
@@ -173,7 +211,9 @@
                 preferences: act.preferences || null,
                 limitUsage: act.limitUsage || null,
                 timeRules: act.timeRules || [],
-                minDurationMin: act.minDurationMin || 0
+                minDurationMin: act.minDurationMin || 0,
+                maxUsage: act.maxUsage || 0, // Ensure limits pass through
+                frequencyWeeks: act.frequencyWeeks || 0
             };
         });
 
@@ -184,12 +224,18 @@
         const map = {};
 
         masterActivities.forEach(a => {
-            const type = a.type?.toLowerCase() || "";
+            // Check 'field' type (auto-discovered) OR explicit field list
+            if (a.type === 'field' || (a.allowedFields && a.allowedFields.length > 0)) {
+                
+                // Re-scan fields to be sure we get ALL fields for this sport
+                // (The auto-discovery might have only caught the first one)
+                const relevantFields = fields.filter(f => 
+                    f.activities && f.activities.includes(a.name)
+                ).map(f => f.name);
 
-            if (type === "field" || type === "sport") {
-                const sport = a.name;
-                const allowed = a.allowedFields || [];
-                map[sport] = allowed.slice();
+                if (relevantFields.length > 0) {
+                    map[a.name] = relevantFields;
+                }
             }
         });
 
@@ -234,6 +280,7 @@
             fields,
             masterActivities,
             masterSpecials,
+            masterFields: fields, // Explicitly pass for solver
 
             // orchestrator-required data
             activityProperties,
