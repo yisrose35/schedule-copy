@@ -6,6 +6,7 @@
 // - Automatically scrapes 'fields' to populate 'masterActivities' with sports.
 // - CRITICAL FIX: Loads Fields into 'activityProperties' so Fillers can validate them.
 // - Ensures allActivities list is complete so the solver has options.
+// - Added defensive checks to ensure data is loaded before processing.
 // ============================================================================
 
 (function () {
@@ -14,51 +15,25 @@
     // ------------------------------------------------------------------------
     // 0. SAFE GETTERS FOR app1 + GLOBALS
     // ------------------------------------------------------------------------
-    const settings = (window.loadGlobalSettings?.() || {}).app1 || {};
-    const app1 = window.app1 || settings || {};
+    // We defer fetching these until loadAndFilterData is called to ensure
+    // global settings have been loaded.
+    
+    function getApp1Settings() {
+        return (window.loadGlobalSettings?.() || {}).app1 || window.app1 || {};
+    }
 
-    const rawDivisions = app1.divisions || [];
-    const divisionsArray = Array.isArray(rawDivisions)
-        ? rawDivisions
-        : Object.values(rawDivisions || {});
+    function getSpecialActivities() {
+        return (window.specialActivities || []).slice();
+    }
 
-    const bunks = app1.bunks || [];
-    const fields = app1.fields || [];
-    const specials = (window.specialActivities || []).slice();
-    const defaultDurations = app1.defaultDurations || {};
-
-    const increments = app1.increments || 30;
-    const startTime = app1.startTime || "9:00";
-    const endTime = app1.endTime || "17:00";
-
-    // Daily override sources (if they are not present, default them)
-    const disabledFieldsDaily =
-        (window.loadCurrentDailyData?.().disabledFields) || [];
-    const disabledSpecialsDaily =
-        (window.loadCurrentDailyData?.().disabledSpecials) || [];
-    const disabledLeaguesDaily =
-        (window.loadCurrentDailyData?.().disabledLeagues) || [];
-    const disabledSpecialtyLeaguesDaily =
-        (window.loadCurrentDailyData?.().disabledSpecialtyLeagues) || [];
-
-    const yesterdayHistory =
-        window.loadYesterdayHistory?.() || {};
-    const rotationHistory =
-        window.loadRotationHistory?.() || {};
-
-    const historicalCounts =
-        window.loadHistoricalCounts?.() || {};
-
-    const dailyFieldAvailability =
-        window.loadCurrentDailyData?.().dailyFieldAvailability || {};
-
-    const masterZones =
-        window.loadZones?.() || {};
+    function getDailyOverrides() {
+        return window.loadCurrentDailyData?.() || {};
+    }
 
     // ------------------------------------------------------------------------
     // 1. BUILD MASTER ACTIVITIES (Fixed to include Field Sports)
     // ------------------------------------------------------------------------
-    function buildMasterActivities() {
+    function buildMasterActivities(app1, specials, fields) {
         let list = [];
         const seenNames = new Set();
 
@@ -99,6 +74,22 @@
                 }
             });
         }
+        
+        // 4. Add generic slots if missing (to ensure properties exist for them)
+        const generics = ["General Activity Slot", "Sports Slot", "Special Activity"];
+        generics.forEach(genName => {
+             if (!seenNames.has(genName)) {
+                list.push({
+                    name: genName,
+                    type: 'General',
+                    duration: 60 
+                });
+                seenNames.add(genName);
+            }
+        });
+
+        const defaultDurations = app1.defaultDurations || {};
+        const increments = app1.increments || 30;
 
         return list
             .filter(a => a && a.name)
@@ -113,18 +104,20 @@
             }));
     }
 
-    const masterActivities = buildMasterActivities();
-    const masterSpecials = masterActivities.filter(a => a.type === "Special");
-
     // ------------------------------------------------------------------------
     // 2. BUILD TIME MAPPINGS
     // ------------------------------------------------------------------------
     function toMin(t) {
+        if (!t) return 0;
         const [h, m] = t.split(":").map(Number);
         return h * 60 + m;
     }
 
-    function buildTimeMappings() {
+    function buildTimeMappings(app1) {
+        const increments = app1.increments || 30;
+        const startTime = app1.startTime || "9:00";
+        const endTime = app1.endTime || "17:00";
+
         const startMin = toMin(startTime);
         const endMin = toMin(endTime);
 
@@ -138,12 +131,10 @@
         return mappings;
     }
 
-    const TimeMappings = buildTimeMappings();
-
     // ------------------------------------------------------------------------
     // 3. FILTER ACTIVITIES BY DIVISION
     // ------------------------------------------------------------------------
-    function filterActivities() {
+    function filterActivities(masterActivities, divisionsArray) {
         if (!masterActivities.length) return [];
 
         return masterActivities.filter(act => {
@@ -154,17 +145,15 @@
         });
     }
 
-    let __lastFilteredActivities = [];
-
     // ------------------------------------------------------------------------
     // 4. BUILD SCHEDULABLE BLOCKS
     // ------------------------------------------------------------------------
-    function generateSchedulableBlocks(filtered) {
+    function generateSchedulableBlocks(filtered, bunks, TimeMappings, increments) {
         const blocks = [];
 
         bunks.forEach(bunk => {
-            if (!bunk?.name) return;
-            const bunkName = bunk.name;
+            if (!bunk) return;
+            const bunkName = (typeof bunk === 'string') ? bunk : bunk.name;
 
             filtered.forEach(act => {
                 const dur = act.duration || increments;
@@ -196,7 +185,7 @@
     // ------------------------------------------------------------------------
     // 5. BUILD activityProperties + fieldsBySport + h2hActivities
     // ------------------------------------------------------------------------
-    function buildActivityProperties() {
+    function buildActivityProperties(masterActivities, fields) {
         const props = {};
 
         // 1. Load Activities
@@ -239,7 +228,7 @@
         return props;
     }
 
-    function buildFieldsBySport() {
+    function buildFieldsBySport(masterActivities, fields) {
         const map = {};
 
         masterActivities.forEach(a => {
@@ -261,7 +250,7 @@
         return map;
     }
 
-    function buildH2HActivities() {
+    function buildH2HActivities(masterActivities) {
         return masterActivities
             .filter(a => /league/i.test(a.type))
             .map(a => a.name);
@@ -271,16 +260,29 @@
     // 6. MAIN LOADER PIPELINE
     // ------------------------------------------------------------------------
     function loadAndFilterData() {
-        __lastFilteredActivities = filterActivities();
-        window.__lastFilteredActivities = __lastFilteredActivities;
+        const app1 = getApp1Settings();
+        const bunks = app1.bunks || [];
+        const fields = app1.fields || [];
+        const specials = getSpecialActivities();
+        const rawDivisions = app1.divisions || [];
+        const divisionsArray = Array.isArray(rawDivisions) 
+            ? rawDivisions 
+            : Object.values(rawDivisions || {});
+            
+        const dailyOverrides = getDailyOverrides();
 
-        const blocks = generateSchedulableBlocks(__lastFilteredActivities);
-        window.__lastSchedulableBlocks = blocks;
+        // 1. Build Data
+        const masterActivities = buildMasterActivities(app1, specials, fields);
+        const TimeMappings = buildTimeMappings(app1);
+        
+        // 2. Filter & Process
+        const filteredActivities = filterActivities(masterActivities, divisionsArray);
+        const blocks = generateSchedulableBlocks(filteredActivities, bunks, TimeMappings, app1.increments || 30);
+        const activityProperties = buildActivityProperties(masterActivities, fields);
+        const fieldsBySport = buildFieldsBySport(masterActivities, fields);
+        const h2hActivities = buildH2HActivities(masterActivities);
 
-        const activityProperties = buildActivityProperties();
-        const fieldsBySport = buildFieldsBySport();
-        const h2hActivities = buildH2HActivities();
-
+        const masterSpecials = masterActivities.filter(a => a.type === "Special");
         const specialActivityNames = masterSpecials.map(s => s.name);
 
         // Convert divisions array → division map
@@ -288,11 +290,29 @@
             if (d?.name) m[d.name] = d;
             return m;
         }, {});
+        
+        // Load Histories & Overrides
+        const disabledFields = dailyOverrides.disabledFields || [];
+        const disabledSpecials = dailyOverrides.disabledSpecials || [];
+        const disabledLeagues = dailyOverrides.disabledLeagues || [];
+        const disabledSpecialtyLeagues = dailyOverrides.disabledSpecialtyLeagues || [];
+        
+        const yesterdayHistory = window.loadYesterdayHistory?.() || {};
+        const rotationHistory = window.loadRotationHistory?.() || {};
+        const historicalCounts = window.loadHistoricalCounts?.() || {};
+        const dailyFieldAvailability = dailyOverrides.dailyFieldAvailability || {};
+        const masterZones = window.loadZones?.() || {};
+        const bunkMetaData = window.bunkMetaData || {};
+
+        // Expose for debugging
+        window.__lastFilteredActivities = filteredActivities;
+        window.__lastSchedulableBlocks = blocks;
+        window.TimeMappings = TimeMappings; // Ensure global access
 
         // Make final orchestrator-safe config object
         return {
             // core schedule data
-            activities: __lastFilteredActivities,
+            activities: filteredActivities,
             blocks,
             divisions,
             bunks,
@@ -312,10 +332,10 @@
             masterSpecialtyLeagues: window.masterSpecialtyLeagues || {},
 
             // daily disabled sets
-            disabledFields: disabledFieldsDaily,
-            disabledSpecials: disabledSpecialsDaily,
-            disabledLeagues: disabledLeaguesDaily,
-            disabledSpecialtyLeagues: disabledSpecialtyLeaguesDaily,
+            disabledFields,
+            disabledSpecials,
+            disabledLeagues,
+            disabledSpecialtyLeagues,
 
             // historical + rotation
             historicalCounts,
@@ -330,25 +350,16 @@
             masterZones,
 
             // misc metadata
-            bunkMetaData: window.bunkMetaData || {}
+            bunkMetaData,
+            sportMetaData: window.sportMetaData || {} 
         };
     }
 
     // ------------------------------------------------------------------------
     // 7. EXPORT TO WINDOW
     // ------------------------------------------------------------------------
-    window.masterActivities = masterActivities;
-    window.masterSpecials = masterSpecials;
-    window.divisionsByName = divisionsArray.reduce((m, d) => {
-        if (d?.name) m[d.name] = d;
-        return m;
-    }, {});
-    window.bunks = bunks;
-    window.fields = fields;
-    window.defaultDurations = defaultDurations;
-
-    window.TimeMappings = TimeMappings;
     window.loadAndFilterData = loadAndFilterData;
-    window.generateSchedulableBlocks = generateSchedulableBlocks;
+    // We expose these for individual testing if needed, though loadAndFilterData is the main entry point
+    window.generateSchedulableBlocks = generateSchedulableBlocks; 
 
 })();
