@@ -6,6 +6,7 @@
 // - Passes fieldUsageBySlot to canBlockFit (Fixes validation)
 // - Corrects 6-argument call to canBlockFit
 // - Ensures proper fallback if no activities match
+// - FIXED: "Time Paradox" bug where future activities blocked current slots.
 // ============================================================================
 
 (function () {
@@ -55,13 +56,15 @@
 
     // ---------------------------------------------------------
     // Daily Activity Tracker (GA/Special/Sport)
+    // *** FIXED: Now ignores future slots to prevent time paradoxes ***
     // ---------------------------------------------------------
-    function getGeneralActivitiesDoneToday(bunkName) {
+    function getGeneralActivitiesDoneToday(bunkName, currentSlotIndex) {
         const set = new Set();
         const sched = window.scheduleAssignments?.[bunkName] || [];
 
-        sched.forEach(e => {
-            if (e?._activity && !e._isTransition) {
+        sched.forEach((e, idx) => {
+            // Only look at slots BEFORE the current one
+            if (idx < currentSlotIndex && e?._activity && !e._isTransition) {
                 set.add(e._activity);
             }
         });
@@ -107,7 +110,10 @@
             }));
 
         const bunkHist = rotationHistory?.bunks?.[block.bunk] || {};
-        const doneToday = getGeneralActivitiesDoneToday(block.bunk);
+        
+        // Pass current slot index to avoid checking future
+        const currentSlotIndex = block.slots[0];
+        const doneToday = getGeneralActivitiesDoneToday(block.bunk, currentSlotIndex);
 
         const available = specials.filter(pick => {
             const actName = pick._activity;
@@ -128,7 +134,7 @@
             if (isOverUsageLimit(actName, block.bunk, activityProperties, historicalCounts, doneToday))
                 return false;
 
-            // --- already done today ---
+            // --- already done today (before now) ---
             if (doneToday.has(actName)) return false;
 
             return true;
@@ -164,7 +170,10 @@
             });
 
         const bunkHist = rotationHistory?.bunks?.[block.bunk] || {};
-        const doneToday = getGeneralActivitiesDoneToday(block.bunk);
+        
+        // Pass current slot index
+        const currentSlotIndex = block.slots[0];
+        const doneToday = getGeneralActivitiesDoneToday(block.bunk, currentSlotIndex);
 
         const available = sports.filter(pick => {
             
@@ -203,27 +212,32 @@
         // Combine Sports + Specials
         const picks = [];
         
-        allActivities.forEach(a => {
-            if(a.type === 'Special' || a.type === 'special') {
-                picks.push({
-                    field: a.name,
-                    sport: null,
-                    _activity: a.name
-                });
-            } else if (a.type === 'field' || a.type === 'sport') {
-                const fields = a.allowedFields || [a.name];
-                fields.forEach(f => {
+        if (Array.isArray(allActivities)) {
+            allActivities.forEach(a => {
+                if(a.type === 'Special' || a.type === 'special') {
                     picks.push({
-                        field: f,
-                        sport: a.name,
+                        field: a.name,
+                        sport: null,
                         _activity: a.name
                     });
-                });
-            }
-        });
+                } else if (a.type === 'field' || a.type === 'sport') {
+                    const fields = a.allowedFields || [a.name];
+                    fields.forEach(f => {
+                        picks.push({
+                            field: f,
+                            sport: a.name,
+                            _activity: a.name
+                        });
+                    });
+                }
+            });
+        }
 
         const bunkHist = rotationHistory?.bunks?.[block.bunk] || {};
-        const doneToday = getGeneralActivitiesDoneToday(block.bunk);
+        
+        // Pass current slot index
+        const currentSlotIndex = block.slots[0];
+        const doneToday = getGeneralActivitiesDoneToday(block.bunk, currentSlotIndex);
 
         const available = picks.filter(pick => {
             const actName = pick._activity;
@@ -248,7 +262,7 @@
                     return false;
             }
 
-            // already used today
+            // already used today (before now)
             return !doneToday.has(actName);
         });
 
