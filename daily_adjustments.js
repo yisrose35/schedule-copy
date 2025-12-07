@@ -1361,7 +1361,17 @@
         // --- Load & Sync Data into Global Loader Objects ---
         const dailyData = window.loadCurrentDailyData?.() || {};
 
-        window.dailySkeletonForLoader = dailyData.manualSkeleton || [];
+        // Always start by loading the latest manual skeleton from current day
+dailyOverrideSkeleton = dailyData.manualSkeleton || [];
+
+// If empty, THEN use templates or fallbacks
+if (!dailyOverrideSkeleton.length) {
+    loadDailySkeleton();
+}
+
+// Ensure loader uses final value
+window.dailySkeletonForLoader = dailyOverrideSkeleton;
+
 
         window.dailyOverridesForLoader = {
             dailyFieldAvailability: dailyData.dailyFieldAvailability || {},
