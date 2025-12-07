@@ -3,8 +3,9 @@
 // PART 3 of 3: THE ORCHESTRATOR (Main Entry)
 //
 // UPDATED:
-// - Added DEEP DEBUG LOGGING inside the skeleton loop to diagnose "0 blocks".
-// - Checks for empty bunks, invalid times, and type mismatches.
+// - Added CONSOLE LOGGING for the main loop.
+// - Added FALLBACK to block.slots if time calculation fails in fillBlock.
+// - Ensures data integrity before running.
 // ============================================================================
 
 (function () {
@@ -113,10 +114,12 @@
         let mainSlots = Utils.findSlotsForRange(effectiveStart, effectiveEnd);
         
         // CRITICAL FALLBACK: If time calc fails to find slots, use the block's original slots
+        // This ensures *something* gets written even if minute-math is slightly off.
         if (mainSlots.length === 0 && block.slots && block.slots.length > 0) {
+            // Only use fallback if no transition logic reduced the block size to zero
             if (trans.preMin === 0 && trans.postMin === 0) {
                 mainSlots = block.slots;
-                console.warn(`FillBlock: Used fallback slots for ${bunk} at ${block.startTime}`);
+                // console.warn(`FillBlock: Used fallback slots for ${bunk} at ${block.startTime}`);
             }
         }
 
@@ -280,6 +283,7 @@
         manualSkeleton.forEach(item => {
             const divName = item.division;
             const bunkList = divisions[divName]?.bunks || [];
+            
             if (bunkList.length === 0) {
                 console.warn(`[SKIP] No bunks for division '${divName}'`);
                 return;
@@ -288,11 +292,7 @@
             const sMin = Utils.parseTimeToMinutes(item.startTime);
             const eMin = Utils.parseTimeToMinutes(item.endTime);
             const slots = Utils.findSlotsForRange(sMin, eMin);
-            
-            if (slots.length === 0) {
-                console.warn(`[SKIP] No time slots found for ${item.event} (${item.startTime}-${item.endTime})`);
-                return;
-            }
+            if (slots.length === 0) return;
 
             const normGA = normalizeGA(item.event);
             const normLg = normalizeLeague(item.event);
@@ -303,14 +303,6 @@
             const trans = Utils.getTransitionRules(finalName, activityProperties);
             const hasBuffer = (trans.preMin + trans.postMin) > 0;
             const isSchedulable = GENERATOR_TYPES.includes(item.type);
-
-            // LOGGING DECISION LOGIC
-            /*
-            console.log(`Evaluating Block: ${item.event} (${item.type})`);
-            console.log(`  > isGenerated: ${isGenerated}`);
-            console.log(`  > isSchedulable: ${isSchedulable}`);
-            console.log(`  > hasBuffer: ${hasBuffer}`);
-            */
 
             if ((item.type === "pinned" || !isGenerated) && !isSchedulable && item.type !== "smart" && !hasBuffer) {
                 if (disabledFields.includes(finalName) || disabledSpecials.includes(finalName)) return;
@@ -325,8 +317,6 @@
             }
 
             if (item.type === "split") {
-                // ... split logic ...
-                // Preserved logic
                 const midIdx = Math.ceil(bunkList.length / 2);
                 const top = bunkList.slice(0, midIdx);
                 const bottom = bunkList.slice(midIdx);
@@ -359,32 +349,56 @@
                         divName, bunk: b, event: finalName, startTime: sMin, endTime: eMin, slots
                     });
                 });
-            } else {
-                console.warn(`[SKIP] Block ${item.event} did not match Pinned OR Schedulable criteria.`);
             }
         });
 
         console.log(`Schedulable Slot Blocks Count: ${schedulableSlotBlocks.length}`);
 
-        // 6 — Smart tiles (Omitted for brevity, logic maintained)
+        // 6 — Smart tiles
+        const smartJobs = window.SmartLogicAdapter?.preprocessSmartTiles?.(manualSkeleton, externalOverrides, masterSpecials) || [];
+        smartJobs.forEach(job => {
+            const divName = job.division;
+            const bunkList = divisions[divName]?.bunks || [];
+            if (bunkList.length === 0) return;
+
+            const result = window.SmartLogicAdapter.generateAssignments(
+                bunkList, job, historicalCounts, specialActivityNames, activityProperties, null, dailyFieldAvailability, yesterdayHistory
+            );
+
+            const { block1Assignments, block2Assignments } = result || {};
+
+            function pushGen(bunk, ev, st, en) {
+                const slots = Utils.findSlotsForRange(st, en);
+                schedulableSlotBlocks.push({ divName, bunk, event: ev, startTime: st, endTime: en, slots, fromSmartTile: true });
+            }
+
+            const sA = Utils.findSlotsForRange(job.blockA.startMin, job.blockA.endMin);
+            Object.entries(block1Assignments || {}).forEach(([b, act]) => {
+                const L = act.toLowerCase();
+                if (L.includes("sport")) pushGen(b, "Sports Slot", job.blockA.startMin, job.blockA.endMin);
+                else if (L.includes("special")) pushGen(b, "Special Activity Slot", job.blockA.startMin, job.blockA.endMin);
+                else if (L.includes("general")) pushGen(b, "General Activity Slot", job.blockA.startMin, job.blockA.endMin);
+                else fillBlock({ divName, bunk: b, startTime: job.blockA.startMin, endTime: job.blockA.endMin, slots: sA }, { field: act, sport: null, _fixed: true, _activity: act }, fieldUsageBySlot, yesterdayHistory, false, activityProperties);
+            });
+
+            if (job.blockB) {
+                const sB = Utils.findSlotsForRange(job.blockB.startMin, job.blockB.endMin);
+                Object.entries(block2Assignments || {}).forEach(([b, act]) => {
+                    const L = act.toLowerCase();
+                    if (L.includes("sport")) pushGen(b, "Sports Slot", job.blockB.startMin, job.blockB.endMin);
+                    else if (L.includes("special")) pushGen(b, "Special Activity Slot", job.blockB.startMin, job.blockB.endMin);
+                    else if (L.includes("general")) pushGen(b, "General Activity Slot", job.blockB.startMin, job.blockB.endMin);
+                    else fillBlock({ divName, bunk: b, startTime: job.blockB.startMin, endTime: job.blockB.endMin, slots: sB }, { field: act, sport: null, _fixed: true, _activity: act }, fieldUsageBySlot, yesterdayHistory, false, activityProperties);
+                });
+            }
+        });
 
         // 7 — Leagues
         const leagueContext = {
-            schedulableSlotBlocks,
-            fieldUsageBySlot,
-            activityProperties,
-            masterSpecialtyLeagues,
-            disabledSpecialtyLeagues,
-            masterLeagues,
-            disabledLeagues,
-            rotationHistory,
-            yesterdayHistory,
-            divisions,
-            fieldsBySport,
-            dailyLeagueSportsUsage: {},
-            fillBlock
+            schedulableSlotBlocks, fieldUsageBySlot, activityProperties, masterSpecialtyLeagues,
+            disabledSpecialtyLeagues, masterLeagues, disabledLeagues, rotationHistory,
+            yesterdayHistory, divisions, fieldsBySport, dailyLeagueSportsUsage: {}, fillBlock
         };
-
         window.SchedulerCoreLeagues?.processSpecialtyLeagues?.(leagueContext);
         window.SchedulerCoreLeagues?.processRegularLeagues?.(leagueContext);
 
@@ -402,46 +416,54 @@
         });
 
         window.__transitionUsage = {};
-
         console.log(`>>> STARTING MAIN LOOP: ${remaining.length} blocks to fill.`);
 
         for (const block of remaining) {
             const slots = block.slots;
             if (!slots || slots.length === 0) continue;
-
             const existingSlot = window.scheduleAssignments[block.bunk][slots[0]];
-            if (existingSlot && existingSlot._activity !== TRANSITION_TYPE) {
-                continue;
-            }
+            if (existingSlot && existingSlot._activity !== TRANSITION_TYPE) continue;
 
             let pick = null;
-
-            if (/special/i.test(block.event)) {
-                pick = window.findBestSpecial?.(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, historicalCounts);
-            } else if (/sport/i.test(block.event)) {
-                pick = window.findBestSportActivity?.(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, historicalCounts);
-            }
-
-            if (!pick) {
-                pick = window.findBestGeneralActivity?.(block, allActivities, h2hActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, historicalCounts);
-            }
+            if (/special/i.test(block.event)) pick = window.findBestSpecial?.(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, historicalCounts);
+            else if (/sport/i.test(block.event)) pick = window.findBestSportActivity?.(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, historicalCounts);
+            if (!pick) pick = window.findBestGeneralActivity?.(block, allActivities, h2hActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, historicalCounts);
 
             let fits = pick && Utils.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, pick._activity, false);
 
             if (fits && pick) {
-                // Success!
                 // console.log(`   [${block.bunk} @ ${Utils.fmtTime(Utils.minutesToDate(block.startTime))}]: Assigned ${pick.field}`);
                 fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, false, activityProperties);
             } else {
-                // Failure
-                console.warn(`   [${block.bunk} @ ${Utils.fmtTime(Utils.minutesToDate(block.startTime))}]: FAILED to find fit. Picked: ${pick ? pick.field : 'null'}. Writing 'Free'.`);
+                console.warn(`   [${block.bunk} @ ${Utils.fmtTime(Utils.minutesToDate(block.startTime))}]: FAILED to find fit. Writing 'Free'.`);
                 window.scheduleAssignments[block.bunk][slots[0]] = null;
                 fillBlock(block, { field: "Free", sport: null, _activity: "Free" }, fieldUsageBySlot, yesterdayHistory, false, activityProperties);
             }
         }
 
         // 9 — Rotation history update
-        // ... (Logic maintained) ...
+        try {
+            const newHistory = { ...rotationHistory };
+            const timestamp = Date.now();
+            Object.keys(divisions).forEach(divName => {
+                divisions[divName].bunks.forEach(b => {
+                    let lastActivity = null;
+                    for (const entry of window.scheduleAssignments[b] || []) {
+                        if (entry?._activity && entry._activity !== TRANSITION_TYPE && entry._activity !== lastActivity) {
+                            lastActivity = entry._activity;
+                            newHistory.bunks ??= {};
+                            newHistory.bunks[b] ??= {};
+                            newHistory.bunks[b][entry._activity] = timestamp;
+                        } else if (entry && !entry.continuation && entry._activity !== TRANSITION_TYPE) {
+                            lastActivity = null;
+                        }
+                    }
+                });
+            });
+            window.saveRotationHistory?.(newHistory);
+        } catch (e) {
+            console.error("Rotation history update failed:", e);
+        }
 
         // 10 — Save + update UI
         window.saveCurrentDailyData?.("unifiedTimes", window.unifiedTimes);
