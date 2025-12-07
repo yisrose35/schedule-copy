@@ -6,6 +6,7 @@
 // - Added Utils.timeline to support UI Validation (checkAvailability).
 // - Cleaned up data loading delegation.
 // - Robust time and transition logic.
+// - CRITICAL FIX: Removed overly strict League/Non-League placement veto in canBlockFit.
 // ============================================================================
 
 (function () {
@@ -188,6 +189,9 @@
     }
 
     function calculateAssignmentWeight(activityName, assignmentObj, maxCapacity) {
+        // If it's a league assignment, the weight should equal the maximum capacity 
+        // to correctly enforce the space it takes up in the timeline (if capacity is 2, weight is 2).
+        // Since we removed the hard veto, we must make League games take up full capacity here.
         return isLeagueAssignment(assignmentObj, activityName) ? maxCapacity : 1;
     }
 
@@ -369,7 +373,8 @@
 
         for (const slotIndex of uniqueSlots) {
             if (slotIndex === undefined) return false;
-            if (isFieldTakenByLeagueText(slotIndex, fieldName)) return false;
+            // The isFieldTakenByLeagueText check is too aggressive and redundant.
+            // if (isFieldTakenByLeagueText(slotIndex, fieldName)) return false;
 
             const usage = getCombinedUsage(slotIndex, fieldName, fieldUsageBySlot);
 
@@ -393,10 +398,11 @@
                 const isSameGame = myLabel && theirLabel && String(myLabel) === String(theirLabel);
 
                 const existingIsLeague = isLeagueAssignment(actualAssignment, activityName);
-
-                if ((existingIsLeague || proposedIsLeague) && !isSameGame) return false;
+                // The problematic League/Non-League VETO has been removed here.
+                // It now relies solely on capacity/weight check below.
 
                 if (!isSameGame) {
+                    // CRITICAL FIX: Ensure Leagues take maxCapacity space
                     currentWeight += calculateAssignmentWeight(activityName, actualAssignment, maxCapacity);
                 }
             }
