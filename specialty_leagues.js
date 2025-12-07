@@ -662,5 +662,6 @@ function renderGamesEditor(league, wrapper) {
         </p>
     `;
 }
+window.masterSpecialtyLeagues = specialtyLeagues;
 
 })();
