@@ -402,43 +402,34 @@
         window.SchedulerCoreLeagues?.processSpecialtyLeagues?.(leagueContext);
         window.SchedulerCoreLeagues?.processRegularLeagues?.(leagueContext);
 
-        // 8 — Fill remaining (non-leagues)
-        const remaining = schedulableSlotBlocks.filter(b => !/league/i.test(b.event) && !b.processed);
+       // 8 — Fill remaining (non-leagues) using the Total Solver Engine
+        // -----------------------------------------------------------------
 
-        remaining.sort((A, B) => {
-            if (A.startTime !== B.startTime) return A.startTime - B.startTime;
-            if (A.fromSmartTile && !B.fromSmartTile) return -1;
-            if (!A.fromSmartTile && B.fromSmartTile) return 1;
-            const sA = bunkMetaData[A.bunk]?.size || 0;
-            const sB = bunkMetaData[B.bunk]?.size || 0;
-            if (sA !== sB) return sB - sA;
-            return 0;
-        });
+        // 1. Filter down to *only* unassigned General, Sport, and Special blocks.
+        const remainingActivityBlocks = schedulableSlotBlocks
+            .filter(b => !/league/i.test(b.event) && !b.processed)
+            .filter(block => {
+                const slots = block.slots;
+                if (!slots || slots.length === 0) return false;
+                const existingSlot = window.scheduleAssignments[block.bunk]?.[slots[0]];
+                // Only include if the slot is empty, or only contains a transition buffer.
+                return !existingSlot || existingSlot._activity === TRANSITION_TYPE;
+            })
+            // Mark them as non-league for the solver's sorting logic.
+            .map(b => ({ ...b, _isLeague: false })); 
+
+        console.log(`>>> STARTING TOTAL SOLVER: ${remainingActivityBlocks.length} activity blocks to fill.`);
 
         window.__transitionUsage = {};
-        console.log(`>>> STARTING MAIN LOOP: ${remaining.length} blocks to fill.`);
-
-        for (const block of remaining) {
-            const slots = block.slots;
-            if (!slots || slots.length === 0) continue;
-            const existingSlot = window.scheduleAssignments[block.bunk][slots[0]];
-            if (existingSlot && existingSlot._activity !== TRANSITION_TYPE) continue;
-
-            let pick = null;
-            if (/special/i.test(block.event)) pick = window.findBestSpecial?.(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, historicalCounts);
-            else if (/sport/i.test(block.event)) pick = window.findBestSportActivity?.(block, allActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, historicalCounts);
-            if (!pick) pick = window.findBestGeneralActivity?.(block, allActivities, h2hActivities, fieldUsageBySlot, yesterdayHistory, activityProperties, rotationHistory, historicalCounts);
-
-            let fits = pick && Utils.canBlockFit(block, fieldLabel(pick.field), activityProperties, fieldUsageBySlot, pick._activity, false);
-
-            if (fits && pick) {
-                // console.log(`   [${block.bunk} @ ${Utils.fmtTime(Utils.minutesToDate(block.startTime))}]: Assigned ${pick.field}`);
-                fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, false, activityProperties);
-            } else {
-                console.warn(`   [${block.bunk} @ ${Utils.fmtTime(Utils.minutesToDate(block.startTime))}]: FAILED to find fit. Writing 'Free'.`);
-                window.scheduleAssignments[block.bunk][slots[0]] = null;
-                fillBlock(block, { field: "Free", sport: null, _activity: "Free" }, fieldUsageBySlot, yesterdayHistory, false, activityProperties);
-            }
+        
+        if (window.totalSolverEngine && remainingActivityBlocks.length > 0) {
+            // The existing Solver.solveSchedule handles empty league blocks gracefully 
+            // and proceeds to solve the remaining activity blocks using backtracking.
+            // Assignments (including 'Free' fallbacks) are handled internally by the solver's fillBlock calls.
+            window.totalSolverEngine.solveSchedule(remainingActivityBlocks, config);
+            
+        } else {
+            console.log("No activity blocks remaining for Total Solver.");
         }
 
         // 9 — Rotation history update
