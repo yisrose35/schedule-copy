@@ -1,4 +1,3 @@
-
 // =================================================================
 // daily_adjustments.js  (UPDATED for CAPACITY FIX)
 // - Disabled "applySmartTileOverridesForToday" pre-processing.
@@ -484,11 +483,10 @@ function renderEventTile(event, top, height) {
     innerHtml += `<div style="font-size:0.75em;border-top:1px dotted #01579b;margin-top:2px;padding-top:1px;">F: ${event.smartData.fallbackActivity} (if ${event.smartData.fallbackFor.substring(0,4)}. busy)</div>`;
   }
   if (event.type === "smart" && event.smartData) {
-  innerHtml += `
-    <div style="font-size:0.75em;border-top:1px dotted #01579b;margin-top:2px;padding-top:1px;">
+  innerHtml += `<br>
+    <div style="font-size:0.75em;border-top:1px dotted #01579b;margin-top:2px;padding-top:1px;"><br>
       Fallback: ${event.smartData.fallbackActivity}
-      <br>
-
+      <br><br><br>
       For: ${event.smartData.fallbackFor}
     </div>
   `;
@@ -790,12 +788,51 @@ function init() {
 function initDailySkeletonUI() {
   if (!skeletonContainer) return;
   loadDailySkeleton();
+
+  // --- NEW: Dropdown to load saved skeletons ---
+  const savedSkeletons = masterSettings.app1.savedSkeletons || {};
+  let optionsHtml = `<option value="">-- Select Saved Skeleton --</option>`;
+  Object.keys(savedSkeletons).sort().forEach(name => {
+    optionsHtml += `<option value="${name}">${name}</option>`;
+  });
+
   skeletonContainer.innerHTML = `
+    <div style="margin-bottom:15px; padding:10px; background:#e3f2fd; border:1px solid #90caf9; border-radius:5px; display:flex; align-items:center; gap:10px;">
+      <strong>Load Skeleton:</strong>
+      <select id="daily-skeleton-select" style="padding:6px; border-radius:4px; border:1px solid #ccc;">
+        ${optionsHtml}
+      </select>
+      <button id="daily-skeleton-load-btn" style="padding:6px 12px; background:#0277bd; color:white; border:none; border-radius:4px; cursor:pointer;">
+        Load
+      </button>
+      <span style="font-size:0.85em; color:#555;">(Overwrites current edits)</span>
+    </div>
+
     <div id="daily-skeleton-palette"
          style="padding:10px;background:#f4f4f4;border-radius:8px;margin-bottom:15px;display:flex;flex-wrap:wrap;gap:10px;"></div>
     <div id="daily-skeleton-grid"
          style="overflow-x:auto;border:1px solid #999;max-height:600px;overflow-y:auto;"></div>
   `;
+
+  // Add listener for load button
+  const loadBtn = document.getElementById("daily-skeleton-load-btn");
+  if (loadBtn) {
+    loadBtn.onclick = () => {
+      const select = document.getElementById("daily-skeleton-select");
+      const name = select.value;
+      if (!name) return;
+
+      if (confirm(`Load skeleton "${name}"? This will overwrite your current daily skeleton edits.`)) {
+        const skeletonData = savedSkeletons[name];
+        if (skeletonData) {
+          dailyOverrideSkeleton = JSON.parse(JSON.stringify(skeletonData));
+          saveDailySkeleton();
+          renderGrid(document.getElementById("daily-skeleton-grid"));
+        }
+      }
+    };
+  }
+
   const palette = document.getElementById("daily-skeleton-palette");
   const grid = document.getElementById("daily-skeleton-grid");
   renderPalette(palette);
