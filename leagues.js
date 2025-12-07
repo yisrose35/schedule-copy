@@ -1,6 +1,9 @@
-// =================================================================
-// leagues.js — THEMED VERSION (Emerald Jade Theme)
-// =================================================================
+
+
+// ===================================================================
+// leagues.js  — THEMED VERSION (Emerald Jade Theme)
+// ===================================================================
+
 (function () {
     'use strict';
 
@@ -72,6 +75,7 @@
         el.ondblclick = (e) => {
             e.stopPropagation();
             const oldText = el.textContent;
+
             const input = document.createElement('input');
             input.type = 'text';
             input.value = oldText;
@@ -81,7 +85,7 @@
                 width: '100%',
                 boxSizing: 'border-box'
             });
-
+            
             el.replaceWith(input);
             input.focus();
 
@@ -106,12 +110,15 @@
         if (!str || typeof str !== "string") return null;
         let s = str.trim().toLowerCase();
         let mer = null;
+
         if (s.endsWith("am") || s.endsWith("pm")) {
             mer = s.endsWith("am") ? "am" : "pm";
             s = s.replace(/am|pm/g, "").trim();
         }
+
         const m = s.match(/^(\d{1,2})\s*:\s*(\d{2})$/);
         if (!m) return null;
+
         let hh = parseInt(m[1], 10);
         const mm = parseInt(m[2], 10);
         if (Number.isNaN(hh) || Number.isNaN(mm)) return null;
@@ -120,6 +127,7 @@
             if (hh === 12) hh = mer === "am" ? 0 : 12;
             else if (mer === "pm") hh += 12;
         }
+
         return hh * 60 + mm;
     }
 
@@ -133,18 +141,18 @@
 
     function findSlotIndexForTime(targetMin) {
         const times = window.unifiedTimes || [];
-        const INCREMENT_MINS = window.INCREMENT_MINS || 30;
+        const INCREMENT_MINS = window.INCREMENT_MINS || 30; 
 
         for (let i = 0; i < times.length; i++) {
             const d = new Date(times[i].start);
             const slotStart = d.getHours() * 60 + d.getMinutes();
+            
             let slotEnd;
-
             if (times[i].end) {
-                const e = new Date(times[i].end);
-                slotEnd = e.getHours() * 60 + e.getMinutes();
+                 const e = new Date(times[i].end);
+                 slotEnd = e.getHours() * 60 + e.getMinutes();
             } else {
-                slotEnd = slotStart + INCREMENT_MINS;
+                 slotEnd = slotStart + INCREMENT_MINS;
             }
 
             if (targetMin >= slotStart && targetMin < slotEnd) {
@@ -159,6 +167,7 @@
     // =================================================================
     window.initLeagues = function () {
         const container = document.getElementById('leagues');
+
         if (!container) return;
 
         loadLeaguesData();
@@ -174,20 +183,25 @@
                             <p>Configure divisions, add teams, and enter results to track standings.</p>
                         </div>
                     </div>
+
                     <div style="display:flex; flex-wrap:wrap; gap:20px; margin-top:10px;">
+
                         <div style="flex:1; min-width:260px;">
                             <div class="setup-subtitle">All Leagues</div>
                             <p style="font-size:0.8rem; color:#6b7280; margin-top:4px;">
                                 Select a league to edit. Double-click the title in the details pane to rename.
                             </p>
+
                             <div class="setup-field-row" style="margin-top:10px;">
                                 <input id="new-league-input" placeholder="New League Name (e.g. Senior Basketball)">
                                 <button id="add-league-btn" style="background: #00C896; color: white; border-color: #00C896; font-weight:600;">Add League</button>
                             </div>
+
                             <div id="league-master-list" class="master-list"
                                  style="margin-top:10px; max-height:440px; overflow:auto;">
                             </div>
                         </div>
+
                         <div style="flex:1.4; min-width:320px;">
                             <div class="setup-subtitle">League Details</div>
                             <div id="league-detail-pane" class="detail-pane"
@@ -197,9 +211,11 @@
                                 </p>
                             </div>
                         </div>
+
                     </div>
                 </section>
             </div>
+
             <style>
                 .master-list {
                     border-radius: 18px;
@@ -306,6 +322,7 @@
 
         listEl = document.getElementById('league-master-list');
         detailPaneEl = document.getElementById('league-detail-pane');
+
         const addInput = document.getElementById('new-league-input');
         const addBtn = document.getElementById('add-league-btn');
 
@@ -316,6 +333,7 @@
                 alert('League exists!');
                 return;
             }
+
             leaguesByName[name] = {
                 teams: [],
                 sports: [],
@@ -324,6 +342,7 @@
                 games: [],
                 enabled: true
             };
+
             saveLeaguesData();
             addInput.value = '';
             selectedLeagueName = name;
@@ -345,6 +364,7 @@
     // =================================================================
     function renderMasterList() {
         listEl.innerHTML = '';
+
         const keys = Object.keys(leaguesByName).sort();
         if (keys.length === 0) {
             listEl.innerHTML = `<p class="muted">No leagues yet.</p>`;
@@ -353,9 +373,11 @@
 
         keys.forEach(name => {
             const item = leaguesByName[name];
+
             const el = document.createElement('div');
             el.className = 'list-item';
             if (name === selectedLeagueName) el.classList.add('selected');
+
             el.onclick = () => {
                 selectedLeagueName = name;
                 renderMasterList();
@@ -367,6 +389,7 @@
             const tog = document.createElement('label');
             tog.className = 'switch';
             tog.onclick = e => e.stopPropagation();
+
             const cb = document.createElement('input');
             cb.type = 'checkbox';
             cb.checked = item.enabled;
@@ -374,10 +397,11 @@
                 item.enabled = cb.checked;
                 saveLeaguesData();
             };
+
             const slider = document.createElement('span');
             slider.className = 'slider';
-            tog.append(cb, slider);
 
+            tog.append(cb, slider);
             el.appendChild(tog);
             listEl.appendChild(el);
         });
@@ -411,6 +435,7 @@
         title.style.fontSize = '1.1rem';
         title.textContent = selectedLeagueName;
         title.title = "Double-click to rename";
+
         makeEditable(title, (newName) => {
             if (newName && !leaguesByName[newName]) {
                 leaguesByName[newName] = league;
@@ -455,6 +480,7 @@
         });
         delBtn.onmouseenter = () => { delBtn.style.background = '#FEE2E2'; };
         delBtn.onmouseleave = () => { delBtn.style.background = '#FFFFFF'; };
+
         delBtn.onclick = () => {
             if (confirm(`Delete league "${selectedLeagueName}"?`)) {
                 delete leaguesByName[selectedLeagueName];
@@ -514,7 +540,7 @@
                 <span>Who plays?</span>
             </div>
         `;
-
+        
         const divChips = document.createElement('div');
         divChips.className = 'chips';
         (window.availableDivisions || []).forEach((divName) => {
@@ -611,19 +637,23 @@
     // =================================================================
     function renderGameResultsUI(league, container) {
         container.innerHTML = '';
+
         const tabNav = document.createElement('div');
         tabNav.style.marginBottom = '15px';
         tabNav.style.display = 'flex';
         tabNav.style.gap = '8px';
+
         tabNav.innerHTML = `
             <button id="tab-standings" class="active">Current Standings</button>
             <button id="tab-games">Game Results / History</button>
         `;
+
         container.appendChild(tabNav);
 
         const standingsDiv = document.createElement('div');
         const gamesDiv = document.createElement('div');
         gamesDiv.style.display = 'none';
+
         container.appendChild(standingsDiv);
         container.appendChild(gamesDiv);
 
@@ -633,25 +663,25 @@
         // Style helper: Jade / Emerald Theme
         const setTab = (activeBtn, inactiveBtn) => {
             // Active: Emerald Jade
-            Object.assign(activeBtn.style, {
-                 background: '#00C896',
-                 color: 'white',
-                 borderColor: '#00C896',
+            Object.assign(activeBtn.style, { 
+                background: '#00C896', 
+                color: 'white', 
+                borderColor: '#00C896',
                 borderRadius: '999px',
                 padding: '8px 16px',
                 boxShadow: '0 3px 8px rgba(0, 200, 150, 0.35)'
             });
             // Inactive
-            Object.assign(inactiveBtn.style, {
-                 background: '#F3F4F6',
-                 color: '#111827',
-                 borderColor: '#D1D5DB',
+            Object.assign(inactiveBtn.style, { 
+                background: '#F3F4F6', 
+                color: '#111827', 
+                borderColor: '#D1D5DB',
                 borderRadius: '999px',
                 padding: '8px 16px',
                 boxShadow: 'none'
             });
         };
-
+        
         // Initial State
         setTab(btnStd, btnGms);
 
@@ -677,15 +707,18 @@
     // =================================================================
     function renderStandingsTable(league, container) {
         container.innerHTML = '';
+
         if (!league.teams || league.teams.length === 0) {
             container.innerHTML = '<p class="muted" style="text-align:center; padding:20px;">No teams in this league. Edit Setup to add teams.</p>';
             return;
         }
 
         recalcStandings(league);
+
         const sortedTeams = [...league.teams].sort((a, b) => {
             const sA = league.standings[a] || { w: 0, l: 0, t: 0 };
             const sB = league.standings[b] || { w: 0, l: 0, t: 0 };
+
             if (sA.w !== sB.w) return sB.w - sA.w;
             if (sA.l !== sB.l) return sA.l - sB.l;
             if (sA.t !== sB.t) return sB.t - sA.t;
@@ -720,6 +753,7 @@
                 </tr>
             `;
         });
+
         html += `</tbody></table>`;
         container.innerHTML = html;
     }
@@ -746,6 +780,7 @@
         const select = document.createElement('select');
         select.style.flex = "1";
         select.innerHTML = `<option value="new">-- Enter New Game Results --</option>`;
+
         (league.games || []).forEach((g, idx) => {
             const label = g.name || `Game ${idx + 1}`;
             select.innerHTML += `<option value="${idx}">${label} (${g.date})</option>`;
@@ -792,7 +827,6 @@
         container.appendChild(saveBtn);
 
         importBtn.onclick = () => importGamesFromSchedule(league, matchContainer);
-
         select.onchange = () => {
             matchContainer.innerHTML = '';
             if (select.value === 'new') {
@@ -808,6 +842,7 @@
         function loadExistingGame(leagueObj, gameIdx, target, saveButton) {
             const game = leagueObj.games[gameIdx];
             if (!game) return;
+
             const groupedMatches = {};
             game.matches.forEach((m) => {
                 const label = m.timeLabel || 'Matchups';
@@ -824,6 +859,7 @@
                 header.className = 'group-header';
                 header.textContent = label;
                 target.appendChild(header);
+
                 groupedMatches[label].forEach((m) => {
                     addMatchRow(target, m.teamA, m.teamB, m.scoreA, m.scoreB, saveButton, label);
                 });
@@ -834,6 +870,7 @@
     function addMatchRow(target, teamA, teamB, scoreA = '', scoreB = '', saveButton, timeLabel = '') {
         const row = document.createElement('div');
         row.className = 'match-row';
+
         Object.assign(row.style, {
             display: 'flex',
             alignItems: 'center',
@@ -848,10 +885,10 @@
 
         row.innerHTML = `
             <strong style="flex:1; text-align:right; font-size:0.9rem;">${teamA}</strong>
-            <input type="number" class="score-a" value="${scoreA}"
+            <input type="number" class="score-a" value="${scoreA}" 
                    style="width:50px; text-align:center; padding:6px; font-weight:bold; border-color:#9CA3AF;">
             <span style="color:#6B7280; font-size:0.8rem; font-weight:bold;">VS</span>
-            <input type="number" class="score-b" value="${scoreB}"
+            <input type="number" class="score-b" value="${scoreB}" 
                    style="width:50px; text-align:center; padding:6px; font-weight:bold; border-color:#9CA3AF;">
             <strong style="flex:1; font-size:0.9rem;">${teamB}</strong>
         `;
@@ -861,6 +898,7 @@
         if (timeLabel) row.dataset.timeLabel = timeLabel;
 
         target.appendChild(row);
+
         if (saveButton) saveButton.style.display = 'block';
     }
 
@@ -892,31 +930,31 @@
              return;
         }
 
-        const gamesFound = {};
+        const gamesFound = {}; 
 
         relevantBlocks.forEach(block => {
             const startMin = parseTimeToMinutes(block.startTime);
             const slotIdx = findSlotIndexForTime(startMin);
+
             if (slotIdx === -1) return;
 
             const divBunks = divisions[block.division]?.bunks || [];
             if (divBunks.length === 0) return;
-
             const representativeBunk = divBunks[0];
             const entry = assignments[representativeBunk]?.[slotIdx];
 
             if (!entry) return;
 
-            let headerLabel = block.event;
-             const rawText = (typeof entry.field === 'string') ? entry.field : (entry.sport || "");
+            let headerLabel = block.event; 
+            const rawText = (typeof entry.field === 'string') ? entry.field : (entry.sport || "");
             const textMatch = rawText.match(/(?:Game|Match)\s*(\d+)/i) || headerLabel.match(/(?:Game|Match)\s*(\d+)/i);
             const hiddenMatch = entry._gameLabel || entry.gameLabel;
 
             if (textMatch) {
                 headerLabel = `League Game ${textMatch[1]}`;
             } else if (hiddenMatch) {
-                headerLabel = `League Game ${hiddenMatch.replace(/^\D+/g, '')}`;
-             } else {
+                headerLabel = `League Game ${hiddenMatch.replace(/^\D+/g, '')}`; 
+            } else {
                 if (headerLabel.trim().toLowerCase() === "league game") {
                     headerLabel = `${headerLabel} (${minutesToTimeLabel(startMin)})`;
                 }
@@ -932,17 +970,17 @@
             }
 
             linesToScan.forEach(line => {
-                const m = line.match(/^(.*?)\s+vs\.?\s+(.*?)(?:\s*[@\(]|$)/i);
-                 if (m) {
+                const m = line.match(/^(.*?)\s+vs\.?\s+(.*?)(?:\s*[@\(]|$)/i); 
+                if (m) {
                     const tA = m[1].trim();
                     const tB = m[2].trim();
 
                     if (league.teams.includes(tA) && league.teams.includes(tB)) {
                         if (!gamesFound[headerLabel]) gamesFound[headerLabel] = [];
                         
-                        const exists = gamesFound[headerLabel].some(g =>
-                             (g.teamA === tA && g.teamB === tB) ||
-                             (g.teamA === tB && g.teamB === tA)
+                        const exists = gamesFound[headerLabel].some(g => 
+                            (g.teamA === tA && g.teamB === tB) || 
+                            (g.teamA === tB && g.teamB === tA)
                         );
                         
                         if (!exists) {
@@ -953,8 +991,8 @@
             });
         });
 
-        const groupNames = Object.keys(gamesFound).sort((a,b) =>
-             a.localeCompare(b, undefined, {numeric: true})
+        const groupNames = Object.keys(gamesFound).sort((a,b) => 
+            a.localeCompare(b, undefined, {numeric: true})
         );
 
         if (groupNames.length === 0) {
@@ -967,6 +1005,7 @@
             header.className = 'group-header';
             header.textContent = label;
             target.appendChild(header);
+
             gamesFound[label].forEach(m => {
                 addMatchRow(target, m.teamA, m.teamB, '', '', saveButton, label);
             });
@@ -981,10 +1020,12 @@
     function saveGameResults(league, gameId, container) {
         const rows = container.querySelectorAll('.match-row');
         const results = [];
+
         rows.forEach(row => {
             const tA = row.dataset.teamA;
             const tB = row.dataset.teamB;
             const tLabel = row.dataset.timeLabel || '';
+
             const sA = parseInt(row.querySelector('.score-a').value, 10) || 0;
             const sB = parseInt(row.querySelector('.score-b').value, 10) || 0;
 
@@ -1007,6 +1048,7 @@
 
         if (gameId === 'new') {
             const firstLabel = results[0].timeLabel || `Game Set ${league.games.length + 1}`;
+
             league.games.push({
                 id: Date.now(),
                 date: window.currentScheduleDate || new Date().toLocaleDateString(),
@@ -1019,6 +1061,7 @@
 
         recalcStandings(league);
         saveLeaguesData();
+
         alert('Results saved and standings updated!');
         renderDetailPane();
     }
@@ -1045,17 +1088,8 @@
         });
     }
 
-    // =================================================================
-    // FINAL LOAD — SAFE EXPORTS
-    // =================================================================
-    window.loadLeagueGlobals = function () {
-        try {
-            loadLeaguesData();
-            loadRoundState();
-        } catch (e) {
-            console.error("League load error:", e);
-        }
-    };
-window.masterLeagues = leagues;
+    // FINAL LOAD
+    loadLeaguesData();
+    loadRoundState();
 
 })();
