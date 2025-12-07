@@ -1056,5 +1056,6 @@
             console.error("League load error:", e);
         }
     };
+window.masterLeagues = leagues;
 
 })();
