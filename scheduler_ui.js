@@ -1,12 +1,9 @@
-
-
 // ============================================================================
-// scheduler_ui.js (UPDATED: TIMELINE GATEKEEPER)
+// scheduler_ui.js (GCM PATCHED: ROBUST LEAGUE RENDERER)
 //
-// Updates:
-// 1. Validation now uses the global TIMELINE system for precise capacity checks.
-// 2. Maintains "Duplicate" and "Max Usage" checks for user feedback.
-// 3. Grid rendering logic remains untouched.
+// FIXES:
+// ✓ Scans ALL bunks in a division to find League Matchups (not just the first one).
+// ✓ Ensures League details appear even if the first bunk is empty/different.
 // ============================================================================
 
 (function () {
@@ -14,9 +11,9 @@
 
   const INCREMENT_MINS = 30; // Fallback only
 
-  // ==========================================================================
+  // =========================================================================
   // TIME HELPERS
-  // ==========================================================================
+  // =========================================================================
   function parseTimeToMinutes(str) {
     if (!str || typeof str !== "string") return null;
     let s = str.trim().toLowerCase();
@@ -43,9 +40,9 @@
     return `${h12}:${m} ${ap}`;
   }
 
-  // ==========================================================================
+  // =========================================================================
   // RESOURCE RESOLVER
-  // ==========================================================================
+  // =========================================================================
   function resolveResourceName(input, knownNames) {
       if (!input || !knownNames) return null;
       const cleanInput = String(input).toLowerCase().trim();
@@ -62,9 +59,9 @@
       return null; 
   }
 
-  // ==========================================================================
+  // =========================================================================
   // DETECT GENERATED EVENTS
-  // ==========================================================================
+  // =========================================================================
   const UI_GENERATED_EVENTS = new Set([
     "general activity", "general activity slot", "activity", "activities", "sports", "sport", "sports slot", "special activity", "swim", "league game", "specialty league"
   ]);
@@ -73,9 +70,9 @@
     return UI_GENERATED_EVENTS.has(String(name).trim().toLowerCase());
   }
 
-  // ==========================================================================
+  // =========================================================================
   // SLOT FINDER
-  // ==========================================================================
+  // =========================================================================
   function findSlotsForRange(startMin, endMin) {
     const slots = [];
     const times = window.unifiedTimes;
@@ -97,9 +94,9 @@
     return slots;
   }
 
-  // ==========================================================================
+  // =========================================================================
   // EDIT CELL (TIMELINE UPDATED)
-  // ==========================================================================
+  // =========================================================================
   function editCell(bunk, startMin, endMin, current) {
     if (!bunk) return;
     
@@ -171,7 +168,6 @@
             else if (props.sharable || props.sharableWith?.type === 'all' || props.sharableWith?.type === 'custom') capacityLimit = 2;
 
             // Determine My Weight (Manual edits are usually standard weight 1)
-            // Unless user typed "League Game", but usually they type the field name.
             let myWeight = 1;
 
             // Check availability via Timeline System
@@ -268,7 +264,7 @@
     renderStaggeredView(container);
   }
 
-  // --- DYNAMIC GRID (UNTOUCHED) ---
+  // --- DYNAMIC GRID (RENDERER) ---
   function renderStaggeredView(container) {
     container.innerHTML = "";
     const divisions = window.divisions || {};
@@ -356,10 +352,14 @@
           let gameLabel = "";
 
           if (slotIdx >= 0) {
-            const first = getEntry(bunks[0], slotIdx);
-            if (first) {
-                if(first._allMatchups) allMatchups = first._allMatchups;
-                if(first._gameLabel) gameLabel = first._gameLabel;
+            // GCM FIX: SCAN ALL BUNKS for metadata, not just the first one.
+            for (const b of bunks) {
+                 const entry = getEntry(b, slotIdx);
+                 if (entry && entry._allMatchups && entry._allMatchups.length > 0) {
+                     allMatchups = entry._allMatchups;
+                     gameLabel = entry._gameLabel;
+                     break; // Found it!
+                 }
             }
           }
 
@@ -375,6 +375,7 @@
           if (allMatchups.length === 0) {
             td.textContent = titleHtml;
           } else {
+            // Render the full list of games
             td.innerHTML = `<div>${titleHtml}</div><ul>${allMatchups.map((m) => `<li>${m}</li>`).join("")}</ul>`;
           }
 
