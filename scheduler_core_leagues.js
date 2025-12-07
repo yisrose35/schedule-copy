@@ -1,10 +1,10 @@
 // ============================================================================
-// scheduler_core_leagues.js — FULL REWRITE (FORMAT B + MATCHUP FIX)
+// scheduler_core_leagues.js — FULL REWRITE (FORMAT C + MULTI-FIELD LOCK)
 // Strict League Exclusivity + Division-Level League Outputs
 //
 // FIXES:
-// ✓ Attaches _allMatchups and _gameLabel to tiles so UI shows the actual games.
-// ✓ Formats matchups as "Team A vs Team B — Sport @ Field".
+// ✓ Attaches _allMatchups so UI shows games.
+// ✓ LOCKS ALL FIELDS used in the round (not just the first one).
 // ============================================================================
 
 (function () {
@@ -21,14 +21,22 @@
         window.fieldReservationLog ??= {};
         window.fieldReservationLog[field] ??= [];
 
-        window.fieldReservationLog[field].push({
-            bunk: "__LEAGUE_VETO__",
-            divName: block.divName,
-            startMin: block.startTime,
-            endMin: block.endTime,
-            exclusive: true,
-            reason: "League Field Lock"
-        });
+        // Check if already locked to avoid duplicate log entries
+        const exists = window.fieldReservationLog[field].some(r => 
+            r.bunk === "__LEAGUE_VETO__" && 
+            r.startMin === block.startTime
+        );
+
+        if (!exists) {
+            window.fieldReservationLog[field].push({
+                bunk: "__LEAGUE_VETO__",
+                divName: block.divName,
+                startMin: block.startTime,
+                endMin: block.endTime,
+                exclusive: true, // <--- This triggers the 99,999 penalty in Solver
+                reason: "League Field Lock"
+            });
+        }
     }
 
     function getGameLabel(leagueName) {
@@ -109,7 +117,7 @@
             const gameLabel = getGameLabel(entry.name);
 
             const matchups = [];
-            let vetoField = null;
+            const lockedFields = new Set(); // Track fields to lock
 
             pairs.forEach((pair, i) => {
                 const [A, B] = pair;
@@ -125,7 +133,7 @@
                 }
 
                 const field = entry.fields?.[i % entry.fields.length] || null;
-                if (!vetoField && field) vetoField = field;
+                if (field) lockedFields.add(field);
 
                 matchups.push({
                     teamA: A,
@@ -163,7 +171,6 @@
                         sport: null,
                         _activity: "League Block",
                         _fixed: true,
-                        // GCM FIX: ATTACH MATCHUP DATA
                         _allMatchups: formattedMatchups,
                         _gameLabel: gameLabel
                     },
@@ -174,8 +181,8 @@
                 );
             });
 
-            // Apply hard veto to field
-            if (vetoField) writeLeagueReservationVeto(vetoField, block);
+            // LOCK ALL FIELDS
+            lockedFields.forEach(f => writeLeagueReservationVeto(f, block));
         });
     };
 
@@ -235,7 +242,7 @@
             const sports = league.sports?.length ? league.sports : ["League Game"];
 
             const matchups = [];
-            let vetoField = null;
+            const lockedFields = new Set();
 
             pairs.forEach((pair, i) => {
                 const [A, B] = pair;
@@ -279,7 +286,7 @@
                     if (chosenField) break;
                 }
 
-                if (chosenField && !vetoField) vetoField = chosenField;
+                if (chosenField) lockedFields.add(chosenField);
 
                 matchups.push({
                     teamA: A,
@@ -306,7 +313,7 @@
                 `${m.teamA} vs ${m.teamB} — ${m.sport} @ ${m.field || 'TBD'}`
             );
 
-            // Fill bunks with “League Block” + Matchup Metadata
+            // Fill bunks
             group.bunks.forEach(bunk => {
                 fillBlock(
                     {
@@ -332,14 +339,14 @@
                 );
             });
 
-            // Apply strict field veto
-            if (vetoField) {
-                writeLeagueReservationVeto(vetoField, {
+            // LOCK ALL FIELDS
+            lockedFields.forEach(f => {
+                writeLeagueReservationVeto(f, {
                     divName: group.divName,
                     startTime: group.startTime,
                     endTime: group.endTime
                 });
-            }
+            });
         });
     };
 
