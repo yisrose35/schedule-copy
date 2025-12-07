@@ -533,7 +533,23 @@
     // registerSingleSlotUsage — Enforce sharable caps and usage logs
     // -------------------------------------------------------------------------
     function registerSingleSlotUsage(slotIndex, fieldName, divName, bunkName, activityName, fieldUsageBySlot, activityProperties) {
-        if (!fieldName || !activityProperties[fieldName]) return;
+       if (!fieldName) return;
+
+// 🔥 SAFETY PATCH: auto-create properties for missing fields
+if (!activityProperties[fieldName]) {
+    activityProperties[fieldName] = {
+        available: true,
+        sharable: false,
+        sharableWith: { type: "not_sharable", capacity: 1 },
+        allowedDivisions: [],
+        transition: null,
+        preferences: null,
+        limitUsage: null,
+        timeRules: [],
+        minDurationMin: 0
+    };
+}
+
 
         fieldUsageBySlot[slotIndex] ??= {};
         const usage = fieldUsageBySlot[slotIndex][fieldName] ?? { count: 0, divisions: [], bunks: {} };
