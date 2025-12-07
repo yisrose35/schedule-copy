@@ -8,7 +8,7 @@
 // - Updated league detection
 // - Validated transition/buffer integration
 // - Safe fieldUsage tracking
-// - 100% compatible with scheduler_core_utils.js + loader_v3
+// - FIXED: Accepts 'activity', 'sports', 'special' types as Schedulable Slots
 // ============================================================================
 
 (function () {
@@ -268,6 +268,9 @@
         // 5 — Collect schedulable blocks
         const schedulableSlotBlocks = [];
 
+        // Valid types that should trigger the Generator (Optimizer)
+        const GENERATOR_TYPES = ["slot", "activity", "sports", "special", "league", "specialty_league"];
+
         manualSkeleton.forEach(item => {
             const divName = item.division;
             const bunkList = divisions[divName]?.bunks || [];
@@ -289,8 +292,10 @@
             const trans = Utils.getTransitionRules(finalName, activityProperties);
             const hasBuffer = (trans.preMin + trans.postMin) > 0;
 
-            // ----- Manual pinned fields (no longer raw write)
-            if ((item.type === "pinned" || !isGenerated) && item.type !== "smart" && !hasBuffer) {
+            const isSchedulable = GENERATOR_TYPES.includes(item.type);
+
+            // ----- Manual pinned fields (if NOT schedulable type)
+            if ((item.type === "pinned" || !isGenerated) && !isSchedulable && item.type !== "smart" && !hasBuffer) {
                 if (disabledFields.includes(finalName) || disabledSpecials.includes(finalName)) return;
 
                 bunkList.forEach(b => {
@@ -358,7 +363,8 @@
             }
 
             // ----- Normal block (generated or buffered)
-            if ((item.type === "slot" && isGenerated) || hasBuffer) {
+            // UPDATED: Now accepts 'activity', 'sports', 'special', etc.
+            if ((isSchedulable && isGenerated) || hasBuffer) {
                 bunkList.forEach(b => {
                     schedulableSlotBlocks.push({
                         divName,
