@@ -1382,8 +1382,7 @@ window.dailySkeletonForLoader = dailyOverrideSkeleton;
             disabledSpecials: dailyData.overrides?.disabledSpecials || [],
             bunkActivityOverrides: dailyData.bunkActivityOverrides || []
         };
-        // Load the UI's working copy of the skeleton
-        loadDailySkeleton();
+       
 
         container.innerHTML = `
             <style>
