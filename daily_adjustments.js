@@ -137,46 +137,46 @@
     // SKELETON DATA MANAGEMENT
     // ==========================================================================
     function loadDailySkeleton() {
-    const daily = window.loadCurrentDailyData?.() || {};
+        const daily = window.loadCurrentDailyData?.() || {};
+        
+        // 1. If we have ALREADY edited the skeleton for this specific day, load that.
+        if (Array.isArray(daily.manualSkeleton) && daily.manualSkeleton.length > 0) {
+            dailyOverrideSkeleton = JSON.parse(JSON.stringify(daily.manualSkeleton));
+            return;
+        }
 
-    // 1. If user already edited today's skeleton → use it.
-    if (Array.isArray(daily.manualSkeleton) && daily.manualSkeleton.length > 0) {
-        dailyOverrideSkeleton = JSON.parse(JSON.stringify(daily.manualSkeleton));
-        return;
+        // 2. Otherwise, look for a standard template.
+        const global = window.loadGlobalSettings?.() || {};
+        const app1 = global.app1 || {};
+        const skeletons = app1.savedSkeletons || {};
+        const assign = app1.skeletonAssignments || {};
+
+        const dateStr = window.currentScheduleDate || "";
+        const [yy, mm, dd] = dateStr.split("-").map(Number);
+        let day = 0;
+        if (yy && mm && dd) day = new Date(yy, mm - 1, dd).getDay();
+
+        const dayName = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][day];
+
+        let templateName = assign[dayName] || assign["Default"];
+        
+        // 3. Try loading the assigned template (e.g. "Monday Schedule")
+        if (templateName && skeletons[templateName]) {
+            dailyOverrideSkeleton = JSON.parse(JSON.stringify(skeletons[templateName]));
+            return;
+        }
+
+        // 4. FALLBACK: Load the "Master Skeleton" from the main app state
+        // This ensures the grid isn't empty if the user hasn't set up templates yet.
+        if (Array.isArray(app1.manualSkeleton) && app1.manualSkeleton.length > 0) {
+            console.log("Daily Adjustments: No specific daily template found, using Global Master Skeleton.");
+            dailyOverrideSkeleton = JSON.parse(JSON.stringify(app1.manualSkeleton));
+            return;
+        }
+
+        // 5. If absolutely nothing exists, start empty.
+        dailyOverrideSkeleton = [];
     }
-
-    // 2. Load global templates
-    const settings = window.loadGlobalSettings?.() || {};
-    const app1 = settings.app1 || {};
-    const skeletons = window.getSavedSkeletons?.() || app1.savedSkeletons || {};
-    const assignments = window.getSkeletonAssignments?.() || app1.skeletonAssignments || {};
-
-    // 3. Determine today → find assigned template
-    const dateStr = window.currentScheduleDate || "";
-    const [yy, mm, dd] = dateStr.split("-").map(Number);
-    let dow = 0;
-    if (yy && mm && dd) dow = new Date(yy, mm - 1, dd).getDay();
-
-    const dayName = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][dow];
-
-    const templateName = assignments[dayName] || assignments["Default"];
-
-    // 4. If template assigned → load it
-    if (templateName && skeletons[templateName]) {
-        dailyOverrideSkeleton = JSON.parse(JSON.stringify(skeletons[templateName]));
-        return;
-    }
-
-    // 5. If no assignment → load first saved skeleton as fallback
-    const first = Object.keys(skeletons)[0];
-    if (first && skeletons[first]) {
-        dailyOverrideSkeleton = JSON.parse(JSON.stringify(skeletons[first]));
-        return;
-    }
-
-    // 6. Last fallback → empty
-    dailyOverrideSkeleton = [];
-}
 
     function saveDailySkeleton() {
         window.saveCurrentDailyData?.("manualSkeleton", dailyOverrideSkeleton);
@@ -1395,10 +1395,16 @@
                     <h2 style="margin:0 0 5px 0; color:#0056b3;">Daily Adjustments for ${window.currentScheduleDate || 'Today'}</h2>
                     <p style="margin:0;font-size:0.9em;color:#555;">1. Define blocks, 2. Add overrides, 3. Run the optimizer.</p>
                 </div>
-                <button id="run-optimizer-btn"
-                        style="background:#28a745;color:white;padding:12px 20px;font-size:1.2em;border:none;border-radius:5px;cursor:pointer;box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
-                    Run Optimizer
-                </button>
+                
+                <div style="display:flex; gap:10px; align-items:center;">
+                    <select id="skeleton-loader-select" style="padding:10px; border:1px solid #ccc; border-radius:5px; cursor:pointer; font-size:1em;">
+                        <option value="">-- Load Saved Skeleton --</option>
+                    </select>
+                    <button id="run-optimizer-btn"
+                            style="background:#28a745;color:white;padding:12px 20px;font-size:1.2em;border:none;border-radius:5px;cursor:pointer;box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+                        Run Optimizer
+                    </button>
+                </div>
             </div>
 
             <div class="da-tabs-nav">
@@ -1446,6 +1452,35 @@
                 }
             };
         });
+
+        // Populate Skeleton Loader Dropdown
+        const skeletonSelect = document.getElementById("skeleton-loader-select");
+        const globalSettings = window.loadGlobalSettings?.() || {};
+        const savedSkeletons = globalSettings.app1?.savedSkeletons || {};
+
+        if (skeletonSelect) {
+            Object.keys(savedSkeletons).sort().forEach(name => {
+                const opt = document.createElement("option");
+                opt.value = name;
+                opt.textContent = name;
+                skeletonSelect.appendChild(opt);
+            });
+
+            skeletonSelect.onchange = () => {
+                const name = skeletonSelect.value;
+                if (!name || !savedSkeletons[name]) return;
+
+                if (confirm(`Replace current daily skeleton with "${name}"? This will overwrite unsaved changes.`)) {
+                    dailyOverrideSkeleton = JSON.parse(JSON.stringify(savedSkeletons[name]));
+                    saveDailySkeleton(); // Saves to current daily overrides
+                    renderGrid(document.getElementById("daily-skeleton-grid"));
+                    // Reset dropdown
+                    skeletonSelect.value = "";
+                } else {
+                    skeletonSelect.value = "";
+                }
+            };
+        }
 
         document.getElementById("run-optimizer-btn").onclick = runOptimizer;
 
