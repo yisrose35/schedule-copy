@@ -1046,7 +1046,7 @@
         });
     }
 
-    // =================================================================
+   // =================================================================
     // FINAL LOAD — SAFE EXPORTS
     // =================================================================
     window.loadLeagueGlobals = function () {
@@ -1057,6 +1057,8 @@
             console.error("League load error:", e);
         }
     };
-window.masterLeagues = leagues;
+    
+    // GCM FIX: Export the correct variable name
+    window.masterLeagues = leaguesByName; 
 
 })();
