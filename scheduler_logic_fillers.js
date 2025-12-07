@@ -1,12 +1,11 @@
 // ============================================================================
-// scheduler_logic_fillers.js (FULLY FIXED & SYNCED WITH 5-ARG canBlockFit)
+// scheduler_logic_fillers.js (FULLY FIXED & SYNCED)
 // ============================================================================
 //
-// - Correctly calls canBlockFit(block, fieldName, activityProperties, activityName, isLeague)
-// - Removes ALL uses of fieldUsageBySlot inside canBlockFit
-// - Removes all invalid 6-arg calls
-// - Ensures consistent fieldLabeling
-// - Ensures SmartTiles + General/Special/Sport flows work
+// - Aligns arguments EXACTLY with scheduler_core_main.js
+// - Passes fieldUsageBySlot to canBlockFit (Fixes validation)
+// - Corrects 6-argument call to canBlockFit
+// - Ensures proper fallback if no activities match
 // ============================================================================
 
 (function () {
@@ -93,17 +92,18 @@
     window.findBestSpecial = function (
         block,
         allActivities,
-        yesterdayHistory,
-        activityProperties,
-        rotationHistory,
-        historicalCounts
+        fieldUsageBySlot,   // Correct Arg 3
+        yesterdayHistory,   // Correct Arg 4
+        activityProperties, // Correct Arg 5
+        rotationHistory,    // Correct Arg 6
+        historicalCounts    // Correct Arg 7
     ) {
         const specials = allActivities
-            .filter(a => a.type === 'special')
+            .filter(a => a.type === 'Special' || a.type === 'special')
             .map(a => ({
-                field: a.field,
+                field: a.name, // Usually specials don't have fields, the name IS the field
                 sport: null,
-                _activity: a.field
+                _activity: a.name
             }));
 
         const bunkHist = rotationHistory?.bunks?.[block.bunk] || {};
@@ -112,11 +112,12 @@
         const available = specials.filter(pick => {
             const actName = pick._activity;
 
-            // --- timeline/capacity check (correct 5-arg form) ---
+            // --- timeline/capacity check (Fixed 6-arg call) ---
             if (!window.SchedulerCoreUtils.canBlockFit(
                 block,
                 fieldLabel(pick.field),
                 activityProperties,
+                fieldUsageBySlot, // PASSED CORRECTLY
                 actName,
                 false
             )) {
@@ -143,27 +144,38 @@
     window.findBestSportActivity = function (
         block,
         allActivities,
-        yesterdayHistory,
-        activityProperties,
-        rotationHistory,
-        historicalCounts
+        fieldUsageBySlot,   // Correct Arg 3
+        yesterdayHistory,   // Correct Arg 4
+        activityProperties, // Correct Arg 5
+        rotationHistory,    // Correct Arg 6
+        historicalCounts    // Correct Arg 7
     ) {
+        // Look for things marked 'field' (Auto-discovered sports)
         const sports = allActivities
-            .filter(a => a.type === 'field')
-            .map(a => ({
-                field: a.field,
-                sport: a.sport,
-                _activity: a.sport
-            }));
+            .filter(a => a.type === 'field' || a.type === 'sport')
+            .flatMap(a => {
+                // Expand to allowed fields
+                const fields = a.allowedFields || [a.name];
+                return fields.map(f => ({
+                    field: f,
+                    sport: a.name,
+                    _activity: a.name
+                }));
+            });
 
         const bunkHist = rotationHistory?.bunks?.[block.bunk] || {};
         const doneToday = getGeneralActivitiesDoneToday(block.bunk);
 
         const available = sports.filter(pick => {
+            
+            // Validate field exists in properties
+            if(!activityProperties[fieldLabel(pick.field)]) return false;
+
             if (!window.SchedulerCoreUtils.canBlockFit(
                 block,
                 fieldLabel(pick.field),
                 activityProperties,
+                fieldUsageBySlot, // PASSED CORRECTLY
                 pick._activity,
                 false
             )) return false;
@@ -182,16 +194,33 @@
         block,
         allActivities,
         h2hActivities,
-        yesterdayHistory,
-        activityProperties,
-        rotationHistory,
-        historicalCounts
+        fieldUsageBySlot,   // Correct Arg 4
+        yesterdayHistory,   // Correct Arg 5
+        activityProperties, // Correct Arg 6
+        rotationHistory,    // Correct Arg 7
+        historicalCounts    // Correct Arg 8
     ) {
-        const picks = allActivities.map(a => ({
-            field: a.field,
-            sport: a.sport,
-            _activity: a.sport || a.field
-        }));
+        // Combine Sports + Specials
+        const picks = [];
+        
+        allActivities.forEach(a => {
+            if(a.type === 'Special' || a.type === 'special') {
+                picks.push({
+                    field: a.name,
+                    sport: null,
+                    _activity: a.name
+                });
+            } else if (a.type === 'field' || a.type === 'sport') {
+                const fields = a.allowedFields || [a.name];
+                fields.forEach(f => {
+                    picks.push({
+                        field: f,
+                        sport: a.name,
+                        _activity: a.name
+                    });
+                });
+            }
+        });
 
         const bunkHist = rotationHistory?.bunks?.[block.bunk] || {};
         const doneToday = getGeneralActivitiesDoneToday(block.bunk);
@@ -199,11 +228,15 @@
         const available = picks.filter(pick => {
             const actName = pick._activity;
 
+            // skip if undefined property
+            if(!activityProperties[fieldLabel(pick.field)]) return false;
+
             // timeline/capacity check
             if (!window.SchedulerCoreUtils.canBlockFit(
                 block,
                 fieldLabel(pick.field),
                 activityProperties,
+                fieldUsageBySlot, // PASSED CORRECTLY
                 actName,
                 false
             )) return false;
@@ -221,6 +254,7 @@
 
         const sorted = sortPicksByFreshness(available, bunkHist, block.divName, activityProperties);
 
+        // Fallback to "Free" if nothing fits
         return sorted[0] || { field: "Free", sport: null, _activity: "Free" };
     };
 
