@@ -9,12 +9,13 @@
 // - Validated transition/buffer integration
 // - Safe fieldUsage tracking
 // - FIXED: Accepts 'activity', 'sports', 'special' types as Schedulable Slots
+// - FIXED: Logic inversion bug that prevented generating any schedule
 // ============================================================================
 
 (function () {
     'use strict';
 
-    const TRANSITION_TYPE = window.TRANSITION_TYPE;
+    const TRANSITION_TYPE = window.TRANSITION_TYPE || "Transition/Buffer";
 
     // -------------------------------------------------------------------------
     // Normalizers for generated event types
@@ -507,7 +508,17 @@
             const slots = block.slots;
             if (!slots || slots.length === 0) continue;
 
-            if (window.scheduleAssignments[block.bunk][slots[0]]?._activity !== TRANSITION_TYPE) {
+            // *** FIXED LOGIC ***
+            // We check the first slot of the block.
+            // If it is occupied (truthy) AND that occupation is NOT a transition, we skip.
+            // This means:
+            // - If it is undefined/null (Empty) -> Proceed (Don't skip)
+            // - If it is "Transition" -> Proceed (Don't skip, we can merge)
+            // - If it is "Sports" -> Skip (Already filled)
+            
+            const existingSlot = window.scheduleAssignments[block.bunk][slots[0]];
+
+            if (existingSlot && existingSlot._activity !== TRANSITION_TYPE) {
                 continue;
             }
 
@@ -521,7 +532,6 @@
                     yesterdayHistory,
                     activityProperties,
                     rotationHistory,
-                    divisions,
                     historicalCounts
                 );
             } else if (/sport/i.test(block.event)) {
@@ -532,7 +542,6 @@
                     yesterdayHistory,
                     activityProperties,
                     rotationHistory,
-                    divisions,
                     historicalCounts
                 );
             }
@@ -546,7 +555,6 @@
                     yesterdayHistory,
                     activityProperties,
                     rotationHistory,
-                    divisions,
                     historicalCounts
                 );
             }
@@ -658,33 +666,3 @@
 
         return true;
     };
-
-    // -------------------------------------------------------------------------
-    // registerSingleSlotUsage
-    // -------------------------------------------------------------------------
-    function registerSingleSlotUsage(slotIndex, fieldName, divName, bunkName, activityName, fieldUsageBySlot, activityProperties) {
-        if (!fieldName || !window.allSchedulableNames?.includes(fieldName)) return;
-
-        fieldUsageBySlot[slotIndex] ??= {};
-        const usage = fieldUsageBySlot[slotIndex][fieldName] ?? {
-            count: 0,
-            divisions: [],
-            bunks: {}
-        };
-
-        const props = activityProperties[fieldName];
-        const cap =
-            props?.sharableWith?.capacity ??
-            (props?.sharable ? 2 : 1);
-
-        if (usage.count < cap) {
-            usage.count++;
-            usage.bunks[bunkName] = activityName || fieldName;
-            if (divName && !usage.divisions.includes(divName)) usage.divisions.push(divName);
-            fieldUsageBySlot[slotIndex][fieldName] = usage;
-        }
-    }
-
-    window.registerSingleSlotUsage = registerSingleSlotUsage;
-
-})();
