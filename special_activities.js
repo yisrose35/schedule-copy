@@ -988,5 +988,6 @@ function createLimitChip(text, active) {
 }
 
 window.initSpecialActivitiesTab = initSpecialActivitiesTab;
+window.specialActivities = specialActivities;
 
 })();
