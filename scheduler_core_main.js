@@ -666,3 +666,33 @@
 
         return true;
     };
+
+    // -------------------------------------------------------------------------
+    // registerSingleSlotUsage
+    // -------------------------------------------------------------------------
+    function registerSingleSlotUsage(slotIndex, fieldName, divName, bunkName, activityName, fieldUsageBySlot, activityProperties) {
+        if (!fieldName || !window.allSchedulableNames?.includes(fieldName)) return;
+
+        fieldUsageBySlot[slotIndex] ??= {};
+        const usage = fieldUsageBySlot[slotIndex][fieldName] ?? {
+            count: 0,
+            divisions: [],
+            bunks: {}
+        };
+
+        const props = activityProperties[fieldName];
+        const cap =
+            props?.sharableWith?.capacity ??
+            (props?.sharable ? 2 : 1);
+
+        if (usage.count < cap) {
+            usage.count++;
+            usage.bunks[bunkName] = activityName || fieldName;
+            if (divName && !usage.divisions.includes(divName)) usage.divisions.push(divName);
+            fieldUsageBySlot[slotIndex][fieldName] = usage;
+        }
+    }
+
+    window.registerSingleSlotUsage = registerSingleSlotUsage;
+
+})();
