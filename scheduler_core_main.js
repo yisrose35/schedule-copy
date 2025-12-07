@@ -1,70 +1,71 @@
 // ============================================================================
-// scheduler_core_main.js
-// PART 3 of 3: THE ORCHESTRATOR (Main Entry)
+// scheduler_core_main.js — FINAL GCM VERSION
+// PART 3 OF 3 — THE ORCHESTRATOR
 //
-// UPDATED:
-// - Added CONSOLE LOGGING for the main loop.
-// - Added FALLBACK to block.slots if time calculation fails in fillBlock.
-// - Ensures data integrity before running.
+// Fully compatible with:
+//   • Loader v3
+//   • Utils v3 (new canBlockFit, transitions, slot mapping)
+//   • Fillers v3 (Fairness-based Sports Slot, Hybrid model, Specials-as-fields)
+//   • Leagues engine (regular + specialty)
+//   • Smart Tiles (ON)
+//   • Total Solver Engine (backtracking)
 // ============================================================================
 
 (function () {
     'use strict';
 
     const TRANSITION_TYPE = window.TRANSITION_TYPE || "Transition/Buffer";
+    const Utils = () => window.SchedulerCoreUtils;
 
     // -------------------------------------------------------------------------
-    // Normalizers
-    // -------------------------------------------------------------------------
-    function normalizeGA(name) {
-        if (!name) return null;
-        const s = name.toLowerCase().replace(/\s+/g, '');
-        const keys = [
-            "generalactivity", "activity", "activty", "activyty",
-            "activityslot", "genactivity", "ga"
-        ];
-        return keys.some(k => s.includes(k)) ? "General Activity Slot" : null;
-    }
-
-    function normalizeLeague(name) {
-        if (!name) return null;
-        const s = name.toLowerCase().replace(/\s+/g, '');
-        const keys = ["leaguegame", "leaguegameslot", "lgame", "lg"];
-        return keys.some(k => s.includes(k)) ? "League Game" : null;
-    }
-
-    function normalizeSpecialtyLeague(name) {
-        if (!name) return null;
-        const s = name.toLowerCase().replace(/\s+/g, '');
-        const keys = [
-            "specialtyleague", "specialityleague", "specleague",
-            "specialleague", "sleauge"
-        ];
-        return keys.some(k => s.includes(k)) ? "Specialty League" : null;
-    }
-
-    // -------------------------------------------------------------------------
-    // Helper
+    // **Field Label Safe Wrapper**
     // -------------------------------------------------------------------------
     function fieldLabel(f) {
         return window.SchedulerCoreUtils.fieldLabel(f);
     }
 
     // -------------------------------------------------------------------------
-    // fillBlock — Buffer/Merge-Safe Inline Writer
+    // **Normalize Event Names**
     // -------------------------------------------------------------------------
-    function fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, isLeagueFill = false, activityProperties) {
-        const Utils = window.SchedulerCoreUtils;
+    function normalizeGA(name) {
+        if (!name) return null;
+        const s = name.toLowerCase().replace(/\s+/g, '');
+        return /(generalactivity|activityslot|genactivity|ga)/.test(s)
+            ? "General Activity Slot"
+            : null;
+    }
 
-        const fName = Utils.fieldLabel(pick.field);
-        const trans = Utils.getTransitionRules(fName, activityProperties);
+    function normalizeLeague(name) {
+        if (!name) return null;
+        const s = name.toLowerCase().replace(/\s+/g, '');
+        return /(leaguegame|leaguegameslot|lgame|lg)/.test(s)
+            ? "League Game"
+            : null;
+    }
 
+    function normalizeSpecialtyLeague(name) {
+        if (!name) return null;
+        const s = name.toLowerCase().replace(/\s+/g, '');
+        return /(specialtyleague|specialityleague|specleague|specialleague)/.test(s)
+            ? "Specialty League"
+            : null;
+    }
+
+    // -------------------------------------------------------------------------
+    // **fillBlock — SAFEST VERSION**
+    // Handles transitions, merging, and writing usage into fieldUsageBySlot
+    // -------------------------------------------------------------------------
+    function fillBlock(block, pick, fieldUsageBySlot, yesterdayHistory, isLeagueFill, activityProperties) {
+        const U = window.SchedulerCoreUtils;
+
+        const fName = fieldLabel(pick.field);
+        const trans = U.getTransitionRules(fName, activityProperties);
         const {
             blockStartMin,
             blockEndMin,
             effectiveStart,
             effectiveEnd
-        } = Utils.getEffectiveTimeRange(block, trans);
+        } = U.getEffectiveTimeRange(block, trans);
 
         const bunk = block.bunk;
         const zone = trans.zone;
@@ -75,7 +76,7 @@
         const firstSlotIndex = block.slots[0];
         const prevEntry = window.scheduleAssignments[bunk]?.[firstSlotIndex - 1];
 
-        // ----- Transition merge (pre) -----
+        // Transition Merging (Pre)
         if (writePre && firstSlotIndex > 0) {
             if (
                 prevEntry?._zone === zone &&
@@ -83,8 +84,9 @@
                 prevEntry?._transitionType === 'Post'
             ) {
                 writePre = false;
-                const slotsToWipe = Utils.findSlotsForRange(blockStartMin - trans.postMin, blockStartMin);
-                slotsToWipe.forEach(idx => {
+
+                const wipeSlots = U.findSlotsForRange(blockStartMin - trans.postMin, blockStartMin);
+                wipeSlots.forEach(idx => {
                     if (window.scheduleAssignments[bunk][idx]?._transitionType === "Post") {
                         window.scheduleAssignments[bunk][idx] = null;
                     }
@@ -94,7 +96,7 @@
 
         // ----- PRE BUFFER -----
         if (writePre) {
-            const preSlots = Utils.findSlotsForRange(blockStartMin, effectiveStart);
+            const preSlots = U.findSlotsForRange(blockStartMin, effectiveStart);
             preSlots.forEach((slotIndex, i) => {
                 window.scheduleAssignments[bunk][slotIndex] = {
                     field: TRANSITION_TYPE,
@@ -111,20 +113,16 @@
         }
 
         // ----- MAIN ACTIVITY -----
-        let mainSlots = Utils.findSlotsForRange(effectiveStart, effectiveEnd);
-        
-        // CRITICAL FALLBACK: If time calc fails to find slots, use the block's original slots
-        // This ensures *something* gets written even if minute-math is slightly off.
-        if (mainSlots.length === 0 && block.slots && block.slots.length > 0) {
-            // Only use fallback if no transition logic reduced the block size to zero
+        let mainSlots = U.findSlotsForRange(effectiveStart, effectiveEnd);
+
+        if (mainSlots.length === 0 && block.slots?.length > 0) {
             if (trans.preMin === 0 && trans.postMin === 0) {
                 mainSlots = block.slots;
-                // console.warn(`FillBlock: Used fallback slots for ${bunk} at ${block.startTime}`);
             }
         }
 
         if (mainSlots.length === 0) {
-             console.error(`FillBlock: NO SLOTS FOUND for ${bunk} at ${block.startTime}. Start: ${effectiveStart}, End: ${effectiveEnd}`);
+            console.error(`fillBlock: NO MAIN SLOTS for ${bunk}, f=${fName}`);
         }
 
         mainSlots.forEach((slotIndex, i) => {
@@ -143,7 +141,7 @@
                     _endTime: effectiveEnd
                 };
 
-                window.registerSingleSlotUsage(
+                registerSingleSlotUsage(
                     slotIndex,
                     fName,
                     block.divName,
@@ -157,7 +155,7 @@
 
         // ----- POST BUFFER -----
         if (writePost) {
-            const postSlots = Utils.findSlotsForRange(effectiveEnd, blockEndMin);
+            const postSlots = U.findSlotsForRange(effectiveEnd, blockEndMin);
             postSlots.forEach((slotIndex, i) => {
                 window.scheduleAssignments[bunk][slotIndex] = {
                     field: TRANSITION_TYPE,
@@ -177,16 +175,18 @@
     window.fillBlock = fillBlock;
 
     // -------------------------------------------------------------------------
-    // MAIN ENTRY
+    // MAIN ENTRYPOINT: runSkeletonOptimizer
     // -------------------------------------------------------------------------
     window.runSkeletonOptimizer = function (manualSkeleton, externalOverrides) {
-        console.log(">>> OPTIMIZER STARTED");
-        const Utils = window.SchedulerCoreUtils;
+        console.log(">>> OPTIMIZER START");
 
-        // 1 — Load from new loader
-        const config = Utils.loadAndFilterData();
-        window.activityProperties = config.activityProperties; 
-        window.unifiedTimes = []; 
+        const U = Utils();
+
+        // 1 — LOAD DATA
+        const config = U.loadAndFilterData();
+        window.activityProperties = config.activityProperties;
+        window.fieldUsageBySlot = {};
+        let fieldUsageBySlot = window.fieldUsageBySlot;
 
         const {
             divisions,
@@ -206,93 +206,88 @@
             historicalCounts,
             specialActivityNames,
             bunkMetaData,
-            dailyFieldAvailability,
-            masterZones
+            dailyFieldAvailability
         } = config;
 
         window.SchedulerCoreUtils._bunkMetaData = bunkMetaData;
         window.SchedulerCoreUtils._sportMetaData = config.sportMetaData || {};
 
-        window.fieldUsageBySlot = {};
-        let fieldUsageBySlot = window.fieldUsageBySlot;
-
-        // 2 — Build time grid
-        window.scheduleAssignments = {};
-        window.leagueAssignments = {};
-        
-        if (!manualSkeleton || manualSkeleton.length === 0) {
-            console.error(">>> OPTIMIZER ABORTED: Skeleton is empty.");
+        // 2 — BUILD TIME GRID
+        if (!manualSkeleton?.length) {
+            console.error("Empty skeleton, aborting.");
             return false;
         }
 
-        const timePoints = new Set([540, 960]); 
-
-        manualSkeleton.forEach(item => {
-            const s = Utils.parseTimeToMinutes(item.startTime);
-            const e = Utils.parseTimeToMinutes(item.endTime);
-            if (s != null) timePoints.add(s);
-            if (e != null) timePoints.add(e);
+        const points = new Set();
+        manualSkeleton.forEach(i => {
+            const s = U.parseTimeToMinutes(i.startTime);
+            const e = U.parseTimeToMinutes(i.endTime);
+            if (s != null) points.add(s);
+            if (e != null) points.add(e);
         });
 
-        const sorted = [...timePoints].sort((a, b) => a - b);
+        const sorted = [...points].sort((a, b) => a - b);
+        window.unifiedTimes = [];
 
         for (let i = 0; i < sorted.length - 1; i++) {
-            const start = sorted[i];
-            const end = sorted[i + 1];
-            if (end - start >= 5) {
+            const s = sorted[i], e = sorted[i + 1];
+            if (e - s >= 5) {
                 window.unifiedTimes.push({
-                    start: Utils.minutesToDate(start),
-                    end: Utils.minutesToDate(end),
-                    label: `${Utils.fmtTime(Utils.minutesToDate(start))} - ${Utils.fmtTime(Utils.minutesToDate(end))}`
+                    start: U.minutesToDate(s),
+                    end: U.minutesToDate(e),
+                    label: `${U.fmtTime(U.minutesToDate(s))} - ${U.fmtTime(U.minutesToDate(e))}`
                 });
             }
         }
 
-        if (window.unifiedTimes.length === 0) return false;
+        if (!window.unifiedTimes.length) {
+            console.error("No usable time slots");
+            return false;
+        }
 
-        // 3 — Empty schedule arrays
-        Object.keys(divisions).forEach(divName => {
-            (divisions[divName]?.bunks || []).forEach(b => {
-                window.scheduleAssignments[b] = new Array(window.unifiedTimes.length);
+        // 3 — INIT SCHEDULE ARRAYS
+        window.scheduleAssignments = {};
+        Object.keys(divisions).forEach(div => {
+            divisions[div]?.bunks?.forEach(bunk => {
+                window.scheduleAssignments[bunk] = new Array(window.unifiedTimes.length);
             });
         });
 
-        // 4 — Apply pinned bunk overrides
+        // 4 — APPLY PINNED OVERRIDES
         const bunkOverrides = window.loadCurrentDailyData?.().bunkActivityOverrides || [];
-        bunkOverrides.forEach(override => {
-            const fName = override.activity;
-            const startMin = Utils.parseTimeToMinutes(override.startTime);
-            const endMin = Utils.parseTimeToMinutes(override.endTime);
-            const slots = Utils.findSlotsForRange(startMin, endMin);
-            const bunk = override.bunk;
-            const divName = Object.keys(divisions).find(d => divisions[d].bunks.includes(bunk));
+        bunkOverrides.forEach(o => {
+            const fName = o.activity;
+            const sMin = U.parseTimeToMinutes(o.startTime);
+            const eMin = U.parseTimeToMinutes(o.endTime);
+            const slots = U.findSlotsForRange(sMin, eMin);
+
+            const divName = Object.keys(divisions)
+                .find(d => divisions[d]?.bunks?.includes(o.bunk));
             if (!divName) return;
-            if (slots.length > 0) {
-                fillBlock(
-                    { divName, bunk, startTime: startMin, endTime: endMin, slots },
-                    { field: fName, sport: null, _fixed: true, _activity: fName },
-                    fieldUsageBySlot, yesterdayHistory, false, activityProperties
-                );
-            }
+
+            fillBlock(
+                { divName, bunk: o.bunk, startTime: sMin, endTime: eMin, slots },
+                { field: fName, sport: null, _fixed: true, _activity: fName },
+                fieldUsageBySlot,
+                yesterdayHistory,
+                false,
+                activityProperties
+            );
         });
 
-        // 5 — Collect schedulable blocks
-        const schedulableSlotBlocks = [];
-        const GENERATOR_TYPES = ["slot", "activity", "sports", "special", "league", "specialty_league"];
+        // 5 — BUILD SCHEDULABLE BLOCKS
+        const schedulableBlocks = [];
+        const GEN_TYPES = ["slot", "activity", "sports", "special", "league", "specialty_league"];
 
         manualSkeleton.forEach(item => {
             const divName = item.division;
             const bunkList = divisions[divName]?.bunks || [];
-            
-            if (bunkList.length === 0) {
-                console.warn(`[SKIP] No bunks for division '${divName}'`);
-                return;
-            }
+            if (!bunkList.length) return;
 
-            const sMin = Utils.parseTimeToMinutes(item.startTime);
-            const eMin = Utils.parseTimeToMinutes(item.endTime);
-            const slots = Utils.findSlotsForRange(sMin, eMin);
-            if (slots.length === 0) return;
+            const sMin = U.parseTimeToMinutes(item.startTime);
+            const eMin = U.parseTimeToMinutes(item.endTime);
+            const slots = U.findSlotsForRange(sMin, eMin);
+            if (!slots.length) return;
 
             const normGA = normalizeGA(item.event);
             const normLg = normalizeLeague(item.event);
@@ -300,11 +295,12 @@
             const finalName = normGA || normLg || normSL || item.event;
 
             const isGenerated = /general|sport|special|league/i.test(finalName);
-            const trans = Utils.getTransitionRules(finalName, activityProperties);
+            const trans = U.getTransitionRules(finalName, activityProperties);
             const hasBuffer = (trans.preMin + trans.postMin) > 0;
-            const isSchedulable = GENERATOR_TYPES.includes(item.type);
+            const schedulable = GEN_TYPES.includes(item.type);
 
-            if ((item.type === "pinned" || !isGenerated) && !isSchedulable && item.type !== "smart" && !hasBuffer) {
+            // Pinned & static events
+            if ((item.type === "pinned" || !isGenerated) && !schedulable && item.type !== "smart" && !hasBuffer) {
                 if (disabledFields.includes(finalName) || disabledSpecials.includes(finalName)) return;
                 bunkList.forEach(b => {
                     fillBlock(
@@ -316,161 +312,235 @@
                 return;
             }
 
+            // Split blocks (swim/GA)
             if (item.type === "split") {
-                const midIdx = Math.ceil(bunkList.length / 2);
-                const top = bunkList.slice(0, midIdx);
-                const bottom = bunkList.slice(midIdx);
-                const halfSlots = Math.ceil(slots.length / 2);
-                const slotsA = slots.slice(0, halfSlots);
-                const slotsB = slots.slice(halfSlots);
-                const swimLabel = "Swim";
-                const gaLabel = normalizeGA(item.subEvents?.[1]?.event) || "General Activity Slot";
+                const mid = Math.ceil(bunkList.length / 2);
+                const top = bunkList.slice(0, mid);
+                const bottom = bunkList.slice(mid);
 
-                function pushGen(list, s, ev) {
-                    const st = Utils.getBlockTimeRange({ slots: s }).blockStartMin;
-                    const en = Utils.getBlockTimeRange({ slots: s }).blockEndMin;
-                    list.forEach(b => schedulableSlotBlocks.push({ divName, bunk: b, event: ev, startTime: st, endTime: en, slots: s }));
+                const half = Math.ceil(slots.length / 2);
+                const sA = slots.slice(0, half);
+                const sB = slots.slice(half);
+
+                const swim = "Swim";
+                const ga = normalizeGA(item.subEvents?.[1]?.event) || "General Activity Slot";
+
+                function addGen(list, s, ev) {
+                    const br = U.getBlockTimeRange({ slots: s });
+                    schedulableBlocks.push({
+                        divName, bunk: null, event: ev,
+                        startTime: br.blockStartMin, endTime: br.blockEndMin, slots: s
+                    });
+                    list.forEach(bunk =>
+                        schedulableBlocks.push({
+                            divName, bunk, event: ev,
+                            startTime: br.blockStartMin, endTime: br.blockEndMin, slots: s
+                        })
+                    );
                 }
+
                 function pin(list, s, ev) {
-                    const st = Utils.getBlockTimeRange({ slots: s }).blockStartMin;
-                    const en = Utils.getBlockTimeRange({ slots: s }).blockEndMin;
-                    list.forEach(b => fillBlock({ divName, bunk: b, startTime: st, endTime: en, slots: s }, { field: ev, sport: null, _fixed: true, _activity: ev }, fieldUsageBySlot, yesterdayHistory, false, activityProperties));
+                    const br = U.getBlockTimeRange({ slots: s });
+                    list.forEach(bunk =>
+                        fillBlock(
+                            { divName, bunk, startTime: br.blockStartMin, endTime: br.blockEndMin, slots: s },
+                            { field: ev, sport: null, _fixed: true, _activity: ev },
+                            fieldUsageBySlot,
+                            yesterdayHistory,
+                            false,
+                            activityProperties
+                        )
+                    );
                 }
-                pin(top, slotsA, swimLabel);
-                pushGen(bottom, slotsA, gaLabel);
-                pushGen(top, slotsB, gaLabel);
-                pin(bottom, slotsB, swimLabel);
+
+                pin(top, sA, swim);
+                addGen(bottom, sA, ga);
+
+                addGen(top, sB, ga);
+                pin(bottom, sB, swim);
                 return;
             }
 
-            if ((isSchedulable && isGenerated) || hasBuffer) {
-                bunkList.forEach(b => {
-                    schedulableSlotBlocks.push({
-                        divName, bunk: b, event: finalName, startTime: sMin, endTime: eMin, slots
+            // Normal schedulable block
+            if (schedulable || hasBuffer) {
+                bunkList.forEach(bunk => {
+                    schedulableBlocks.push({
+                        divName,
+                        bunk,
+                        event: finalName,
+                        startTime: sMin,
+                        endTime: eMin,
+                        slots
                     });
                 });
             }
         });
 
-        console.log(`Schedulable Slot Blocks Count: ${schedulableSlotBlocks.length}`);
+        console.log(`Schedulable Blocks = ${schedulableBlocks.length}`);
 
-        // 6 — Smart tiles
-        const smartJobs = window.SmartLogicAdapter?.preprocessSmartTiles?.(manualSkeleton, externalOverrides, masterSpecials) || [];
+        // 6 — SMART TILES
+        const smartJobs = window.SmartLogicAdapter?.preprocessSmartTiles?.(
+            manualSkeleton,
+            externalOverrides,
+            masterSpecials
+        ) || [];
+
         smartJobs.forEach(job => {
             const divName = job.division;
             const bunkList = divisions[divName]?.bunks || [];
-            if (bunkList.length === 0) return;
+            if (!bunkList.length) return;
 
             const result = window.SmartLogicAdapter.generateAssignments(
-                bunkList, job, historicalCounts, specialActivityNames, activityProperties, null, dailyFieldAvailability, yesterdayHistory
+                bunkList,
+                job,
+                historicalCounts,
+                specialActivityNames,
+                activityProperties,
+                null,
+                dailyFieldAvailability,
+                yesterdayHistory
             );
 
             const { block1Assignments, block2Assignments } = result || {};
 
             function pushGen(bunk, ev, st, en) {
-                const slots = Utils.findSlotsForRange(st, en);
-                schedulableSlotBlocks.push({ divName, bunk, event: ev, startTime: st, endTime: en, slots, fromSmartTile: true });
+                const slots = U.findSlotsForRange(st, en);
+                schedulableBlocks.push({
+                    divName,
+                    bunk,
+                    event: ev,
+                    startTime: st,
+                    endTime: en,
+                    slots,
+                    fromSmartTile: true
+                });
             }
 
-            const sA = Utils.findSlotsForRange(job.blockA.startMin, job.blockA.endMin);
-            Object.entries(block1Assignments || {}).forEach(([b, act]) => {
-                const L = act.toLowerCase();
-                if (L.includes("sport")) pushGen(b, "Sports Slot", job.blockA.startMin, job.blockA.endMin);
-                else if (L.includes("special")) pushGen(b, "Special Activity Slot", job.blockA.startMin, job.blockA.endMin);
-                else if (L.includes("general")) pushGen(b, "General Activity Slot", job.blockA.startMin, job.blockA.endMin);
-                else fillBlock({ divName, bunk: b, startTime: job.blockA.startMin, endTime: job.blockA.endMin, slots: sA }, { field: act, sport: null, _fixed: true, _activity: act }, fieldUsageBySlot, yesterdayHistory, false, activityProperties);
+            // Block A
+            const sA = U.findSlotsForRange(job.blockA.startMin, job.blockA.endMin);
+            Object.entries(block1Assignments || {}).forEach(([bunk, ev]) => {
+                const L = ev.toLowerCase();
+                if (L.includes("sport")) pushGen(bunk, "Sports Slot", job.blockA.startMin, job.blockA.endMin);
+                else if (L.includes("special")) pushGen(bunk, "Special Activity Slot", job.blockA.startMin, job.blockA.endMin);
+                else if (L.includes("general")) pushGen(bunk, "General Activity Slot", job.blockA.startMin, job.blockA.endMin);
+                else {
+                    fillBlock(
+                        { divName, bunk, startTime: job.blockA.startMin, endTime: job.blockA.endMin, slots: sA },
+                        { field: ev, sport: null, _fixed: true, _activity: ev },
+                        fieldUsageBySlot,
+                        yesterdayHistory,
+                        false,
+                        activityProperties
+                    );
+                }
             });
 
+            // Block B
             if (job.blockB) {
-                const sB = Utils.findSlotsForRange(job.blockB.startMin, job.blockB.endMin);
-                Object.entries(block2Assignments || {}).forEach(([b, act]) => {
-                    const L = act.toLowerCase();
-                    if (L.includes("sport")) pushGen(b, "Sports Slot", job.blockB.startMin, job.blockB.endMin);
-                    else if (L.includes("special")) pushGen(b, "Special Activity Slot", job.blockB.startMin, job.blockB.endMin);
-                    else if (L.includes("general")) pushGen(b, "General Activity Slot", job.blockB.startMin, job.blockB.endMin);
-                    else fillBlock({ divName, bunk: b, startTime: job.blockB.startMin, endTime: job.blockB.endMin, slots: sB }, { field: act, sport: null, _fixed: true, _activity: act }, fieldUsageBySlot, yesterdayHistory, false, activityProperties);
+                const sB = U.findSlotsForRange(job.blockB.startMin, job.blockB.endMin);
+                Object.entries(block2Assignments || {}).forEach(([bunk, ev]) => {
+                    const L = ev.toLowerCase();
+                    if (L.includes("sport")) pushGen(bunk, "Sports Slot", job.blockB.startMin, job.blockB.endMin);
+                    else if (L.includes("special")) pushGen(bunk, "Special Activity Slot", job.blockB.startMin, job.blockB.endMin);
+                    else if (L.includes("general")) pushGen(bunk, "General Activity Slot", job.blockB.startMin, job.blockB.endMin);
+                    else {
+                        fillBlock(
+                            { divName, bunk, startTime: job.blockB.startMin, endTime: job.blockB.endMin, slots: sB },
+                            { field: ev, sport: null, _fixed: true, _activity: ev },
+                            fieldUsageBySlot,
+                            yesterdayHistory,
+                            false,
+                            activityProperties
+                        );
+                    }
                 });
             }
         });
 
-        // 7 — Leagues
-        const leagueContext = {
-            schedulableSlotBlocks, fieldUsageBySlot, activityProperties, masterSpecialtyLeagues,
-            disabledSpecialtyLeagues, masterLeagues, disabledLeagues, rotationHistory,
-            yesterdayHistory, divisions, fieldsBySport, dailyLeagueSportsUsage: {}, fillBlock
+        // 7 — LEAGUES
+        const leagueCtx = {
+            schedulableSlotBlocks: schedulableBlocks,
+            fieldUsageBySlot,
+            activityProperties,
+            masterSpecialtyLeagues,
+            disabledSpecialtyLeagues,
+            masterLeagues,
+            disabledLeagues,
+            rotationHistory,
+            yesterdayHistory,
+            divisions,
+            fieldsBySport,
+            dailyLeagueSportsUsage: {},
+            fillBlock
         };
-        window.SchedulerCoreLeagues?.processSpecialtyLeagues?.(leagueContext);
-        window.SchedulerCoreLeagues?.processRegularLeagues?.(leagueContext);
 
-       // 8 — Fill remaining (non-leagues) using the Total Solver Engine
-        // -----------------------------------------------------------------
+        window.SchedulerCoreLeagues?.processSpecialtyLeagues?.(leagueCtx);
+        window.SchedulerCoreLeagues?.processRegularLeagues?.(leagueCtx);
 
-        // 1. Filter down to *only* unassigned General, Sport, and Special blocks.
-        const remainingActivityBlocks = schedulableSlotBlocks
+        // 8 — FILL NON-LEAGUE WITH TOTAL SOLVER
+        const remaining = schedulableBlocks
             .filter(b => !/league/i.test(b.event) && !b.processed)
-            .filter(block => {
-                const slots = block.slots;
-                if (!slots || slots.length === 0) return false;
-                const existingSlot = window.scheduleAssignments[block.bunk]?.[slots[0]];
-                // Only include if the slot is empty, or only contains a transition buffer.
-                return !existingSlot || existingSlot._activity === TRANSITION_TYPE;
+            .filter(b => {
+                const s0 = window.scheduleAssignments[b.bunk]?.[b.slots[0]];
+                return !s0 || s0._isTransition;
             })
-            // Mark them as non-league for the solver's sorting logic.
-            .map(b => ({ ...b, _isLeague: false })); 
+            .map(b => ({ ...b, _isLeague: false }));
 
-        console.log(`>>> STARTING TOTAL SOLVER: ${remainingActivityBlocks.length} activity blocks to fill.`);
+        console.log(`>>> TOTAL SOLVER START: ${remaining.length} blocks`);
 
         window.__transitionUsage = {};
-        
-        if (window.totalSolverEngine && remainingActivityBlocks.length > 0) {
-            // The existing Solver.solveSchedule handles empty league blocks gracefully 
-            // and proceeds to solve the remaining activity blocks using backtracking.
-            // Assignments (including 'Free' fallbacks) are handled internally by the solver's fillBlock calls.
-            window.totalSolverEngine.solveSchedule(remainingActivityBlocks, config);
-            
-        } else {
-            console.log("No activity blocks remaining for Total Solver.");
+
+        if (window.totalSolverEngine && remaining.length > 0) {
+            window.totalSolverEngine.solveSchedule(remaining, config);
         }
 
-        // 9 — Rotation history update
+        // 9 — UPDATE ROTATION HISTORY
         try {
-            const newHistory = { ...rotationHistory };
-            const timestamp = Date.now();
-            Object.keys(divisions).forEach(divName => {
-                divisions[divName].bunks.forEach(b => {
-                    let lastActivity = null;
-                    for (const entry of window.scheduleAssignments[b] || []) {
-                        if (entry?._activity && entry._activity !== TRANSITION_TYPE && entry._activity !== lastActivity) {
-                            lastActivity = entry._activity;
-                            newHistory.bunks ??= {};
-                            newHistory.bunks[b] ??= {};
-                            newHistory.bunks[b][entry._activity] = timestamp;
+            const newHist = { ...rotationHistory };
+            const stamp = Date.now();
+
+            Object.keys(divisions).forEach(div => {
+                divisions[div].bunks.forEach(bunk => {
+                    let last = null;
+                    for (const entry of window.scheduleAssignments[bunk] || []) {
+                        if (entry?._activity && entry._activity !== TRANSITION_TYPE && entry._activity !== last) {
+                            last = entry._activity;
+                            newHist.bunks ??= {};
+                            newHist.bunks[bunk] ??= {};
+                            newHist.bunks[bunk][entry._activity] = stamp;
                         } else if (entry && !entry.continuation && entry._activity !== TRANSITION_TYPE) {
-                            lastActivity = null;
+                            last = null;
                         }
                     }
                 });
             });
-            window.saveRotationHistory?.(newHistory);
-        } catch (e) {
-            console.error("Rotation history update failed:", e);
+
+            window.saveRotationHistory?.(newHist);
+        } catch (err) {
+            console.error("Rotation history update failed:", err);
         }
 
-        // 10 — Save + update UI
+        // 10 — SAVE + REFRESH UI
         window.saveCurrentDailyData?.("unifiedTimes", window.unifiedTimes);
         window.updateTable?.();
         window.saveSchedule?.();
-        console.log(">>> OPTIMIZER FINISHED");
 
+        console.log(">>> OPTIMIZER COMPLETE");
         return true;
     };
 
+    // -------------------------------------------------------------------------
+    // registerSingleSlotUsage — Enforce sharable caps and usage logs
+    // -------------------------------------------------------------------------
     function registerSingleSlotUsage(slotIndex, fieldName, divName, bunkName, activityName, fieldUsageBySlot, activityProperties) {
         if (!fieldName || !activityProperties[fieldName]) return;
+
         fieldUsageBySlot[slotIndex] ??= {};
         const usage = fieldUsageBySlot[slotIndex][fieldName] ?? { count: 0, divisions: [], bunks: {} };
+
         const props = activityProperties[fieldName];
         const cap = props?.sharableWith?.capacity ?? (props?.sharable ? 2 : 1);
+
         if (usage.count < cap) {
             usage.count++;
             usage.bunks[bunkName] = activityName || fieldName;
