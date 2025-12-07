@@ -1289,5 +1289,38 @@ window.saveGlobalSpecialActivities = (updatedActivities) => {
 };
 
 window.addDivisionBunk = addBunkToDivision;
+// ---------------------------------------------
+// EXPOSE MASTER APP1 OBJECT FOR THE SCHEDULER
+// ---------------------------------------------
+window.app1 = {
+    // core camp structural data
+    divisions,
+    bunks,
+    availableDivisions,
+
+    // schedule window (if global)
+    startTime: "9:00am",
+    endTime: "4:00pm",
+
+    // duration defaults (you must fill with your actual durations)
+    defaultDurations: {
+        "General Activity": 60,
+        "Sports Slot": 60,
+        "Special Activity": 60,
+        "Swim": 60,
+        "League Game": 60,
+        "Specialty League": 60
+    },
+
+    // this is required for timeline building
+    increments: 30,
+
+    // if you store global activities (optional)
+    activities: window.getGlobalSpecialActivities?.() || [],
+
+    // metadata
+    bunkMetaData,
+    sportMetaData
+};
 
 })();
