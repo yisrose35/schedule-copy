@@ -7,6 +7,7 @@
 // - CRITICAL FIX: Loads Fields into 'activityProperties' so Fillers can validate them.
 // - Ensures allActivities list is complete so the solver has options.
 // - Added defensive checks to ensure data is loaded before processing.
+// - FORCE-INJECTS generic slot definitions to prevent "0 items" error.
 // ============================================================================
 
 (function () {
@@ -15,8 +16,6 @@
     // ------------------------------------------------------------------------
     // 0. SAFE GETTERS FOR app1 + GLOBALS
     // ------------------------------------------------------------------------
-    // We defer fetching these until loadAndFilterData is called to ensure
-    // global settings have been loaded.
     
     function getApp1Settings() {
         return (window.loadGlobalSettings?.() || {}).app1 || window.app1 || {};
@@ -75,14 +74,16 @@
             });
         }
         
-        // 4. Add generic slots if missing (to ensure properties exist for them)
+        // 4. FORCE-INJECT GENERIC SLOTS (The Fix for "0 items")
+        // These are the names used in your Skeleton. They MUST exist in properties.
         const generics = ["General Activity Slot", "Sports Slot", "Special Activity"];
         generics.forEach(genName => {
              if (!seenNames.has(genName)) {
                 list.push({
                     name: genName,
                     type: 'General',
-                    duration: 60 
+                    duration: 60,
+                    available: true
                 });
                 seenNames.add(genName);
             }
