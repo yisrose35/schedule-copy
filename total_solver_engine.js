@@ -1,5 +1,5 @@
 // ============================================================================
-// total_solver_engine.js (GCM PATCHED VERSION)
+// total_solver_engine.js (GCM DEBUG VERSION)
 // Backtracking Constraint Solver + League Engine
 // ----------------------------------------------------------------------------
 // FEATURES (Modern Architecture):
@@ -12,6 +12,7 @@
 // ✓ Clean modern design: no legacy scoring, no legacy history writes
 // ✓ FIXED: Field Collision Check in League Matchups
 // ✓ FIXED: Timeout Safety (Returns partial schedule instead of blank)
+// ✓ DEBUG: Logging enabled for candidate generation
 // ============================================================================
 
 (function () {
@@ -437,17 +438,7 @@
 
         return output;
     };
-// ... existing code ...
-    config.masterSpecials?.forEach(s => {
-        allCandidateOptions.push({ field: s.name, sport: null, activityName: s.name, type: "special" });
-    });
 
-    // === INSERT DEBUG LOG HERE ===
-    console.log("DEBUG: All Candidate Options:", allCandidateOptions);
-    // =============================
-
-    if (!window.leagueRoundState) window.leagueRoundState = {};
-    // ...
     // ============================================================================
     // ACTIVITY (NON-LEAGUE) SOLVER
     // ============================================================================
@@ -537,7 +528,7 @@
     };
 
     // ============================================================================
-    // MAIN SOLVER ENTRY (PATCHED)
+    // MAIN SOLVER ENTRY (PATCHED + DEBUG)
     // ============================================================================
 
     Solver.solveSchedule = function (allBlocks, config) {
@@ -559,6 +550,15 @@
         config.masterSpecials?.forEach(s => {
             allCandidateOptions.push({ field: s.name, sport: null, activityName: s.name, type: "special" });
         });
+
+        // =========================================================
+        // DEBUG: GCM DIAGNOSTIC LOG
+        // =========================================================
+        console.log("DEBUG: GCM ENGINE - Candidate Options Loaded:", allCandidateOptions);
+        if (allCandidateOptions.length === 0) {
+             console.error("DEBUG: CRITICAL - No candidate options found! Check masterFields.");
+        }
+        // =========================================================
 
         if (!window.leagueRoundState) window.leagueRoundState = {};
         if (!globalConfig.rotationHistory) globalConfig.rotationHistory = {};
