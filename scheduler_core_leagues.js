@@ -5,6 +5,8 @@
 // Updates in this version:
 // - INTERNAL FIELD CONFLICT FIX: Prevents multiple games in the same league
 //   from grabbing the same field in the same time slot.
+// - INTERFACE FIX: Calls canBlockFit with correct arguments (passing fieldUsage).
+// - STATE SYNC FIX: Specialty Leagues now properly register usage in fieldUsageBySlot.
 // - Smart Tiles preserved.
 // - Unified Time mapping preserved.
 // - Metadata (_h2h, _allMatchups) populated correctly.
@@ -86,7 +88,8 @@
             disabledSpecialtyLeagues,
             rotationHistory,
             yesterdayHistory,
-            fillBlock
+            fillBlock,
+            fieldUsageBySlot // Extract fieldUsageBySlot for correct state tracking
         } = context;
 
         // Collect all unprocessed specialty league blocks
@@ -196,7 +199,8 @@
 
             allBunks.forEach(bunk => {
                 const pick = picksByTeam[bunk] || noGamePick;
-                fillBlock({ ...blockBase, bunk }, pick, {}, yesterdayHistory, true);
+                // FIXED: Pass real fieldUsageBySlot and activityProperties to ensure capacity is tracked
+                fillBlock({ ...blockBase, bunk }, pick, fieldUsageBySlot, yesterdayHistory, true, activityProperties);
             });
         });
     };
@@ -216,7 +220,8 @@
             divisions,
             fieldsBySport,
             dailyLeagueSportsUsage,
-            fillBlock
+            fillBlock,
+            fieldUsageBySlot // Extract fieldUsageBySlot from context
         } = context;
 
         const leagueBlocks = schedulableSlotBlocks.filter(
@@ -318,10 +323,15 @@
                     for (const f of possibleFields) {
                         if (fieldsUsedInThisBatch.has(f)) continue;
 
+                        // FIXED: Pass correct arguments to canBlockFit
+                        // Arg 4: fieldUsageBySlot
+                        // Arg 5: Proposed Activity (s)
+                        // Arg 6: isLeague (true)
                         if (window.SchedulerCoreUtils?.canBlockFit(
                             blockBase,
                             f,
                             activityProperties,
+                            fieldUsageBySlot, 
                             s,
                             true
                         )) {
@@ -387,7 +397,7 @@
 
             allBunks.forEach(bunk => {
                 const pick = picksByTeam[bunk] || noGamePick;
-                fillBlock({ ...blockBase, bunk }, pick, {}, yesterdayHistory, true);
+                fillBlock({ ...blockBase, bunk }, pick, fieldUsageBySlot, yesterdayHistory, true, activityProperties);
             });
         });
     };
