@@ -156,24 +156,29 @@ function calculatePenaltyCost(block, pick) {
         }
     }
 
-    // ---------------------------------------------------------
+   
+
     // 7. SMART SHARING LOGIC
-    // ---------------------------------------------------------
-    if (currentOccupancy === 1) {
-        let shareCost = 5000; // default stranger penalty
+    if (currentOccupancy === 0) { 
+        // Super bonus for exclusive use
+        penalty -= 10000; 
 
-        if (closestNeighborDistance === 1) shareCost = 500;
-        else if (closestNeighborDistance === 2) shareCost = 2500;
+    } else if (currentOccupancy === 1) { 
+        
+        let shareCost = 15000; // Base penalty for sharing
+        
+        if (closestNeighborDistance === 1) {
+            shareCost = 500; // Neighbor preference
+        } else if (closestNeighborDistance > 1 && closestNeighborDistance <= 5) {
+            shareCost = 5000;
+        }
+        
+        penalty += shareCost; 
 
-        penalty += shareCost;
-
-    } else if (currentOccupancy >= 2) {
-        penalty += 10000;
-        if (closestNeighborDistance === 1) penalty -= 2000;
+    } else if (currentOccupancy >= 2) { 
+        // Veto for over-capacity
+        penalty += 20000; 
     }
-
-    return penalty;
-}
 
 // ============================================================================
 // LEAGUE HELPERS
