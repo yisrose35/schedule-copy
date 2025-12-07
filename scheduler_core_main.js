@@ -3,10 +3,11 @@
 // PART 3 of 3: THE ORCHESTRATOR (Main Entry)
 //
 // UPDATED:
-// - Fixed registerSingleSlotUsage (Removed missing global check)
-// - Correctly uses activityProperties for validation
-// - Robust transition and fillBlock logic
-// - INJECTS METADATA into Utils for capacity checks
+// - Ensures loadAndFilterData is called and results are globally exposed.
+// - Fixed registerSingleSlotUsage (Removed missing global check).
+// - Correctly uses activityProperties for validation.
+// - Robust transition and fillBlock logic.
+// - INJECTS METADATA into Utils for capacity checks.
 // ============================================================================
 
 (function () {
@@ -172,6 +173,11 @@
         // 1 — Load from new loader
         const config = Utils.loadAndFilterData();
 
+        // 1.1 -- EXPOSE PROPERTIES GLOBALLY IMMEDIATELY
+        // This ensures subsequent calls (like in Logic Fillers or UI probes) see valid data.
+        window.activityProperties = config.activityProperties; 
+        window.unifiedTimes = []; // Will be populated below
+
         const {
             divisions,
             activityProperties,
@@ -201,13 +207,10 @@
         window.fieldUsageBySlot = {};
         let fieldUsageBySlot = window.fieldUsageBySlot;
 
-        window.activityProperties = activityProperties;
-
         // 2 — Build time grid
         window.scheduleAssignments = {};
         window.leagueAssignments = {};
-        window.unifiedTimes = [];
-
+        
         if (!manualSkeleton || manualSkeleton.length === 0) return false;
 
         const timePoints = new Set([540, 960]); // default 9:00 – 16:00
