@@ -8,6 +8,7 @@
 // - Ensures allActivities list is complete so the solver has options.
 // - Added defensive checks to ensure data is loaded before processing.
 // - FORCE-INJECTS generic slot definitions to prevent "0 items" error.
+// - FIXED: Handles division structure where 'name' is the key, not a property.
 // ============================================================================
 
 (function () {
@@ -75,7 +76,6 @@
         }
         
         // 4. FORCE-INJECT GENERIC SLOTS (The Fix for "0 items")
-        // These are the names used in your Skeleton. They MUST exist in properties.
         const generics = ["General Activity Slot", "Sports Slot", "Special Activity"];
         generics.forEach(genName => {
              if (!seenNames.has(genName)) {
@@ -189,7 +189,6 @@
     function buildActivityProperties(masterActivities, fields) {
         const props = {};
 
-        // 1. Load Activities
         masterActivities.forEach(act => {
             const name = act.name;
             props[name] = {
@@ -204,19 +203,18 @@
                 limitUsage: act.limitUsage || null,
                 timeRules: act.timeRules || [],
                 minDurationMin: act.minDurationMin || 0,
-                maxUsage: act.maxUsage || 0, // Ensure limits pass through
+                maxUsage: act.maxUsage || 0, 
                 frequencyWeeks: act.frequencyWeeks || 0
             };
         });
 
-        // 2. Load FIELDS (Crucial for Fillers to validate field existence)
         if (Array.isArray(fields)) {
             fields.forEach(f => {
                 props[f.name] = {
                     available: f.available !== false,
-                    sharable: false, // Fields handle sharing via sharableWith usually
+                    sharable: false,
                     sharableWith: f.sharableWith || { type: 'not_sharable' },
-                    allowedDivisions: [], // Fields usually open unless restricted by preferences
+                    allowedDivisions: [],
                     transition: f.transition || null,
                     preferences: f.preferences || null,
                     limitUsage: f.limitUsage || null,
@@ -233,11 +231,7 @@
         const map = {};
 
         masterActivities.forEach(a => {
-            // Check 'field' type (auto-discovered) OR explicit field list
             if (a.type === 'field' || (a.allowedFields && a.allowedFields.length > 0)) {
-                
-                // Re-scan fields to be sure we get ALL fields for this sport
-                // (The auto-discovery might have only caught the first one)
                 const relevantFields = fields.filter(f => 
                     f.activities && f.activities.includes(a.name)
                 ).map(f => f.name);
@@ -265,10 +259,19 @@
         const bunks = app1.bunks || [];
         const fields = app1.fields || [];
         const specials = getSpecialActivities();
-        const rawDivisions = app1.divisions || [];
-        const divisionsArray = Array.isArray(rawDivisions) 
-            ? rawDivisions 
-            : Object.values(rawDivisions || {});
+        const rawDivisions = app1.divisions || {};
+        
+        // --- FIXED DIVISION PARSING ---
+        // Converts object { "Junior": { bunks:[] } } to array [ { name: "Junior", bunks:[] } ]
+        let divisionsArray = [];
+        if (Array.isArray(rawDivisions)) {
+            divisionsArray = rawDivisions;
+        } else {
+            divisionsArray = Object.keys(rawDivisions).map(key => ({
+                name: key,
+                ...rawDivisions[key]
+            }));
+        }
             
         const dailyOverrides = getDailyOverrides();
 
@@ -287,12 +290,12 @@
         const specialActivityNames = masterSpecials.map(s => s.name);
 
         // Convert divisions array → division map
+        // Since we normalized divisionsArray above, d.name is guaranteed to exist.
         const divisions = divisionsArray.reduce((m, d) => {
             if (d?.name) m[d.name] = d;
             return m;
         }, {});
         
-        // Load Histories & Overrides
         const disabledFields = dailyOverrides.disabledFields || [];
         const disabledSpecials = dailyOverrides.disabledSpecials || [];
         const disabledLeagues = dailyOverrides.disabledLeagues || [];
@@ -305,14 +308,11 @@
         const masterZones = window.loadZones?.() || {};
         const bunkMetaData = window.bunkMetaData || {};
 
-        // Expose for debugging
         window.__lastFilteredActivities = filteredActivities;
         window.__lastSchedulableBlocks = blocks;
-        window.TimeMappings = TimeMappings; // Ensure global access
+        window.TimeMappings = TimeMappings; 
 
-        // Make final orchestrator-safe config object
         return {
-            // core schedule data
             activities: filteredActivities,
             blocks,
             divisions,
@@ -320,37 +320,23 @@
             fields,
             masterActivities,
             masterSpecials,
-            masterFields: fields, // Explicitly pass for solver
-
-            // orchestrator-required data
+            masterFields: fields, 
             activityProperties,
             allActivities: masterActivities,
             h2hActivities,
             fieldsBySport,
-
-            // league systems
             masterLeagues: window.masterLeagues || {},
             masterSpecialtyLeagues: window.masterSpecialtyLeagues || {},
-
-            // daily disabled sets
             disabledFields,
             disabledSpecials,
             disabledLeagues,
             disabledSpecialtyLeagues,
-
-            // historical + rotation
             historicalCounts,
             yesterdayHistory,
             rotationHistory,
-
-            // smart tiles
             specialActivityNames,
-
-            // field availability + zones
             dailyFieldAvailability,
             masterZones,
-
-            // misc metadata
             bunkMetaData,
             sportMetaData: window.sportMetaData || {} 
         };
@@ -360,7 +346,6 @@
     // 7. EXPORT TO WINDOW
     // ------------------------------------------------------------------------
     window.loadAndFilterData = loadAndFilterData;
-    // We expose these for individual testing if needed, though loadAndFilterData is the main entry point
     window.generateSchedulableBlocks = generateSchedulableBlocks; 
 
 })();
