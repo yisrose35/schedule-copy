@@ -1,15 +1,16 @@
 // ============================================================================
-// scheduler_ui.js (GCM PATCHED: ROBUST LEAGUE RENDERER)
+// scheduler_ui.js (GCM FINAL: LEAGUE SOURCE OF TRUTH)
 //
 // FIXES:
-// ✓ Scans ALL bunks in a division to find League Matchups (not just the first one).
-// ✓ Ensures League details appear even if the first bunk is empty/different.
+// ✓ Connects UI directly to 'window.leagueAssignments' (The League Engine Output).
+// ✓ No longer relies on "scanning bunks" for league data.
+// ✓ Guarantees the UI shows exactly what the League Generator created.
 // ============================================================================
 
 (function () {
   "use strict";
 
-  const INCREMENT_MINS = 30; // Fallback only
+  const INCREMENT_MINS = 30; 
 
   // =========================================================================
   // TIME HELPERS
@@ -95,7 +96,7 @@
   }
 
   // =========================================================================
-  // EDIT CELL (TIMELINE UPDATED)
+  // EDIT CELL
   // =========================================================================
   function editCell(bunk, startMin, endMin, current) {
     if (!bunk) return;
@@ -110,23 +111,19 @@
     // --- VALIDATION GATE ---
     if (!isClear && window.SchedulerCoreUtils && typeof window.SchedulerCoreUtils.loadAndFilterData === 'function') {
         const warnings = [];
-        
-        // Load fresh data (This REBUILDS the Timeline with current grid state)
         const config = window.SchedulerCoreUtils.loadAndFilterData();
-        const { activityProperties, historicalCounts, lastUsedDates, bunkMetaData, sportMetaData } = config;
+        const { activityProperties, historicalCounts, lastUsedDates } = config;
         
         const allKnown = Object.keys(activityProperties);
         const resolvedName = resolveResourceName(value, allKnown) || value; 
         const props = activityProperties[resolvedName]; 
         
-        // -------------------------------------------------------------
-        // A. SAME BUNK CHECK (Duplicate Warning)
-        // -------------------------------------------------------------
+        // A. SAME BUNK CHECK
         const currentSchedule = window.scheduleAssignments[bunk] || [];
         const targetSlots = findSlotsForRange(startMin, endMin);
         
         currentSchedule.forEach((entry, idx) => {
-            if (targetSlots.includes(idx)) return; // Skip self
+            if (targetSlots.includes(idx)) return; 
             if (entry && !entry.continuation) {
                 const entryRaw = entry.field || entry._activity;
                 if (String(entryRaw).trim().toLowerCase() === String(value).trim().toLowerCase()) {
@@ -137,9 +134,7 @@
         });
 
         if (props) {
-            // -------------------------------------------------------------
-            // B. MAX USAGE CHECK (Frequency)
-            // -------------------------------------------------------------
+            // B. MAX USAGE CHECK
             const max = props.maxUsage || 0;
             if (max > 0) {
                 const historyCount = historicalCounts[bunk]?.[resolvedName] || 0;
@@ -159,19 +154,12 @@
                 }
             }
 
-            // -------------------------------------------------------------
-            // C. TIMELINE CAPACITY CHECK (The Gatekeeper)
-            // -------------------------------------------------------------
-            // Determine Capacity Limit
-            let capacityLimit = 1; // Default
+            // C. TIMELINE CAPACITY CHECK
+            let capacityLimit = 1;
             if (props.sharableWith?.capacity) capacityLimit = parseInt(props.sharableWith.capacity);
             else if (props.sharable || props.sharableWith?.type === 'all' || props.sharableWith?.type === 'custom') capacityLimit = 2;
 
-            // Determine My Weight (Manual edits are usually standard weight 1)
             let myWeight = 1;
-
-            // Check availability via Timeline System
-            // We pass 'bunk' as excludeOwner so we don't count ourselves if we are just editing the name in place
             const isAvailable = window.SchedulerCoreUtils.timeline.checkAvailability(
                 resolvedName, 
                 startMin, 
@@ -186,15 +174,12 @@
                 warnings.push(`⚠️ CAPACITY CONFLICT: "${resolvedName}" is full during this time.\n   Current Peak: ${currentPeak} bunks.\n   Limit: ${capacityLimit}.`);
             }
             
-            // -------------------------------------------------------------
             // D. TIME RULES CHECK
-            // -------------------------------------------------------------
             if (!window.SchedulerCoreUtils.isTimeAvailable(startMin, endMin, props)) {
                  warnings.push(`⚠️ TIME RESTRICTION: "${resolvedName}" is closed/unavailable during this time block.`);
             }
         }
 
-        // E. BLOCKER PROMPT
         if (warnings.length > 0) {
             const msg = warnings.join("\n\n") + "\n\nDo you want to OVERRIDE these rules and schedule anyway?";
             if (!confirm(msg)) {
@@ -341,6 +326,7 @@
         tdTime.textContent = block.label;
         tr.appendChild(tdTime);
 
+        // --- LEAGUE BLOCK RENDERER (The Critical Fix) ---
         if (block.event.startsWith("League Game") || block.event.startsWith("Specialty League")) {
           const td = document.createElement("td");
           td.colSpan = bunks.length;
@@ -350,20 +336,31 @@
           const slotIdx = findFirstSlotForTime(block.startMin);
           let allMatchups = [];
           let gameLabel = "";
+          let titleHtml = block.event;
 
-          if (slotIdx >= 0) {
-            // GCM FIX: SCAN ALL BUNKS for metadata, not just the first one.
-            for (const b of bunks) {
-                 const entry = getEntry(b, slotIdx);
-                 if (entry && entry._allMatchups && entry._allMatchups.length > 0) {
-                     allMatchups = entry._allMatchups;
-                     gameLabel = entry._gameLabel;
-                     break; // Found it!
-                 }
-            }
+          // 1. CHECK THE MASTER SOURCE (window.leagueAssignments)
+          // This is the generated output from the League Engine
+          const leagueData = window.leagueAssignments?.[div]?.[slotIdx];
+          
+          if (leagueData && leagueData.matchups) {
+              // Found authoritative data!
+              // Format matchups for display
+              allMatchups = leagueData.matchups.map(m => 
+                 `${m.teamA} vs ${m.teamB} — ${m.sport} @ ${m.field || 'TBD'}`
+              );
+              gameLabel = leagueData.gameLabel;
+          } else {
+              // Fallback: Scan bunks (legacy support)
+              for (const b of bunks) {
+                   const entry = getEntry(b, slotIdx);
+                   if (entry && entry._allMatchups && entry._allMatchups.length > 0) {
+                       allMatchups = entry._allMatchups;
+                       gameLabel = entry._gameLabel;
+                       break; 
+                   }
+              }
           }
 
-          let titleHtml = block.event;
           if (gameLabel) {
               if (block.event.trim() === "League Game") {
                   titleHtml = `${block.event} ${gameLabel.replace(/^Game\s+/i, '')}`;
@@ -375,7 +372,6 @@
           if (allMatchups.length === 0) {
             td.textContent = titleHtml;
           } else {
-            // Render the full list of games
             td.innerHTML = `<div>${titleHtml}</div><ul>${allMatchups.map((m) => `<li>${m}</li>`).join("")}</ul>`;
           }
 
