@@ -2,10 +2,10 @@
 // scheduler_core_utils.js
 // PART 1 of 3: THE FOUNDATION
 //
-// ARCHITECTURE UPDATE:
-// - Purged orphaned data-loading logic.
-// - Strictly defines stateless utility functions.
-// - Delegates load operations to the global loader interface.
+// UPDATES:
+// - Added Utils.timeline to support UI Validation (checkAvailability).
+// - Cleaned up data loading delegation.
+// - Robust time and transition logic.
 // ============================================================================
 
 (function () {
@@ -269,9 +269,7 @@
             };
         });
 
-        // If no time rules exist, availability defaults to fieldProps.available
         if (rules.length === 0) return fieldProps.available !== false;
-
         if (!fieldProps.available) return false;
 
         const hasAvailableRules = rules.some(r => r.type === 'Available');
@@ -322,6 +320,7 @@
             return false;
         }
 
+        // Zone Check
         if (transRules.preMin > 0 || transRules.postMin > 0) {
             const zones = window.getZones?.() || {};
             const zone = zones[transRules.zone];
@@ -338,6 +337,7 @@
             }
         }
 
+        // Capacity
         let maxCapacity = 1;
         if (props.sharableWith) {
             if (props.sharableWith.capacity) {
@@ -349,63 +349,17 @@
             maxCapacity = 2;
         }
 
-        const bunkMetaData = window.SchedulerCoreUtils._bunkMetaData || {};
-        const sportMetaData = window.SchedulerCoreUtils._sportMetaData || {};
+        // Constraints
+        const bunkMetaData = window.bunkMetaData || {}; 
+        const sportMetaData = window.sportMetaData || {};
         const maxHeadcount = sportMetaData[proposedActivity]?.maxCapacity || Infinity;
         const mySize = bunkMetaData[block.bunk]?.size || 0;
 
-        if (props.preferences?.enabled && props.preferences.exclusive && !props.preferences.list.includes(block.divName)) {
-            return false;
-        }
-
-        if (Array.isArray(props.allowedDivisions) && props.allowedDivisions.length > 0 && !props.allowedDivisions.includes(block.divName)) {
-            return false;
-        }
-
-        if (props.limitUsage?.enabled && !props.limitUsage.divisions[block.divName]) {
-            return false;
-        }
-
-        if (props.limitUsage?.enabled && Array.isArray(props.limitUsage.divisions[block.divName]) &&
-            !props.limitUsage.divisions[block.divName].includes(block.bunk)) {
-            return false;
-        }
-
-        if (blockStartMin != null && blockEndMin != null) {
-            const rules = (props.timeRules || []).map(r => ({
-
-                ...r,
-                startMin: typeof r.startMin === "number" ? r.startMin : Utils.parseTimeToMinutes(r.start),
-                endMin: typeof r.endMin === "number" ? r.endMin : Utils.parseTimeToMinutes(r.end)
-            }));
-
-            if (rules.length > 0 && !props.available) return false;
-
-            const hasAvailableRules = rules.some(r => r.type === 'Available');
-            let insideAvailable = !hasAvailableRules;
-
-            if (hasAvailableRules) {
-                for (const rule of rules) {
-                    if (rule.type === 'Available' && rule.startMin != null && rule.endMin != null) {
-                        if (blockStartMin >= rule.startMin && blockEndMin <= rule.endMin) {
-                            insideAvailable = true;
-                            break;
-                        }
-                    }
-                }
-                if (!insideAvailable) return false;
-            }
-
-            for (const rule of rules) {
-                if (rule.type === 'Unavailable' && rule.startMin != null && rule.endMin != null) {
-                    if (blockStartMin < rule.endMin && blockEndMin > rule.startMin) {
-                        return false;
-                    }
-                }
-            }
-        } else if (!props.available) {
-            return false;
-        }
+        if (props.preferences?.enabled && props.preferences.exclusive && !props.preferences.list.includes(block.divName)) return false;
+        if (Array.isArray(props.allowedDivisions) && props.allowedDivisions.length > 0 && !props.allowedDivisions.includes(block.divName)) return false;
+        if (props.limitUsage?.enabled && !props.limitUsage.divisions[block.divName]) return false;
+        if (props.limitUsage?.enabled && Array.isArray(props.limitUsage.divisions[block.divName]) && !props.limitUsage.divisions[block.divName].includes(block.bunk)) return false;
+        if (!props.available) return false;
 
         const slotsToScan = transRules.occupiesField
             ? Utils.findSlotsForRange(blockStartMin, blockEndMin)
@@ -415,13 +369,12 @@
 
         for (const slotIndex of uniqueSlots) {
             if (slotIndex === undefined) return false;
-
             if (isFieldTakenByLeagueText(slotIndex, fieldName)) return false;
 
             const usage = getCombinedUsage(slotIndex, fieldName, fieldUsageBySlot);
 
             if (usage.divisions.length > 0 && usage.divisions.some(d => d !== block.divName)) {
-               // Strict division separation logic can be uncommented here
+               // Optional strict division separation
             }
 
             let currentWeight = 0;
@@ -441,9 +394,7 @@
 
                 const existingIsLeague = isLeagueAssignment(actualAssignment, activityName);
 
-                if ((existingIsLeague || proposedIsLeague) && !isSameGame) {
-                    return false;
-                }
+                if ((existingIsLeague || proposedIsLeague) && !isSameGame) return false;
 
                 if (!isSameGame) {
                     currentWeight += calculateAssignmentWeight(activityName, actualAssignment, maxCapacity);
@@ -472,37 +423,69 @@
     };
 
     // =================================================================
-    // 4. DATA LOADER DELEGATE
+    // 5. TIMELINE SYSTEM (For UI Validation)
+    // =================================================================
+    // A lightweight on-demand timeline that scans scheduleAssignments
+    // to provide real-time availability checks for the UI manual overrides.
+    
+    Utils.timeline = {
+        checkAvailability: function(resourceName, startMin, endMin, weight, capacity, excludeBunk) {
+            const slots = Utils.findSlotsForRange(startMin, endMin);
+            
+            for (const slotIdx of slots) {
+                let currentLoad = 0;
+                const assignments = window.scheduleAssignments || {};
+                
+                Object.keys(assignments).forEach(bunk => {
+                    if (bunk === excludeBunk) return;
+                    const entry = assignments[bunk][slotIdx];
+                    if (!entry) return;
+                    
+                    const entryRes = Utils.fieldLabel(entry.field) || entry._activity;
+                    // Loose match on resource name
+                    if (entryRes === resourceName || (entryRes && entryRes.toLowerCase() === resourceName.toLowerCase())) {
+                        const isLeague = entry._h2h || String(entry._activity).includes("League");
+                        currentLoad += (isLeague ? capacity : 1);
+                    }
+                });
+                
+                if (currentLoad + weight > capacity) return false;
+            }
+            return true;
+        },
+        
+        getPeakUsage: function(resourceName, startMin, endMin, excludeBunk) {
+            const slots = Utils.findSlotsForRange(startMin, endMin);
+            let maxLoad = 0;
+             for (const slotIdx of slots) {
+                let currentLoad = 0;
+                const assignments = window.scheduleAssignments || {};
+                
+                Object.keys(assignments).forEach(bunk => {
+                    if (bunk === excludeBunk) return;
+                    const entry = assignments[bunk][slotIdx];
+                    if (!entry) return;
+                    
+                    const entryRes = Utils.fieldLabel(entry.field) || entry._activity;
+                    if (entryRes === resourceName || (entryRes && entryRes.toLowerCase() === resourceName.toLowerCase())) {
+                        const isLeague = entry._h2h || String(entry._activity).includes("League");
+                        currentLoad += (isLeague ? 2 : 1); 
+                    }
+                });
+                if (currentLoad > maxLoad) maxLoad = currentLoad;
+            }
+            return maxLoad;
+        }
+    };
+
+    // =================================================================
+    // 6. DATA LOADER DELEGATE
     // =================================================================
 
     Utils.loadAndFilterData = function () {
         if (typeof window.loadAndFilterData !== "function") {
             console.error("ERROR: scheduler_core_loader.js not loaded before scheduler_core_utils.js");
-            return {
-                divisions: {},
-                availableDivisions: [],
-                activityProperties: {},
-                allActivities: [],
-                h2hActivities: [],
-                fieldsBySport: {},
-                masterLeagues: {},
-                masterSpecialtyLeagues: {},
-                masterSpecials: [],
-                yesterdayHistory: {},
-                rotationHistory: {},
-                disabledLeagues: [],
-                disabledSpecialtyLeagues: [],
-                historicalCounts: {},
-                specialActivityNames: [],
-                disabledFields: [],
-                disabledSpecials: [],
-                dailyFieldAvailability: {},
-                dailyDisabledSportsByField: {},
-                masterFields: [],
-                bunkMetaData: {},
-                sportMetaData: {},
-                masterZones: {}
-            };
+            return {};
         }
         return window.loadAndFilterData();
     };
