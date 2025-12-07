@@ -1229,5 +1229,6 @@ function createLimitChip(name, isActive, isDivision = true) {
 }
 
 window.initFieldsTab = initFieldsTab;
+window.fields = fields;
 
 })();
