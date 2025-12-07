@@ -437,7 +437,17 @@
 
         return output;
     };
+// ... existing code ...
+    config.masterSpecials?.forEach(s => {
+        allCandidateOptions.push({ field: s.name, sport: null, activityName: s.name, type: "special" });
+    });
 
+    // === INSERT DEBUG LOG HERE ===
+    console.log("DEBUG: All Candidate Options:", allCandidateOptions);
+    // =============================
+
+    if (!window.leagueRoundState) window.leagueRoundState = {};
+    // ...
     // ============================================================================
     // ACTIVITY (NON-LEAGUE) SOLVER
     // ============================================================================
