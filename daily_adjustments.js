@@ -227,10 +227,10 @@
     // GRID RENDERING (time vs divisions)
     // ==========================================================================
     function renderGrid(gridContainer) {
-        // Always pull fresh filtered config from loader
-        const config = window.SchedulerCoreUtils.loadAndFilterData();
-        // FIX: Ensure divisions and availableDivisions are properly destructured with fallbacks
-        const { divisions = {}, availableDivisions = [] } = config;
+        // FIX: Match Master Builder data model
+const divisions = window.divisions || {};
+const availableDivisions = window.availableDivisions || [];
+
 
         // Compute earliest & latest min across divisions
         let earliestMin = null,
@@ -662,9 +662,9 @@
             <p style="margin-top:15px;font-weight:600">Divisions Participating (Select):</p>
         `;
 
-        const config = window.SchedulerCoreUtils.loadAndFilterData();
-        // FIX: Defensive destructuring here too
-        const { availableDivisions = [], divisions = {} } = config;
+       // FIX: Match Master Builder data model
+const divisions = window.divisions || {};
+const availableDivisions = window.availableDivisions || [];
 
         const chipBox = document.createElement("div");
         chipBox.className = "chips";
@@ -755,9 +755,10 @@
         const box = document.getElementById("bunk-overrides-container");
         box.innerHTML = "";
 
-        const config = window.SchedulerCoreUtils.loadAndFilterData();
-        // FIX: Defensive destructuring here too
-        const { divisions = {}, availableDivisions = [] } = config;
+       // FIX: Match Master Builder data model
+const divisions = window.divisions || {};
+const availableDivisions = window.availableDivisions || [];
+
 
         const master = window.loadGlobalSettings?.() || {};
         const fields = master.app1?.fields || [];
