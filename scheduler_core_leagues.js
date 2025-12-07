@@ -1,29 +1,10 @@
 // ============================================================================
-// scheduler_core_leagues.js — FULL REWRITE (FORMAT B)
+// scheduler_core_leagues.js — FULL REWRITE (FORMAT B + MATCHUP FIX)
 // Strict League Exclusivity + Division-Level League Outputs
 //
-// FINAL BEHAVIOR:
-// • Bunks DO NOT receive team assignments.
-// • Bunks only receive “League Block” as their event during league time.
-// • The REAL league info is stored in:
-//
-//     window.leagueAssignments[division][slotIndex] = {
-//        gameLabel,
-//        startMin,
-//        endMin,
-//        matchups: [
-//           { teamA, teamB, sport, field },
-//           ...
-//        ]
-//     }
-//
-// • Main UI uses leagueAssignments to render:
-//
-//     Game 3:
-//     • Team A vs Team B — Basketball @ Court 1
-//     • Team C vs Team D — Soccer @ Field 2
-//
-// • Enforces strict field exclusivity using reservation veto.
+// FIXES:
+// ✓ Attaches _allMatchups and _gameLabel to tiles so UI shows the actual games.
+// ✓ Formats matchups as "Team A vs Team B — Sport @ Field".
 // ============================================================================
 
 (function () {
@@ -168,7 +149,12 @@
                 };
             });
 
-            // Fill bunks with only “League Block”
+            // Prepare UI List
+            const formattedMatchups = matchups.map(m => 
+                `${m.teamA} vs ${m.teamB} — ${m.sport} @ ${m.field || 'TBD'}`
+            );
+
+            // Fill bunks
             group.bunks.forEach(bunk => {
                 fillBlock(
                     { ...block, bunk },
@@ -176,7 +162,10 @@
                         field: "League Block",
                         sport: null,
                         _activity: "League Block",
-                        _fixed: true
+                        _fixed: true,
+                        // GCM FIX: ATTACH MATCHUP DATA
+                        _allMatchups: formattedMatchups,
+                        _gameLabel: gameLabel
                     },
                     fieldUsageBySlot,
                     yesterdayHistory,
@@ -312,7 +301,12 @@
                 matchups
             };
 
-            // Fill bunks with “League Block”
+            // Prepare UI List
+            const formattedMatchups = matchups.map(m => 
+                `${m.teamA} vs ${m.teamB} — ${m.sport} @ ${m.field || 'TBD'}`
+            );
+
+            // Fill bunks with “League Block” + Matchup Metadata
             group.bunks.forEach(bunk => {
                 fillBlock(
                     {
@@ -326,7 +320,10 @@
                         field: "League Block",
                         sport: null,
                         _activity: "League Block",
-                        _fixed: true
+                        _fixed: true,
+                        // GCM FIX: ATTACH MATCHUP DATA
+                        _allMatchups: formattedMatchups,
+                        _gameLabel: gameLabel
                     },
                     fieldUsageBySlot,
                     yesterdayHistory,
