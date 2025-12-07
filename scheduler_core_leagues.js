@@ -1,15 +1,10 @@
 // ============================================================================
-// scheduler_core_leagues.js — FULL REWRITE (FIXED FOR CONFLICTS)
+// scheduler_core_leagues.js — FULL REWRITE (STRICT LEAGUE EXCLUSIVITY)
 // ============================================================================
 //
-// Updates in this version:
-// - INTERNAL FIELD CONFLICT FIX: Prevents multiple games in the same league
-//   from grabbing the same field in the same time slot.
-// - INTERFACE FIX: Calls canBlockFit with correct arguments (passing fieldUsage).
-// - STATE SYNC FIX: Specialty Leagues now properly register usage in fieldUsageBySlot.
-// - Smart Tiles preserved.
-// - Unified Time mapping preserved.
-// - Metadata (_h2h, _allMatchups) populated correctly.
+// CRITICAL CHANGE: If a League Game is assigned, the field is marked 
+// 'exclusive: true' in the reservation log, which prevents *any* other 
+// placement on that field for the duration of the block.
 //
 // ============================================================================
 
@@ -17,10 +12,35 @@
     'use strict';
 
     const Leagues = {};
-    const INCREMENT_MINS = 30; // Not used here but kept for consistency
+    const INCREMENT_MINS = 30; 
+
+    // ----------------------------------------------------------------------------
+    // Capacity Helper (Simplified)
+    // ----------------------------------------------------------------------------
+    // Not strictly needed for this logic, but included to keep the context 
+    // of the block fill logic correct. Removed the capacity getter.
+    
+    // ----------------------------------------------------------------------------
+    // Reservation Helper
+    // ----------------------------------------------------------------------------
+    function writeLeagueReservationVeto(field, block, divName) {
+        window.fieldReservationLog = window.fieldReservationLog || {};
+        if (!window.fieldReservationLog[field]) {
+            window.fieldReservationLog[field] = [];
+        }
+        
+        window.fieldReservationLog[field].push({
+            bunk: `__LEAGUE_VETO__${divName}`,
+            divName: divName,
+            startMin: block.startTime,
+            endMin: block.endTime,
+            exclusive: true, // <-- CRITICAL: HARD VETO
+            reason: "League Veto"
+        });
+    }
 
     // ============================================================================
-    // 1. GENERIC HELPERS
+    // 1. GENERIC HELPERS (Unchanged)
     // ============================================================================
 
     Leagues.shuffleArray = function (array) {
@@ -55,7 +75,6 @@
 
     Leagues.assignSportsMultiRound = function (matchups, sports, teamCounts, history, lastSport) {
         const assignments = [];
-
         matchups.forEach((pair, i) => {
             if (!pair || pair.includes("BYE")) {
                 assignments.push({ sport: null });
@@ -86,18 +105,15 @@
             activityProperties,
             masterSpecialtyLeagues,
             disabledSpecialtyLeagues,
-            rotationHistory,
             yesterdayHistory,
             fillBlock,
-            fieldUsageBySlot // Extract fieldUsageBySlot for correct state tracking
+            fieldUsageBySlot 
         } = context;
 
-        // Collect all unprocessed specialty league blocks
         const specialtyLeagueBlocks = schedulableSlotBlocks.filter(
             b => b.event === 'Specialty League' && !b.processed
         );
 
-        // Group by division + time slot
         const groups = {};
         specialtyLeagueBlocks.forEach(block => {
             const key = `${block.divName}-${block.startTime}`;
@@ -134,7 +150,6 @@
                 .map(t => String(t).trim())
                 .filter(Boolean);
 
-            // Determine current game/round number
             let gameNumber = 1;
             if (typeof window.getLeagueCurrentRound === 'function') {
                 gameNumber = window.getLeagueCurrentRound(leagueEntry.name);
@@ -143,7 +158,6 @@
             }
             const gameLabel = `Game ${gameNumber}`;
 
-            // Get matchups
             const matchups = (typeof window.getLeagueMatchups === 'function')
                 ? (window.getLeagueMatchups(leagueEntry.name, teams) || [])
                 : Leagues.pairRoundRobin(teams);
@@ -152,10 +166,10 @@
             const allMatchupLabels = [];
             const picksByTeam = {};
             const fields = leagueEntry.fields || [];
+            let finalFieldForReservation = null;
 
             matchups.forEach((pair, i) => {
                 const [a, b] = pair;
-
                 if (a === "BYE" || b === "BYE") {
                     allMatchupLabels.push(`${a} vs ${b} (BYE)`);
                     return;
@@ -167,6 +181,11 @@
                 if (fields.length > 0) {
                     const idx = i % fields.length;
                     finalField = fields[idx];
+                }
+                
+                // Track the first field used for the VETO
+                if (finalField && !finalFieldForReservation) {
+                    finalFieldForReservation = finalField;
                 }
 
                 allMatchupLabels.push(
@@ -196,12 +215,20 @@
                 _allMatchups: allMatchupLabels,
                 _gameLabel: gameLabel
             };
-
+            
+            // 1. Fill Blocks
             allBunks.forEach(bunk => {
                 const pick = picksByTeam[bunk] || noGamePick;
-                // FIXED: Pass real fieldUsageBySlot and activityProperties to ensure capacity is tracked
                 fillBlock({ ...blockBase, bunk }, pick, fieldUsageBySlot, yesterdayHistory, true, activityProperties);
             });
+            
+            // 2. Write VETO Reservation
+            if (finalFieldForReservation) {
+                const repBlock = specialtyLeagueBlocks.find(b => b.divName === group.divName);
+                if (repBlock) {
+                    writeLeagueReservationVeto(finalFieldForReservation, repBlock, group.divName);
+                }
+            }
         });
     };
 
@@ -215,20 +242,17 @@
             activityProperties,
             masterLeagues,
             disabledLeagues,
-            rotationHistory,
-            yesterdayHistory,
             divisions,
             fieldsBySport,
-            dailyLeagueSportsUsage,
+            yesterdayHistory,
             fillBlock,
-            fieldUsageBySlot // Extract fieldUsageBySlot from context
+            fieldUsageBySlot 
         } = context;
 
         const leagueBlocks = schedulableSlotBlocks.filter(
             b => b.event === "League Game" && !b.processed
         );
 
-        // Group by league name + time slot
         const groups = {};
         leagueBlocks.forEach(block => {
             const leagueEntry = Object.entries(masterLeagues).find(
@@ -267,7 +291,6 @@
 
             const sports = league.sports || [];
 
-            // Find division
             const firstBunk = allBunks[0];
             const divName = Object.keys(divisions).find(d =>
                 divisions[d].bunks.includes(firstBunk)
@@ -281,7 +304,6 @@
                 endTime: group.endTime
             };
 
-            // Determine current round
             let gameNumber = 1;
             if (typeof window.getLeagueCurrentRound === 'function') {
                 gameNumber = window.getLeagueCurrentRound(leagueName);
@@ -290,7 +312,6 @@
             }
             const gameLabel = `Game ${gameNumber}`;
 
-            // Get matchups
             let matchups = (typeof window.getLeagueMatchups === "function")
                 ? (window.getLeagueMatchups(leagueName, leagueTeams) || [])
                 : Leagues.coreGetNextLeagueRound(leagueName, leagueTeams);
@@ -299,10 +320,10 @@
             const finalAssignments = [];
 
             const fieldsUsedInThisBatch = new Set();
+            let finalFieldForReservation = null;
 
             matchups.forEach((pair, i) => {
                 const [a, b] = pair;
-
                 if (a === "BYE" || b === "BYE") {
                     allMatchupLabels.push(`${a} vs ${b} (BYE)`);
                     return;
@@ -323,10 +344,6 @@
                     for (const f of possibleFields) {
                         if (fieldsUsedInThisBatch.has(f)) continue;
 
-                        // FIXED: Pass correct arguments to canBlockFit
-                        // Arg 4: fieldUsageBySlot
-                        // Arg 5: Proposed Activity (s)
-                        // Arg 6: isLeague (true)
                         if (window.SchedulerCoreUtils?.canBlockFit(
                             blockBase,
                             f,
@@ -346,6 +363,9 @@
 
                 if (finalField) {
                     fieldsUsedInThisBatch.add(finalField);
+                    if (!finalFieldForReservation) {
+                        finalFieldForReservation = finalField;
+                    }
                 }
 
                 const label = finalField
@@ -395,10 +415,19 @@
                 _gameLabel: gameLabel
             };
 
+            // 1. Fill Blocks
             allBunks.forEach(bunk => {
                 const pick = picksByTeam[bunk] || noGamePick;
                 fillBlock({ ...blockBase, bunk }, pick, fieldUsageBySlot, yesterdayHistory, true, activityProperties);
             });
+            
+            // 2. Write VETO Reservation
+            if (finalFieldForReservation) {
+                 const repBlock = leagueBlocks.find(b => b.bunk === firstBunk);
+                 if (repBlock) {
+                    writeLeagueReservationVeto(finalFieldForReservation, repBlock, divName);
+                 }
+            }
         });
     };
 
