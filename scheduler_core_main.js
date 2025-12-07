@@ -2,14 +2,9 @@
 // scheduler_core_main.js
 // PART 3 of 3: THE ORCHESTRATOR (Main Entry)
 //
-// UPDATED FOR NEW LOADER + NEW UTILS
-// - Correct canBlockFit argument order
-// - Replaced manual pinned writes with fillBlock()
-// - Updated league detection
-// - Validated transition/buffer integration
-// - Safe fieldUsage tracking
-// - FIXED: Accepts 'activity', 'sports', 'special' types as Schedulable Slots
-// - FIXED: Logic inversion bug that prevented generating any schedule
+// UPDATED:
+// - Fixed registerSingleSlotUsage (Removed missing global check)
+// - Correctly uses activityProperties for validation
 // ============================================================================
 
 (function () {
@@ -132,6 +127,7 @@
                     _endTime: effectiveEnd
                 };
 
+                // FIXED: Use activityProperties to validate, not missing global array
                 window.registerSingleSlotUsage(
                     slotIndex,
                     fName,
@@ -364,7 +360,6 @@
             }
 
             // ----- Normal block (generated or buffered)
-            // UPDATED: Now accepts 'activity', 'sports', 'special', etc.
             if ((isSchedulable && isGenerated) || hasBuffer) {
                 bunkList.forEach(b => {
                     schedulableSlotBlocks.push({
@@ -508,14 +503,6 @@
             const slots = block.slots;
             if (!slots || slots.length === 0) continue;
 
-            // *** FIXED LOGIC ***
-            // We check the first slot of the block.
-            // If it is occupied (truthy) AND that occupation is NOT a transition, we skip.
-            // This means:
-            // - If it is undefined/null (Empty) -> Proceed (Don't skip)
-            // - If it is "Transition" -> Proceed (Don't skip, we can merge)
-            // - If it is "Sports" -> Skip (Already filled)
-            
             const existingSlot = window.scheduleAssignments[block.bunk][slots[0]];
 
             if (existingSlot && existingSlot._activity !== TRANSITION_TYPE) {
@@ -668,10 +655,11 @@
     };
 
     // -------------------------------------------------------------------------
-    // registerSingleSlotUsage
+    // registerSingleSlotUsage (FIXED)
     // -------------------------------------------------------------------------
     function registerSingleSlotUsage(slotIndex, fieldName, divName, bunkName, activityName, fieldUsageBySlot, activityProperties) {
-        if (!fieldName || !window.allSchedulableNames?.includes(fieldName)) return;
+        // FIXED: Check against activityProperties instead of missing global
+        if (!fieldName || !activityProperties[fieldName]) return;
 
         fieldUsageBySlot[slotIndex] ??= {};
         const usage = fieldUsageBySlot[slotIndex][fieldName] ?? {
