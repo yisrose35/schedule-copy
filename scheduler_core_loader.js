@@ -3,21 +3,13 @@
 // FULL REWRITE — SPEC-COMPLIANT LOADER FOR ORCHESTRATOR V3
 //
 // UPDATES:
-// - Automatically scrapes 'fields' to populate 'masterActivities' with sports.
-// - CRITICAL FIX: Loads Fields into 'activityProperties' so Fillers can validate them.
-// - Ensures allActivities list is complete so the solver has options.
-// - Added defensive checks to ensure data is loaded before processing.
-// - FORCE-INJECTS generic slot definitions to prevent "0 items" error.
-// - FIXED: Handles division structure where 'name' is the key, not a property.
+// - FIXED: Handles app1.divisions structure (Name as Key vs Name as Property).
+// - Ensures masterActivities includes generics to prevent "0 Properties" error.
 // ============================================================================
 
 (function () {
     'use strict';
 
-    // ------------------------------------------------------------------------
-    // 0. SAFE GETTERS FOR app1 + GLOBALS
-    // ------------------------------------------------------------------------
-    
     function getApp1Settings() {
         return (window.loadGlobalSettings?.() || {}).app1 || window.app1 || {};
     }
@@ -31,7 +23,7 @@
     }
 
     // ------------------------------------------------------------------------
-    // 1. BUILD MASTER ACTIVITIES (Fixed to include Field Sports)
+    // 1. BUILD MASTER ACTIVITIES
     // ------------------------------------------------------------------------
     function buildMasterActivities(app1, specials, fields) {
         let list = [];
@@ -57,7 +49,7 @@
             });
         }
 
-        // 3. AUTO-DISCOVER SPORTS FROM FIELDS (Crucial Fix)
+        // 3. AUTO-DISCOVER SPORTS FROM FIELDS
         if (Array.isArray(fields)) {
             fields.forEach(f => {
                 if (Array.isArray(f.activities)) {
@@ -65,8 +57,8 @@
                         if (sportName && !seenNames.has(sportName)) {
                             list.push({
                                 name: sportName,
-                                type: 'field', // treated as sport/field activity
-                                allowedFields: [f.name] // initially just this field, normalized later
+                                type: 'field',
+                                allowedFields: [f.name]
                             });
                             seenNames.add(sportName);
                         }
@@ -75,7 +67,7 @@
             });
         }
         
-        // 4. FORCE-INJECT GENERIC SLOTS (The Fix for "0 items")
+        // 4. FORCE-INJECT GENERIC SLOTS
         const generics = ["General Activity Slot", "Sports Slot", "Special Activity"];
         generics.forEach(genName => {
              if (!seenNames.has(genName)) {
@@ -100,14 +92,10 @@
                 type: a.type || "General",
                 allowedFields: a.allowedFields || a.fields || null,
                 divisions: a.divisions || null,
-                // Pass through properties for utils
                 ...a
             }));
     }
 
-    // ------------------------------------------------------------------------
-    // 2. BUILD TIME MAPPINGS
-    // ------------------------------------------------------------------------
     function toMin(t) {
         if (!t) return 0;
         const [h, m] = t.split(":").map(Number);
@@ -118,13 +106,10 @@
         const increments = app1.increments || 30;
         const startTime = app1.startTime || "9:00";
         const endTime = app1.endTime || "17:00";
-
         const startMin = toMin(startTime);
         const endMin = toMin(endTime);
-
         const mappings = [];
         let cur = startMin;
-
         while (cur < endMin) {
             mappings.push({ start: cur, end: cur + increments });
             cur += increments;
@@ -132,12 +117,8 @@
         return mappings;
     }
 
-    // ------------------------------------------------------------------------
-    // 3. FILTER ACTIVITIES BY DIVISION
-    // ------------------------------------------------------------------------
     function filterActivities(masterActivities, divisionsArray) {
         if (!masterActivities.length) return [];
-
         return masterActivities.filter(act => {
             if (act.divisions && act.divisions.length) {
                 return divisionsArray.some(d => act.divisions.includes(d.name));
@@ -146,20 +127,14 @@
         });
     }
 
-    // ------------------------------------------------------------------------
-    // 4. BUILD SCHEDULABLE BLOCKS
-    // ------------------------------------------------------------------------
     function generateSchedulableBlocks(filtered, bunks, TimeMappings, increments) {
         const blocks = [];
-
         bunks.forEach(bunk => {
             if (!bunk) return;
             const bunkName = (typeof bunk === 'string') ? bunk : bunk.name;
-
             filtered.forEach(act => {
                 const dur = act.duration || increments;
                 const slotsNeeded = Math.ceil(dur / increments);
-
                 TimeMappings.forEach((tm, slotIndex) => {
                     const endSlot = slotIndex + slotsNeeded - 1;
                     if (endSlot < TimeMappings.length) {
@@ -168,10 +143,7 @@
                             activity: act.name,
                             event: act.name,
                             duration: dur,
-                            slots: Array.from(
-                                { length: slotsNeeded },
-                                (_, i) => slotIndex + i
-                            ),
+                            slots: Array.from({ length: slotsNeeded }, (_, i) => slotIndex + i),
                             startTime: TimeMappings[slotIndex].start,
                             endTime: TimeMappings[endSlot].end
                         });
@@ -179,16 +151,11 @@
                 });
             });
         });
-
         return blocks;
     }
 
-    // ------------------------------------------------------------------------
-    // 5. BUILD activityProperties + fieldsBySport + h2hActivities
-    // ------------------------------------------------------------------------
     function buildActivityProperties(masterActivities, fields) {
         const props = {};
-
         masterActivities.forEach(act => {
             const name = act.name;
             props[name] = {
@@ -207,7 +174,6 @@
                 frequencyWeeks: act.frequencyWeeks || 0
             };
         });
-
         if (Array.isArray(fields)) {
             fields.forEach(f => {
                 props[f.name] = {
@@ -223,37 +189,26 @@
                 };
             });
         }
-
         return props;
     }
 
     function buildFieldsBySport(masterActivities, fields) {
         const map = {};
-
         masterActivities.forEach(a => {
             if (a.type === 'field' || (a.allowedFields && a.allowedFields.length > 0)) {
                 const relevantFields = fields.filter(f => 
                     f.activities && f.activities.includes(a.name)
                 ).map(f => f.name);
-
-                if (relevantFields.length > 0) {
-                    map[a.name] = relevantFields;
-                }
+                if (relevantFields.length > 0) map[a.name] = relevantFields;
             }
         });
-
         return map;
     }
 
     function buildH2HActivities(masterActivities) {
-        return masterActivities
-            .filter(a => /league/i.test(a.type))
-            .map(a => a.name);
+        return masterActivities.filter(a => /league/i.test(a.type)).map(a => a.name);
     }
 
-    // ------------------------------------------------------------------------
-    // 6. MAIN LOADER PIPELINE
-    // ------------------------------------------------------------------------
     function loadAndFilterData() {
         const app1 = getApp1Settings();
         const bunks = app1.bunks || [];
@@ -262,7 +217,7 @@
         const rawDivisions = app1.divisions || {};
         
         // --- FIXED DIVISION PARSING ---
-        // Converts object { "Junior": { bunks:[] } } to array [ { name: "Junior", bunks:[] } ]
+        // Normalizes { "Junior": { bunks:[] } } -> [ { name: "Junior", bunks:[] } ]
         let divisionsArray = [];
         if (Array.isArray(rawDivisions)) {
             divisionsArray = rawDivisions;
@@ -274,23 +229,17 @@
         }
             
         const dailyOverrides = getDailyOverrides();
-
-        // 1. Build Data
         const masterActivities = buildMasterActivities(app1, specials, fields);
         const TimeMappings = buildTimeMappings(app1);
-        
-        // 2. Filter & Process
         const filteredActivities = filterActivities(masterActivities, divisionsArray);
         const blocks = generateSchedulableBlocks(filteredActivities, bunks, TimeMappings, app1.increments || 30);
         const activityProperties = buildActivityProperties(masterActivities, fields);
         const fieldsBySport = buildFieldsBySport(masterActivities, fields);
         const h2hActivities = buildH2HActivities(masterActivities);
-
         const masterSpecials = masterActivities.filter(a => a.type === "Special");
         const specialActivityNames = masterSpecials.map(s => s.name);
 
-        // Convert divisions array → division map
-        // Since we normalized divisionsArray above, d.name is guaranteed to exist.
+        // Build Division Map
         const divisions = divisionsArray.reduce((m, d) => {
             if (d?.name) m[d.name] = d;
             return m;
@@ -342,9 +291,6 @@
         };
     }
 
-    // ------------------------------------------------------------------------
-    // 7. EXPORT TO WINDOW
-    // ------------------------------------------------------------------------
     window.loadAndFilterData = loadAndFilterData;
     window.generateSchedulableBlocks = generateSchedulableBlocks; 
 
