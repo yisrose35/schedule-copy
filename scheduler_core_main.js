@@ -259,12 +259,19 @@
                 return;
             }
 
-            if (isLeague || (isSchedulable && isGenerated) || hasBuffer) {
-                bunkList.forEach(b => {
-                    schedulableSlotBlocks.push({ divName, bunk: b, event: finalName, startTime: sMin, endTime: eMin, slots });
-                });
-            }
+           if (isLeague || (isSchedulable && isGenerated) || hasBuffer) {
+    bunkList.forEach(b => {
+        schedulableSlotBlocks.push({ 
+            divName, 
+            bunk: b, 
+            event: finalName,
+            type: item.type,  // ← ADD THIS LINE to preserve original type
+            startTime: sMin, 
+            endTime: eMin, 
+            slots 
         });
+    });
+}
 
         console.log(`Schedulable Slot Blocks Count: ${schedulableSlotBlocks.length}`);
         console.log(`Schedulable Slot Blocks Count: ${schedulableSlotBlocks.length}`);
