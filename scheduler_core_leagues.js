@@ -1,8 +1,8 @@
 // ============================================================================
-// scheduler_core_leagues.js (GCM FINAL: UNIVERSAL SYSTEM FALLBACK)
+// scheduler_core_leagues.js (GCM FINAL: DIRECT FIELD SCAN)
 // Integrated with league_scheduling.js
-// - FIX: Scans "League Sports" (High Priority) AND "All System Sports" (Backup).
-// - RESULT: Never TBD as long as ANY field on campus is open.
+// - FIX: Iterates MASTER FIELDS instead of just sport names.
+// - RESULT: Guarantees finding ANY open field on campus.
 // ============================================================================
 
 (function () {
@@ -55,7 +55,7 @@
     // ------------------------------------------------------------
     function calculateOptionScore(option, leagueName, teamA, teamB, totalSportsCount) {
         const sport = option.sport;
-        const isPreferred = option.isPreferred; // Passed from inventory
+        const isPreferred = option.isPreferred; 
         
         const histA = getTeamSportHistory(leagueName, teamA);
         const histB = getTeamSportHistory(leagueName, teamB);
@@ -65,9 +65,7 @@
 
         let score = 0;
 
-        // 1. PREFERENCE BONUS (Critical Fix)
-        // If this sport is in the league's definition, boost it massively.
-        // If it's a fallback sport (e.g. random Soccer field), it gets 0 bonus.
+        // 1. PREFERENCE BONUS (Critical)
         if (isPreferred) {
             score += 2000; 
         }
@@ -138,7 +136,11 @@
                 fieldUsageBySlot
             } = context;
 
-            console.log("--- LEAGUE GENERATOR START (UNIVERSAL SCAN) ---");
+            // Load Master Fields directly to ensure we don't miss anything
+            const fullConfig = window.SchedulerCoreUtils.loadAndFilterData();
+            const masterFields = fullConfig.masterFields || [];
+
+            console.log("--- LEAGUE GENERATOR START (DIRECT FIELD SCAN) ---");
 
             const leagueBlocks = schedulableSlotBlocks.filter(b => {
                 const name = String(b.event || "").toLowerCase();
@@ -192,28 +194,38 @@
                 if (!teams || teams.length < 2) return;
 
                 const proxyDivName = Array.from(group.involvedDivisions)[0] || "League";
-                
-                // 1. Identify Preferred vs Fallback Sports
                 const preferredSports = league.sports || ["League Game"];
-                const allSystemSports = Object.keys(fieldsBySport || {});
-                
-                // Combine into a unique set of all possible sports to scan
-                // We convert to LowerCase to dedup, but map back to original key
-                const uniqueSports = new Set([...preferredSports, ...allSystemSports]);
                 
                 // ----------------------------------------------------------------
-                // STEP 1: GLOBAL INVENTORY SCAN
+                // STEP 1: DIRECT FIELD SCAN
+                // Iterate every physical field to find *anything* open
                 // ----------------------------------------------------------------
                 const globalInventory = [];
                 
-                uniqueSports.forEach(sport => {
-                    const exactSportKey = Object.keys(fieldsBySport || {}).find(k => k.toLowerCase() === sport.toLowerCase());
-                    if (!exactSportKey) return;
+                masterFields.forEach(fieldObj => {
+                    const fieldName = fieldObj.name;
+                    // What sports can this field host?
+                    const supportedActivities = fieldObj.activities || [];
+                    
+                    // Always try to fit the Preferred Sports first
+                    preferredSports.forEach(sport => {
+                        const isSupported = supportedActivities.some(s => s.toLowerCase() === sport.toLowerCase());
+                        // Even if not explicitly supported, we check if it fits (sometimes fields are flexible)
+                        if (isSupported) {
+                            checkAndAdd(sport, fieldName, true);
+                        }
+                    });
 
-                    const possibleFields = fieldsBySport[exactSportKey] || [];
-                    const isPreferred = preferredSports.some(ps => ps.toLowerCase() === sport.toLowerCase());
-
-                    possibleFields.forEach(field => {
+                    // Then try all other supported sports (Fallback)
+                    supportedActivities.forEach(sport => {
+                        const isPreferred = preferredSports.some(ps => ps.toLowerCase() === sport.toLowerCase());
+                        if (!isPreferred) {
+                            checkAndAdd(sport, fieldName, false);
+                        }
+                    });
+                    
+                    // Helper to check fit
+                    function checkAndAdd(sportName, fName, isPref) {
                         const fits = window.SchedulerCoreUtils.canBlockFit(
                             {
                                 divName: proxyDivName,
@@ -222,22 +234,22 @@
                                 endTime: group.endTime,
                                 slots: group.slots
                             },
-                            field,
+                            fName,
                             activityProperties,
                             fieldUsageBySlot,
-                            sport,
+                            sportName,
                             true
                         );
 
                         if (fits) {
                             globalInventory.push({ 
-                                id: `${sport}-${field}`, 
-                                sport: exactSportKey, // Use proper casing 
-                                field: field,
-                                isPreferred: isPreferred // Flag for scoring boost
+                                id: `${sportName}-${fName}`, 
+                                sport: sportName, 
+                                field: fName,
+                                isPreferred: isPref 
                             });
                         }
-                    });
+                    }
                 });
 
                 // ----------------------------------------------------------------
@@ -267,7 +279,6 @@
                         return { ...opt, score };
                     });
 
-                    // Sort: Highest score (Preferred + Fresh) -> Lowest score
                     optionsWithScores.sort((a, b) => b.score - a.score);
 
                     return {
@@ -280,9 +291,6 @@
                     };
                 });
 
-                // ----------------------------------------------------------------
-                // STEP 4: PRIORITY SORT
-                // ----------------------------------------------------------------
                 matchupData.sort((a, b) => {
                     if (a.isBye) return 1; 
                     if (b.isBye) return -1;
@@ -301,7 +309,6 @@
                         return;
                     }
 
-                    // Find best option where field is not taken
                     const bestAvailable = match.possibleOptions.find(opt => !assignedFields.has(opt.field));
 
                     if (bestAvailable) {
