@@ -1,9 +1,8 @@
 // ============================================================================
-// scheduler_core_leagues.js (GCM FINAL: HOLISTIC MATRIX OPTIMIZATION)
+// scheduler_core_leagues.js (GCM FINAL: NO TBD FALLBACK)
 // Integrated with league_scheduling.js
-// 1. INVENTORY SCAN: Finds all valid (Sport + Field) combos.
-// 2. SCARCITY ANALYSIS: Scores every option for every matchup.
-// 3. PRIORITY ASSIGNMENT: Schedules the most restricted teams FIRST.
+// - FIX: Removed "Fatal Filter" for back-to-back sports.
+// - LOGIC: "Better to repeat a sport than to have no game at all."
 // ============================================================================
 
 (function () {
@@ -53,7 +52,6 @@
 
     // ------------------------------------------------------------
     // SCORING ALGORITHM
-    // Returns a numeric score for how good this sport is for these teams.
     // ------------------------------------------------------------
     function calculateOptionScore(option, leagueName, teamA, teamB, totalSportsCount) {
         const sport = option.sport;
@@ -63,9 +61,12 @@
         const lastSportA = histA.length > 0 ? histA[histA.length - 1] : null;
         const lastSportB = histB.length > 0 ? histB[histB.length - 1] : null;
 
-        // 1. FATAL PENALTY: Back-to-Back (Immediate disqualify in scoring)
+        let score = 0;
+
+        // 1. BACK-TO-BACK CHECK (Soft Penalty, not Fatal)
+        // If they just played this, we punish the score, but we DO NOT disqualify it.
         if (sport === lastSportA || sport === lastSportB) {
-            return -1000; 
+            score -= 500; 
         }
 
         const cycleA = Math.floor(histA.length / totalSportsCount);
@@ -77,12 +78,10 @@
         const playedByA = currentCycleSportsA.includes(sport);
         const playedByB = currentCycleSportsB.includes(sport);
 
-        let score = 0;
-
-        // 2. VARIETY BONUSES
+        // 2. FRESHNESS BONUSES
         if (!playedByA && !playedByB) score += 100;      // GOLD: Fresh for both
         else if (!playedByA || !playedByB) score += 50;  // SILVER: Fresh for one
-        else score += 10;                                // BRONZE: Repeat
+        else score += 10;                                // BRONZE: Repeat (but valid)
 
         return score;
     }
@@ -131,7 +130,7 @@
                 fieldUsageBySlot
             } = context;
 
-            console.log("--- LEAGUE GENERATOR START (HOLISTIC MATRIX) ---");
+            console.log("--- LEAGUE GENERATOR START (NO TBD FALLBACK) ---");
 
             const leagueBlocks = schedulableSlotBlocks.filter(b => {
                 const name = String(b.event || "").toLowerCase();
@@ -189,7 +188,6 @@
 
                 // ----------------------------------------------------------------
                 // STEP 1: GLOBAL INVENTORY SCAN
-                // Find ALL physically possible (Sport + Field) combos for this time slot
                 // ----------------------------------------------------------------
                 const globalInventory = [];
                 leagueSports.forEach(sport => {
@@ -214,7 +212,7 @@
 
                         if (fits) {
                             globalInventory.push({ 
-                                id: `${sport}-${field}`, // Unique ID for tracking usage
+                                id: `${sport}-${field}`, 
                                 sport: sport, 
                                 field: field 
                             });
@@ -223,7 +221,7 @@
                 });
 
                 // ----------------------------------------------------------------
-                // STEP 2: GET PAIRS (MATCHUPS)
+                // STEP 2: GET PAIRS
                 // ----------------------------------------------------------------
                 let pairs = [];
                 if (typeof window.getLeagueMatchups === "function") {
@@ -234,8 +232,7 @@
                 if (!Array.isArray(pairs) || !pairs.length) return;
 
                 // ----------------------------------------------------------------
-                // STEP 3: BUILD THE "POSSIBILITY MATRIX"
-                // For each pair, calculate scores for ALL available inventory options.
+                // STEP 3: MATRIX SCORING (CRITICAL FIX HERE)
                 // ----------------------------------------------------------------
                 const matchupData = pairs.map((pair, index) => {
                     const A = pair[0] === "BYE" ? "BYE" : pair[0];
@@ -245,13 +242,14 @@
                         return { index, A, B, isBye: true, possibleOptions: [] };
                     }
 
-                    // Score all options in globalInventory for this specific pair
                     const optionsWithScores = globalInventory.map(opt => {
                         const score = calculateOptionScore(opt, leagueName, A, B, leagueSports.length);
                         return { ...opt, score };
-                    }).filter(opt => opt.score > -500); // Filter out back-to-back immediately
+                    });
 
-                    // Sort options BEST to WORST
+                    // 🛑 REMOVED THE .filter() THAT DROPPED NEGATIVE SCORES
+                    // Even if score is -500 (Back-to-Back), we keep it as a last resort.
+                    
                     optionsWithScores.sort((a, b) => b.score - a.score);
 
                     return {
@@ -260,23 +258,21 @@
                         B,
                         isBye: false,
                         possibleOptions: optionsWithScores,
-                        flexibility: optionsWithScores.length // Key metric for priority
+                        flexibility: optionsWithScores.length
                     };
                 });
 
                 // ----------------------------------------------------------------
-                // STEP 4: PRIORITY SORT
-                // Sort matchups by Flexibility (Ascending). 
-                // Teams with FEWER options get to pick FIRST.
+                // STEP 4: PRIORITY SORT (By Scarcity)
                 // ----------------------------------------------------------------
                 matchupData.sort((a, b) => {
-                    if (a.isBye) return 1; // Byes go last
+                    if (a.isBye) return 1; 
                     if (b.isBye) return -1;
                     return a.flexibility - b.flexibility;
                 });
 
                 // ----------------------------------------------------------------
-                // STEP 5: ASSIGNMENT LOOP
+                // STEP 5: ASSIGNMENT
                 // ----------------------------------------------------------------
                 const assignedFields = new Set();
                 const finalMatchups = [];
@@ -287,7 +283,7 @@
                         return;
                     }
 
-                    // Find first option where the FIELD is not yet taken
+                    // Find best option where field is not taken
                     const bestAvailable = match.possibleOptions.find(opt => !assignedFields.has(opt.field));
 
                     if (bestAvailable) {
@@ -302,7 +298,7 @@
                             field: bestAvailable.field
                         });
                     } else {
-                        // NO VALID FIELD FOUND (Starvation or total lack of fields)
+                        // Truly no fields left (Inventory exhausted)
                         console.warn(`WARNING: Starvation! No fields left for ${match.A} vs ${match.B}`);
                         finalMatchups.push({
                             teamA: match.A,
@@ -314,11 +310,8 @@
                 });
 
                 // ----------------------------------------------------------------
-                // STEP 6: FORMAT & OUTPUT
+                // STEP 6: OUTPUT
                 // ----------------------------------------------------------------
-                // Re-sort finalMatchups to original pair order if needed, or keep priority order?
-                // Usually keeping them in processed order is fine, or we can just list them.
-                
                 let gameNumberLabel = "";
                 if (typeof window.getLeagueCurrentRound === "function") {
                     gameNumberLabel = `Game ${window.getLeagueCurrentRound(leagueName)}`;
