@@ -86,16 +86,29 @@ const TILES = [
 ];
 
 function mapEventNameForOptimizer(name) {
-  if (!name) name = "Free";
-  const lowerName = name.toLowerCase().trim();
-  if (lowerName === 'activity')          return { type: 'slot',   event: 'General Activity Slot' };
-  if (lowerName === 'sports')           return { type: 'slot',   event: 'Sports Slot' };
-  if (lowerName === 'special activity' ||
-      lowerName === 'special')          return { type: 'slot',   event: 'Special Activity' };
-  if (['swim','lunch','snacks','dismissal'].includes(lowerName))
-                                        return { type: 'pinned', event: name };
-  return { type: 'pinned', event: name };
+    if (!name) name = "Free";
+    const lower = name.toLowerCase().trim();
+
+    // Core slots
+    if (lower === 'activity')          return { type: 'slot', event: 'General Activity Slot' };
+    if (lower === 'sports')            return { type: 'slot', event: 'Sports Slot' };
+    if (lower === 'special activity' ||
+        lower === 'special')           return { type: 'slot', event: 'Special Activity' };
+
+    // League handling — FIXED
+    if (lower.includes('specialty league'))
+        return { type: 'specialty_league', event: 'Specialty League' };
+
+    if (lower.includes('league'))
+        return { type: 'league', event: 'League Game' };
+
+    // Pinned by default
+    if (['swim','lunch','snacks','dismissal'].includes(lower))
+        return { type: 'pinned', event: name };
+
+    return { type: 'pinned', event: name };
 }
+
 
 function renderPalette(paletteContainer) {
   paletteContainer.innerHTML = '<span style="font-weight:600;align-self:center;">Drag tiles onto the grid:</span>';
