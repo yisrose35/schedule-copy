@@ -1,13 +1,10 @@
 // ============================================================================
-// total_solver_engine.js (GCM "STRICT & SPECIFIC" VERSION)
+// total_solver_engine.js (ORIGINAL / REVERTED)
 // Backtracking Constraint Solver + League Engine
 // ----------------------------------------------------------------------------
-// FEATURES (Modern Architecture):
-// ✓ League Exclusivity Lockout (absolute unshareable fields)
-// ✓ Smart Neighbor Sharing & Distance Penalties
-// ✓ FIXED: Exclusivity is now a HARD constraint (99,999 penalty)
-// ✓ FIXED: League Tiles now show "vs Opponent (Sport)" instead of generic text
-// ✓ FIXED: Timeout Safety & Force Fit Diagnostics
+// Reverted to original state:
+// - FORCE_FIT_MODE = true (Permissive)
+// - Original argument passing (No explicit usage map)
 // ============================================================================
 
 (function () {
@@ -17,7 +14,7 @@
     const MAX_MATCHUP_ITERATIONS = 2000;
     
     // !!! GCM CONFIGURATION !!!
-    const FORCE_FIT_MODE = false; 
+    const FORCE_FIT_MODE = true; 
 
     // Runtime globals
     let globalConfig = null;
@@ -48,7 +45,7 @@
     }
 
     // ============================================================================
-    // PENALTY ENGINE (MODERN)
+    // PENALTY ENGINE
     // ============================================================================
 
     function calculatePenaltyCost(block, pick) {
@@ -56,31 +53,19 @@
         const bunk = block.bunk;
         const act = pick._activity;
 
-        // ---------------------------------------------------------
-        // 1. EXCLUSIVE LOCKOUT CHECK (Reservations)
-        // ---------------------------------------------------------
+        // 1. EXCLUSIVE LOCKOUT CHECK
         const fieldLog = window.fieldReservationLog?.[pick.field] || [];
         let currentOccupancy = 0;
-        let closestNeighborDistance = Infinity;
         const myNum = getBunkNumber(bunk);
 
         for (const r of fieldLog) {
             const overlap = r.startMin < block.endTime && r.endMin > block.startTime;
             if (!overlap) continue;
-
-            if (r.exclusive === true) return 99999; // Absolute reject
-
+            if (r.exclusive === true) return 99999; 
             currentOccupancy++;
-            const theirNum = getBunkNumber(r.bunk);
-            if (myNum !== null && theirNum !== null) {
-                const dist = Math.abs(myNum - theirNum);
-                if (dist < closestNeighborDistance) closestNeighborDistance = dist;
-            }
         }
 
-        // ---------------------------------------------------------
         // 2. NO DOUBLE ACTIVITY
-        // ---------------------------------------------------------
         const today = window.scheduleAssignments[bunk] || {};
         let todayCount = 0;
         for (const e of Object.values(today)) {
@@ -91,54 +76,38 @@
         }
         if (!pick._isLeague && todayCount >= 1) penalty += 15000;
 
-        // ---------------------------------------------------------
         // 3. SPECIAL MAX USAGE
-        // ---------------------------------------------------------
         const specialRule = globalConfig.masterSpecials?.find(s => isSameActivity(s.name, act));
         if (specialRule && specialRule.maxUsage > 0) {
             const hist = globalConfig.historicalCounts?.[bunk]?.[act] || 0;
             if (hist + todayCount >= specialRule.maxUsage) penalty += 20000;
         }
 
-        // ---------------------------------------------------------
-        // 4. FIELD PREFERENCES & EXCLUSIVITY (FIXED)
-        // ---------------------------------------------------------
+        // 4. FIELD PREFERENCES
         const props = activityProperties[pick.field];
         if (props?.preferences?.enabled) {
             const idx = (props.preferences.list || []).indexOf(block.divName);
-            
             if (idx !== -1) {
-                // In list: Reward (Preferred)
                 penalty -= (50 - idx * 5); 
             } else if (props.preferences.exclusive) {
-                // Not in list AND Exclusive: HARD REJECT
-                // GCM FIX: Increased from 2000 to 99999 to force the solver to obey.
                 return 99999; 
             } else {
-                // Not in list but NOT exclusive: Mild penalty
                 penalty += 2000; 
             }
         }
 
-        // ---------------------------------------------------------
-        // 5. SMART SHARING LOGIC
-        // ---------------------------------------------------------
+        // 5. SHARING LOGIC
         if (currentOccupancy === 0) { 
             penalty -= 10000;
-        } else if (currentOccupancy === 1) { 
-            let shareCost = 15000;
-            if (closestNeighborDistance === 1) shareCost = 500;
-            else if (closestNeighborDistance > 1 && closestNeighborDistance <= 5) shareCost = 5000;
-            penalty += shareCost;
-        } else if (currentOccupancy >= 2) { 
-            penalty += 20000; 
+        } else if (currentOccupancy >= 1) { 
+            penalty += 15000;
         }
 
         return penalty;
     }
 
     // ============================================================================
-    // LEAGUE ENGINE (FIXED LABELING)
+    // LEAGUE ENGINE
     // ============================================================================
 
     function getMatchupHistory(teamA, teamB, leagueName) {
@@ -146,7 +115,6 @@
         const key = [teamA, teamB].sort().join("|");
         const leagueKey = `${leagueName}|${key}`;
         const played = hist[leagueKey] || [];
-
         const sportCounts = {};
         for (const g of played) {
             sportCounts[g.sport] = (sportCounts[g.sport] || 0) + 1;
@@ -160,6 +128,7 @@
             cache[sport] = [];
             const potentials = allCandidateOptions.filter(c => c.type === "sport" && isSameActivity(c.sport, sport));
             for (const cand of potentials) {
+                // Reverted to original arguments
                 const fits = window.SchedulerCoreUtils.canBlockFit(block, cand.field, activityProperties, cand.activityName);
                 if (fits || FORCE_FIT_MODE) cache[sport].push(cand.field);
             }
@@ -177,8 +146,6 @@
 
         cands.sort((a, b) => {
             if (a.playCount !== b.playCount) return a.playCount - b.playCount;
-            if (a._sportConstraintCount !== b._sportConstraintCount)
-                return a._sportConstraintCount - b._sportConstraintCount;
             return Math.random() - 0.5;
         });
 
@@ -239,24 +206,18 @@
                 const c = p.sportCounts[sport] || 0;
                 minSC = Math.min(minSC, c);
             }
-            let equalBest = leagueSports.filter(s => (p.sportCounts[s] || 0) === minSC);
-            const validSports = equalBest.filter(s => fieldAvailabilityCache[s] && fieldAvailabilityCache[s].length > 0);
-            if (validSports.length === 0) continue;
-
+            const validSports = leagueSports.filter(s => (p.sportCounts[s] || 0) === minSC && fieldAvailabilityCache[s] && fieldAvailabilityCache[s].length > 0);
+            
             shuffleArray(validSports);
-            let optionsAdded = 0;
             for (const sport of validSports) {
                 const fields = fieldAvailabilityCache[sport];
                 shuffleArray(fields);
                 for (const f of fields) {
                     viable.push({
-                        t1: p.t1, t2: p.t2, playCount: p.playCount, sport: sport, field: f,
-                        _sportConstraintCount: fields.length, key: [p.t1, p.t2].sort().join("|")
+                        t1: p.t1, t2: p.t2, playCount: p.playCount, sport: sport, field: f
                     });
-                    optionsAdded++;
-                    if (optionsAdded >= 3) break;
+                    if (viable.length > 50) break;
                 }
-                if (optionsAdded >= 3) break;
             }
         }
         shuffleArray(viable);
@@ -265,7 +226,6 @@
 
     Solver.solveLeagueSchedule = function (leagueBlocks) {
         if (!leagueBlocks?.length) return [];
-
         const output = [];
         const bucket = {};
 
@@ -274,8 +234,6 @@
             if (!bucket[key]) bucket[key] = [];
             bucket[key].push(b);
         }
-
-        const fieldsUsed = new Set();
 
         for (const key in bucket) {
             const blocks = bucket[key];
@@ -289,91 +247,31 @@
             const matches = Solver.generateDailyMatchups(league, rep);
             if (!matches.length) continue;
 
-            const available = matches.filter(m => !fieldsUsed.has(m.field));
-            if (!available.length) continue;
-
-            const tier = available[0].playCount;
+            const tier = matches[0].playCount;
             const gameLabel = `Round ${tier + 1}`;
-            const formatted = available.map(m => `${m.t1} vs ${m.t2} — ${m.sport} @ ${m.field}`);
-
-            // === GCM FIX: PERSONALIZED LEAGUE TILES ===
+            
             for (const b of blocks) {
-                // 1. Find the specific match for THIS bunk
-                const myMatch = available.find(m => m.t1 === b.bunk || m.t2 === b.bunk);
-                
-                // 2. Generate Label
-                let displayText = "League Game";
-                let mySport = "General";
-                let myField = available[0].field; // Fallback
+                const myMatch = matches.find(m => m.t1 === b.bunk || m.t2 === b.bunk);
+                if (!myMatch) continue;
 
-                if (myMatch) {
-                    const opponent = (myMatch.t1 === b.bunk) ? myMatch.t2 : myMatch.t1;
-                    displayText = `vs ${opponent} (${myMatch.sport})`; // e.g., "vs Bunk 2 (Soccer)"
-                    mySport = myMatch.sport;
-                    myField = myMatch.field;
-                } else {
-                    // This bunk has a "Bye" (no match found in valid set)
-                    // Skip assigning them a league slot, or mark as "Bye"
-                    continue; 
-                }
-
+                const opponent = (myMatch.t1 === b.bunk) ? myMatch.t2 : myMatch.t1;
                 const pick = {
-                    field: myField,
-                    sport: mySport,
-                    _activity: displayText, // This text will appear on the tile
+                    field: myMatch.field,
+                    sport: myMatch.sport,
+                    _activity: `vs ${opponent} (${myMatch.sport})`,
                     _isLeague: true,
-                    _rawMatchups: available,
-                    _allMatchups: formatted,
                     _gameLabel: gameLabel
                 };
 
                 window.fillBlock(b, pick, globalConfig.yesterdayHistory, true, activityProperties);
-
-                // Update State (only once per match, but safe to repeat idempotently)
-                if (myMatch) {
-                    const state = window.leagueRoundState[league.name] || {};
-                    state.currentRound = tier + 1;
-                    const mKey = myMatch.key;
-                    
-                    if (!state.matchupsPlayed) state.matchupsPlayed = [];
-                    if (!state.matchupSports) state.matchupSports = {};
-
-                    if (!state.matchupsPlayed.includes(mKey)) state.matchupsPlayed.push(mKey);
-                    if (!state.matchupSports[mKey]) state.matchupSports[mKey] = [];
-                    state.matchupSports[mKey].push(myMatch.sport);
-
-                    fieldsUsed.add(myField);
-
-                    window.fieldReservationLog = window.fieldReservationLog || {};
-                    if (!window.fieldReservationLog[myField]) window.fieldReservationLog[myField] = [];
-                    
-                    // Deduplicate log entries
-                    const alreadyLogged = window.fieldReservationLog[myField].some(r => 
-                         r.bunk === `__LEAGUE_EXCLUSIVE__${b.divName}` && 
-                         r.startMin === b.startTime
-                    );
-
-                    if (!alreadyLogged) {
-                        window.fieldReservationLog[myField].push({
-                            bunk: `__LEAGUE_EXCLUSIVE__${b.divName}`,
-                            divName: b.divName,
-                            startMin: b.startTime,
-                            endMin: b.endTime,
-                            exclusive: true,
-                            reason: "League Unshareable Field"
-                        });
-                    }
-                    window.leagueRoundState[league.name] = state;
-                }
                 output.push({ block: b, solution: pick });
             }
-            window.saveGlobalSettings?.("leagueRoundState", window.leagueRoundState);
         }
         return output;
     };
 
     // ============================================================================
-    // MAIN SOLVER (UNCHANGED BUT INCLUDED FOR COMPLETENESS)
+    // MAIN SOLVER
     // ============================================================================
 
     Solver.sortBlocksByDifficulty = function (blocks, config) {
@@ -391,6 +289,7 @@
     Solver.getValidActivityPicks = function (block) {
         const picks = [];
         for (const cand of allCandidateOptions) {
+            // Reverted to original arguments
             const fits = window.SchedulerCoreUtils.canBlockFit(block, cand.field, activityProperties, cand.activityName);
             
             // Log rejection diagnostic
@@ -402,7 +301,6 @@
             if (fits || FORCE_FIT_MODE) {
                 const pick = { field: cand.field, sport: cand.sport, _activity: cand.activityName };
                 const cost = calculatePenaltyCost(block, pick);
-                // Hard cut for exclusive violations (99999)
                 if (cost < 90000) picks.push({ pick, cost });
             }
         }
@@ -419,10 +317,6 @@
     Solver.undoTentativePick = function (res) {
         const { bunk, startMin } = res;
         if (window.scheduleAssignments[bunk]) delete window.scheduleAssignments[bunk][startMin];
-        window.fieldReservationLog = window.fieldReservationLog || {};
-        for (const f in window.fieldReservationLog) {
-            window.fieldReservationLog[f] = window.fieldReservationLog[f].filter(r => !(r.bunk === bunk && r.startMin === startMin));
-        }
     };
 
     Solver.solveSchedule = function (allBlocks, config) {
