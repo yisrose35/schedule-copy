@@ -1,11 +1,10 @@
 // ============================================================================
-// scheduler_core_main.js (GCM PATCHED: FINAL LEAGUE INTERCEPTOR)
+// scheduler_core_main.js (GCM PATCHED: FINAL FIX)
 // PART 3 of 3: THE ORCHESTRATOR
 //
 // FIXES:
-// ✓ Forces "League Game" blocks into the Generator queue.
-// ✓ Includes "GCM PATCHED" marker for version verification.
-// ✓ Aggressive Regex matching to catch all league variations.
+// ✓ Unpacks 'fieldsBySport' properly to prevent ReferenceError.
+// ✓ Maintains the League Interceptor logic.
 // ============================================================================
 
 (function () {
@@ -132,7 +131,25 @@
         window.activityProperties = config.activityProperties;
         window.unifiedTimes = [];
 
-        const { divisions, activityProperties, masterLeagues, masterSpecialtyLeagues, masterSpecials, yesterdayHistory, rotationHistory, disabledLeagues, disabledSpecialtyLeagues, disabledFields, disabledSpecials, historicalCounts, specialActivityNames, bunkMetaData, dailyFieldAvailability } = config;
+        // GCM FIX: Added 'fieldsBySport' to extraction list
+        const { 
+            divisions, 
+            activityProperties, 
+            masterLeagues, 
+            masterSpecialtyLeagues, 
+            masterSpecials, 
+            yesterdayHistory, 
+            rotationHistory, 
+            disabledLeagues, 
+            disabledSpecialtyLeagues, 
+            disabledFields, 
+            disabledSpecials, 
+            historicalCounts, 
+            specialActivityNames, 
+            bunkMetaData, 
+            dailyFieldAvailability,
+            fieldsBySport // <--- ADDED HERE
+        } = config;
 
         window.SchedulerCoreUtils._bunkMetaData = bunkMetaData;
         window.SchedulerCoreUtils._sportMetaData = config.sportMetaData || {};
@@ -285,7 +302,19 @@
 
         // 7 — Leagues
         const leagueContext = {
-            schedulableSlotBlocks, fieldUsageBySlot, activityProperties, masterSpecialtyLeagues, disabledSpecialtyLeagues, masterLeagues, disabledLeagues, rotationHistory, yesterdayHistory, divisions, fieldsBySport, dailyLeagueSportsUsage: {}, fillBlock
+            schedulableSlotBlocks, 
+            fieldUsageBySlot, 
+            activityProperties, 
+            masterSpecialtyLeagues, 
+            disabledSpecialtyLeagues, 
+            masterLeagues, 
+            disabledLeagues, 
+            rotationHistory, 
+            yesterdayHistory, 
+            divisions, 
+            fieldsBySport, // No longer undefined
+            dailyLeagueSportsUsage: {}, 
+            fillBlock
         };
         window.SchedulerCoreLeagues?.processSpecialtyLeagues?.(leagueContext);
         window.SchedulerCoreLeagues?.processRegularLeagues?.(leagueContext);
