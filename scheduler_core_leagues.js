@@ -1,12 +1,9 @@
 // ============================================================================
-// scheduler_core_leagues.js (GCM FINAL: UNIFIED DIVS + CAPACITY FALLBACK)
+// scheduler_core_leagues.js (GCM FINAL: UNIFIED DIVS + STRICT RULE RESPECT)
 // Integrated with league_scheduling.js:
 // - Uses window.getLeagueMatchups(...) for round progression
 // - Groups by (leagueName + startTime) -> MERGES DIVISIONS
-// - Smart Sport Rotation:
-//   1. Tries to keep everyone on the same sport if fields exist.
-//   2. If fields run out, seamlessly switches specific matchups to the next sport.
-//   3. Prevents back-to-back sports.
+// - RESPECTS DAILY ADJUSTMENTS (No Force Overrides)
 // ============================================================================
 
 (function () {
@@ -57,10 +54,6 @@
 
     // ------------------------------------------------------------
     // SMART SPORT PRIORITIZER
-    // Returns sports sorted by:
-    // 1. Fresh (Unplayed)
-    // 2. Played (Rematch allowed)
-    // 3. Back-to-Back (Heavily penalized, only if desperate)
     // ------------------------------------------------------------
     function getPrioritizedSports(leagueName, teamA, teamB, availableSports) {
         if (!teamA || !teamB || teamA === "BYE" || teamB === "BYE") {
@@ -90,14 +83,13 @@
             const playedByB = currentCycleSportsB.includes(sport);
 
             // BONUS: Freshness
-            if (!playedByA && !playedByB) score += 100;      // Gold: Fresh for both
-            else if (!playedByA || !playedByB) score += 50;  // Silver: Fresh for one
-            else score += 10;                                // Bronze: Rematch (played before but valid)
+            if (!playedByA && !playedByB) score += 100;      // Gold
+            else if (!playedByA || !playedByB) score += 50;  // Silver
+            else score += 10;                                // Bronze
 
             return { sport, score };
         });
 
-        // Sort high score to low score
         scoredSports.sort((a, b) => b.score - a.score);
         return scoredSports.map(s => s.sport);
     }
@@ -146,7 +138,7 @@
                 fieldUsageBySlot
             } = context;
 
-            console.log("--- LEAGUE GENERATOR START (CAPACITY CHECK) ---");
+            console.log("--- LEAGUE GENERATOR START (STRICT RULES) ---");
 
             const leagueBlocks = schedulableSlotBlocks.filter(b => {
                 const name = String(b.event || "").toLowerCase();
@@ -219,7 +211,7 @@
 
                 const baseSports = league.sports?.length ? league.sports : ["League Game"];
                 const matchups = [];
-                const lockedFields = new Set(); // Tracks fields used IN THIS ROUND
+                const lockedFields = new Set(); 
 
                 // ====================================================================
                 // ASSIGN SPORTS & FIELDS
@@ -238,21 +230,20 @@
                         return;
                     }
 
-                    // 1. Get sports sorted by preference (Freshest -> ... -> Back-to-Back)
+                    // 1. Sort Sports by Preference
                     const candidateSports = getPrioritizedSports(leagueName, A, B, baseSports);
                     
                     let chosenField = null;
-                    let chosenSport = candidateSports[0]; // Default to #1 preference
+                    let chosenSport = candidateSports[0]; 
 
-                    // 2. CAPACITY LOOP: Try #1 sport. If no fields, try #2, then #3...
+                    // 2. FIND FIRST VALID FIELD
                     for (const sport of candidateSports) {
                         const possibleFields = fieldsBySport?.[sport] || [];
                         
-                        // Check if ANY field for this sport is free
                         for (const field of possibleFields) {
-                            if (lockedFields.has(field)) continue; // ALREADY TAKEN BY ANOTHER PAIR
+                            if (lockedFields.has(field)) continue; 
 
-                            // Check physical availability (occupied by other activity?)
+                            // STRICT CHECK: Verify field is physically available
                             const fits = window.SchedulerCoreUtils.canBlockFit(
                                 {
                                     divName: Array.from(group.involvedDivisions)[0],
@@ -265,24 +256,24 @@
                                 activityProperties,
                                 fieldUsageBySlot,
                                 sport,
-                                true // GCM Force Mode (tries hard to fit)
+                                true 
                             );
 
-                            if (fits || true) { 
+                            // 🛑 FIXED: Removed "|| true" override. 
+                            // Now strictly enforces daily adjustments/exclusions.
+                            if (fits) { 
                                 chosenField = field;
                                 chosenSport = sport;
-                                break; // Found a field! Stop looking at fields.
+                                break; 
                             }
                         }
-                        if (chosenField) break; // Found a sport! Stop looking at sports.
+                        if (chosenField) break; 
                     }
 
-                    // 3. Record History & Save
                     if (chosenField) {
                         lockedFields.add(chosenField);
                     }
                     
-                    // Always record sport (even if field is null) to rotate logic next time
                     recordSportHistory(leagueName, A, chosenSport);
                     recordSportHistory(leagueName, B, chosenSport);
 
