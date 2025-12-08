@@ -14,6 +14,7 @@
 // - FIX: STRICT EXACT MATCH enforcement for sharable fields.
 // - FIX: Robust Regex for field name matching.
 // - CRITICAL PATCH: Argument mismatch handling.
+// - FINAL FIX: Lock & Key logic for strict activity matching on shared fields.
 // ============================================================================
 
 (function () {
@@ -211,8 +212,12 @@
     function normalizeActivityStrict(str) {
         if (!str) return "";
         let s = String(str).trim();
-        // Remove known prefixes if they exist in the activity name itself
-        // e.g., "Gym A - Basketball" -> "basketball"
+        
+        // Remove "Field Name - " prefix pattern aggressively
+        // Matches: "Any Text - ActivityName" -> returns "ActivityName"
+        // Matches: "Soccer Cage - Soccer" -> "Soccer"
+        // Matches: "Soccer" -> "Soccer"
+        
         const parts = s.split(/\s*[-–—]\s*/);
         if (parts.length > 1) {
              // Take the LAST part as the activity
@@ -341,31 +346,49 @@
             const myObj = { _gameLabel: block._gameLabel, _activity: actName };
             const isLeague = forceLeague || isLeagueAssignment(myObj, actName);
 
+            // === START: LOCK & KEY ACTIVITY CHECK ===
+            // Identify the "Locked Activity" for this slot if any bunk is already present.
+            let lockedActivity = null;
+            let isLockedByLeague = false;
+
+            if (existing.length > 0) {
+                // Find the first valid activity to lock onto
+                for (const b of existing) {
+                    const activity = usage.bunks[b];
+                    if (activity) {
+                        const existingEntry = window.scheduleAssignments?.[b]?.[idx];
+                        if (isLeagueAssignment(existingEntry, activity)) {
+                            isLockedByLeague = true;
+                        }
+                        lockedActivity = normalizeActivityStrict(activity);
+                        break; // Found the lock, stop searching
+                    }
+                }
+            }
+
+            // Check if proposed activity matches the lock
+            if (maxCapacity > 1 && lockedActivity) {
+                const proposedNorm = normalizeActivityStrict(actName);
+                
+                // If the field is locked by a league game, ONLY league games can join (if capacity allows)
+                if (isLockedByLeague && !isLeague) {
+                    return false;
+                }
+
+                // If not a league game, Strict string match required
+                if (!isLockedByLeague && proposedNorm !== lockedActivity) {
+                    return false; // REJECT: Does not match the locked activity
+                }
+            }
+            // === END: LOCK & KEY ===
+
             for (const b of existing) {
                 if (b === block.bunk) continue;
 
                 const existingEntry = window.scheduleAssignments?.[b]?.[idx];
                 const existingName = usage.bunks[b];
 
-                const theirAssignment = window.scheduleAssignments[b]?.[idx];
-                const theirLabel = theirAssignment?._gameLabel || theirAssignment?._activity;
-                const myLabel = block._gameLabel || (String(actName).includes("League") ? actName : null);
-
-                const sameGame = myLabel && theirLabel && (String(myLabel) === String(theirLabel));
-
-                // === GCM FIX: STRICT SAME ACTIVITY CHECK ===
-                // If capacity > 1, all occupants MUST play same sport (unless it's a league game match).
-                if (maxCapacity > 1) {
-                    const normExisting = normalizeActivityStrict(existingName);
-                    const normProposed = normalizeActivityStrict(actName);
-
-                    if (normExisting !== normProposed && !sameGame) {
-                        return false; // Hard Reject: Different activities
-                    }
-                }
-                // ===========================================
-
-                // === GCM FIX: CAPACITY ENFORCEMENT ===
+                // === CAPACITY ENFORCEMENT ===
                 // Count every existing occupant.
                 currentWeight += calculateAssignmentWeight(existingName, existingEntry);
             }
