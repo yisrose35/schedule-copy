@@ -11,10 +11,9 @@
 // - Removed outdated league text veto
 // - Deterministic canBlockFit()
 // - Stable sharable/zone/minDuration handling
-// - FIX: Ensure same activity/sport for sharable fields (maxCapacity > 1)
-// - FIX: Enforce field's maxCapacity regardless of activity name similarity (prevent 6 bunks on a field).
-// - REFINEMENT: Stricter enforcement of same-activity rule to prevent different sports (e.g., Football & Kickball) on the same sharable field.
-// - CRITICAL PATCH: Handle argument mismatch from Total Solver (fixes ignored constraints).
+// - FIX: STRICT EXACT MATCH enforcement for sharable fields.
+// - FIX: Robust Regex for field name matching.
+// - CRITICAL PATCH: Argument mismatch handling.
 // ============================================================================
 
 (function () {
@@ -68,16 +67,14 @@
         return "";
     };
     Utils.fmtTime = function (d) {
-    if (!d) return "";
-    if (typeof d === 'string') d = new Date(d);
-
-    let h = d.getHours();
-    let m = d.getMinutes().toString().padStart(2, "0");
-    const ap = h >= 12 ? "PM" : "AM";
-    h = h % 12 || 12;
-    return `${h}:${m} ${ap}`;
-};
-
+        if (!d) return "";
+        if (typeof d === 'string') d = new Date(d);
+        let h = d.getHours();
+        let m = d.getMinutes().toString().padStart(2, "0");
+        const ap = h >= 12 ? "PM" : "AM";
+        h = h % 12 || 12;
+        return `${h}:${m} ${ap}`;
+    };
 
     Utils.minutesToDate = function (mins) {
         const d = new Date(1970, 0, 1, 0, 0, 0);
@@ -178,14 +175,14 @@
         return s.includes("league game") || s.includes("specialty league");
     }
 
-    // FIXED: league does NOT take maxCapacity (that was the poison).
     function calculateAssignmentWeight(activityName, assignmentObj) {
         return isLeagueAssignment(assignmentObj, activityName) ? 1 : 1;
     }
 
     function getRootFieldName(name) {
         if (!name) return "";
-        return String(name).split(/\s+[-–—]\s+/)[0].trim().toLowerCase();
+        // Robust splitter: Handles " - ", " – ", "-", with optional spaces
+        return String(name).split(/\s*[-–—]\s*/)[0].trim().toLowerCase();
     }
 
     function getCombinedUsage(slotIndex, proposedFieldName, usageMap) {
@@ -208,6 +205,22 @@
         }
 
         return combined;
+    }
+
+    // Helper to safely normalize strings for strict comparison
+    function normalizeActivityStrict(str) {
+        if (!str) return "";
+        // Remove known prefixes if they exist in the activity name itself (rare but possible)
+        // e.g., "Gym A - Basketball" -> "basketball"
+        // But also ensure we don't accidentally strip "Capture the Flag" -> "Flag"
+        const s = String(str).trim();
+        const parts = s.split(/\s*[-–—]\s*/);
+        if (parts.length > 1) {
+             // Heuristic: If it looks like "Field - Sport", take the last part.
+             // If it's just "Sport", take it.
+             return parts[parts.length - 1].trim().toLowerCase();
+        }
+        return s.toLowerCase();
     }
 
     // =================================================================
@@ -260,19 +273,15 @@
     Utils.canBlockFit = function (block, fieldName, activityProperties, fieldUsageBySlot, actName, forceLeague = false) {
         
         // --- PATCH FOR TOTAL SOLVER ARGUMENT MISMATCH ---
-        // The Total Solver calls this with 4 args: (block, field, props, activityName).
-        // It skips fieldUsageBySlot. We must detect this and shift arguments.
         if (typeof fieldUsageBySlot === 'string' && actName === undefined) {
             actName = fieldUsageBySlot;
-            fieldUsageBySlot = window.fieldUsageBySlot; // Recover global usage map
+            fieldUsageBySlot = window.fieldUsageBySlot; 
         }
-        // Safety fallback if undefined/null
         if (!fieldUsageBySlot) fieldUsageBySlot = window.fieldUsageBySlot || {};
         // ------------------------------------------------
         
         if (!fieldName) return false;
 
-        // Safe fallback props (Lunch, Snack, Free, Regroup, Dismissal, etc.)
         const baseProps = {
             available: true,
             sharable: false,
@@ -292,12 +301,6 @@
 
         if (activityDuration <= 0 || activityDuration < (rules.minDurationMin || 0))
             return false;
-
-        // DISABLED transition concurrency until proper zone engine is built
-        // (prevents transition from blocking the whole day)
-        // ----------------------------------------------------
-        // if (rules.preMin > 0 || rules.postMin > 0) {}
-        // ----------------------------------------------------
 
         let maxCapacity = 1;
         if (props.sharableWith?.capacity) maxCapacity = parseInt(props.sharableWith.capacity);
@@ -334,8 +337,6 @@
         for (const idx of uniqueSlots) {
             const usage = getCombinedUsage(idx, fieldName, fieldUsageBySlot);
 
-            // *** REMOVED *** division mismatch poisoning
-
             let currentWeight = 0;
             const existing = Object.keys(usage.bunks);
 
@@ -354,28 +355,21 @@
 
                 const sameGame = myLabel && theirLabel && (String(myLabel) === String(theirLabel));
 
-                // === START: GCM FIX for Same Activity on Sharable Field ===
-                // Constraint: If field is sharable (capacity > 1), all bunks must be doing the same activity.
-                if (maxCapacity > 1) { 
-                    const existingActivity = String(existingName).trim().toLowerCase();
-                    const proposedActivity = String(actName).trim().toLowerCase();
+                // === GCM FIX: STRICT SAME ACTIVITY CHECK ===
+                // If capacity > 1, all occupants MUST play same sport (unless it's a league game match).
+                if (maxCapacity > 1) {
+                    const normExisting = normalizeActivityStrict(existingName);
+                    const normProposed = normalizeActivityStrict(actName);
 
-                    // Reject if activities are different AND they are NOT participating in the same league game block.
-                    // This comparison must be strict.
-                    if (existingActivity !== proposedActivity && !sameGame) {
-                        // Hard rejection: Sharable field, different activities, and not exempted by league match.
-                        return false; 
+                    if (normExisting !== normProposed && !sameGame) {
+                        return false; // Hard Reject: Different activities
                     }
                 }
-                // === END: GCM FIX ===
+                // ===========================================
 
-                // === START: GCM FIX for Max Field Capacity Enforcement ===
-                // Every existing assignment must count against the field's capacity, regardless of activity,
-                // otherwise capacity checks fail when different activities (that passed the same-activity check above)
-                // occupy a sharable field (e.g., Soccer & Running Bases in a cage).
-                // The assignment weight calculation must happen *before* the capacity check.
+                // === GCM FIX: CAPACITY ENFORCEMENT ===
+                // Count every existing occupant.
                 currentWeight += calculateAssignmentWeight(existingName, existingEntry);
-                // === END: GCM FIX ===
             }
 
             const myWeight = isLeague ? 1 : 1;
@@ -400,7 +394,7 @@
     };
 
     // =================================================================
-    // 5. TIMELINE (Manual Override Safety)
+    // 5. TIMELINE
     // =================================================================
 
     Utils.timeline = {
@@ -412,13 +406,10 @@
                 let current = 0;
                 for (const bunk of Object.keys(assigns)) {
                     if (bunk === excludeBunk) continue;
-
                     const entry = assigns[bunk][s];
                     if (!entry) continue;
-
                     const name = Utils.fieldLabel(entry.field) || entry._activity;
                     if (!name) continue;
-
                     if (name.toLowerCase() === resourceName.toLowerCase()) {
                         const isLeague = entry._h2h || String(entry._activity).includes("League");
                         current += (isLeague ? capacity : 1);
@@ -433,18 +424,14 @@
             const slots = Utils.findSlotsForRange(startMin, endMin);
             const assigns = window.scheduleAssignments || {};
             let maxLoad = 0;
-
             for (const s of slots) {
                 let current = 0;
-
                 for (const bunk of Object.keys(assigns)) {
                     if (bunk === excludeBunk) continue;
                     const entry = assigns[bunk][s];
                     if (!entry) continue;
-
                     const name = Utils.fieldLabel(entry.field) || entry._activity;
                     if (!name) continue;
-
                     if (name.toLowerCase() === resourceName.toLowerCase()) {
                         const isLeague = entry._h2h || String(entry._activity).includes("League");
                         current += (isLeague ? 2 : 1);
@@ -452,7 +439,6 @@
                 }
                 maxLoad = Math.max(maxLoad, current);
             }
-
             return maxLoad;
         }
     };
