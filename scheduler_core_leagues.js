@@ -1,8 +1,8 @@
 // ============================================================================
-// scheduler_core_leagues.js (GCM FINAL: NO TBD FALLBACK)
+// scheduler_core_leagues.js (GCM FINAL: MIXED SPORTS ENABLED)
 // Integrated with league_scheduling.js
-// - FIX: Removed "Fatal Filter" for back-to-back sports.
-// - LOGIC: "Better to repeat a sport than to have no game at all."
+// - FIX: Scans ALL league sports simultaneously.
+// - RESULT: If Sport A fills up, immediately assigns Sport B to remaining teams.
 // ============================================================================
 
 (function () {
@@ -63,8 +63,9 @@
 
         let score = 0;
 
-        // 1. BACK-TO-BACK CHECK (Soft Penalty, not Fatal)
-        // If they just played this, we punish the score, but we DO NOT disqualify it.
+        // 1. BACK-TO-BACK PENALTY (Soft)
+        // If they just played this, we punish the score so they try to pick something else.
+        // But if this is the ONLY thing left (e.g., only Soccer fields open), they will still take it.
         if (sport === lastSportA || sport === lastSportB) {
             score -= 500; 
         }
@@ -79,9 +80,9 @@
         const playedByB = currentCycleSportsB.includes(sport);
 
         // 2. FRESHNESS BONUSES
-        if (!playedByA && !playedByB) score += 100;      // GOLD: Fresh for both
-        else if (!playedByA || !playedByB) score += 50;  // SILVER: Fresh for one
-        else score += 10;                                // BRONZE: Repeat (but valid)
+        if (!playedByA && !playedByB) score += 100;      // GOLD
+        else if (!playedByA || !playedByB) score += 50;  // SILVER
+        else score += 10;                                // BRONZE
 
         return score;
     }
@@ -130,7 +131,7 @@
                 fieldUsageBySlot
             } = context;
 
-            console.log("--- LEAGUE GENERATOR START (NO TBD FALLBACK) ---");
+            console.log("--- LEAGUE GENERATOR START (MIXED SPORTS) ---");
 
             const leagueBlocks = schedulableSlotBlocks.filter(b => {
                 const name = String(b.event || "").toLowerCase();
@@ -188,8 +189,10 @@
 
                 // ----------------------------------------------------------------
                 // STEP 1: GLOBAL INVENTORY SCAN
+                // Find ALL physically possible (Sport + Field) combos for ALL sports in the league
                 // ----------------------------------------------------------------
                 const globalInventory = [];
+                
                 leagueSports.forEach(sport => {
                     const exactSportKey = Object.keys(fieldsBySport || {}).find(k => k.toLowerCase() === sport.toLowerCase());
                     const possibleFields = exactSportKey ? fieldsBySport[exactSportKey] : [];
@@ -232,7 +235,7 @@
                 if (!Array.isArray(pairs) || !pairs.length) return;
 
                 // ----------------------------------------------------------------
-                // STEP 3: MATRIX SCORING (CRITICAL FIX HERE)
+                // STEP 3: MATRIX SCORING
                 // ----------------------------------------------------------------
                 const matchupData = pairs.map((pair, index) => {
                     const A = pair[0] === "BYE" ? "BYE" : pair[0];
@@ -242,14 +245,13 @@
                         return { index, A, B, isBye: true, possibleOptions: [] };
                     }
 
+                    // Calculate score for EVERY available spot on the "Buffet"
                     const optionsWithScores = globalInventory.map(opt => {
                         const score = calculateOptionScore(opt, leagueName, A, B, leagueSports.length);
                         return { ...opt, score };
                     });
 
-                    // 🛑 REMOVED THE .filter() THAT DROPPED NEGATIVE SCORES
-                    // Even if score is -500 (Back-to-Back), we keep it as a last resort.
-                    
+                    // Sort options BEST to WORST
                     optionsWithScores.sort((a, b) => b.score - a.score);
 
                     return {
@@ -258,12 +260,14 @@
                         B,
                         isBye: false,
                         possibleOptions: optionsWithScores,
+                        // Flexibility: How many valid options do they have?
                         flexibility: optionsWithScores.length
                     };
                 });
 
                 // ----------------------------------------------------------------
                 // STEP 4: PRIORITY SORT (By Scarcity)
+                // Teams with fewer options pick first.
                 // ----------------------------------------------------------------
                 matchupData.sort((a, b) => {
                     if (a.isBye) return 1; 
@@ -298,7 +302,7 @@
                             field: bestAvailable.field
                         });
                     } else {
-                        // Truly no fields left (Inventory exhausted)
+                        // Truly no fields left on entire campus for any sport
                         console.warn(`WARNING: Starvation! No fields left for ${match.A} vs ${match.B}`);
                         finalMatchups.push({
                             teamA: match.A,
