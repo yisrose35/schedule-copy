@@ -1,8 +1,8 @@
 // ============================================================================
-// scheduler_core_leagues.js (GCM FINAL: DIRECT FIELD SCAN)
+// scheduler_core_leagues.js (GCM FINAL: DIRECT RAW DATA SCAN)
 // Integrated with league_scheduling.js
-// - FIX: Iterates MASTER FIELDS instead of just sport names.
-// - RESULT: Guarantees finding ANY open field on campus.
+// - FIX: Scans window.app1.fields directly (Bypasses loader filtering).
+// - RESULT: Sees EVERY field you created. Guarantees fallback options.
 // ============================================================================
 
 (function () {
@@ -65,9 +65,12 @@
 
         let score = 0;
 
-        // 1. PREFERENCE BONUS (Critical)
+        // 1. PREFERENCE BONUS (Basketball gets priority)
         if (isPreferred) {
-            score += 2000; 
+            score += 5000; 
+        } else {
+            // Fallback sports get a small base score so they are valid
+            score += 100;
         }
 
         // 2. BACK-TO-BACK PENALTY (Soft)
@@ -129,18 +132,19 @@
                 schedulableSlotBlocks,
                 masterLeagues,
                 disabledLeagues,
-                fieldsBySport,
+                disabledFields, // Daily Adjustments
                 activityProperties,
                 yesterdayHistory,
                 fillBlock,
                 fieldUsageBySlot
             } = context;
 
-            // Load Master Fields directly to ensure we don't miss anything
-            const fullConfig = window.SchedulerCoreUtils.loadAndFilterData();
-            const masterFields = fullConfig.masterFields || [];
+            // FIX: Load Raw Fields directly from App1 (Bypasses loader filtering issues)
+            const rawApp1 = window.loadGlobalSettings?.().app1 || window.app1 || {};
+            const rawFields = rawApp1.fields || [];
 
-            console.log("--- LEAGUE GENERATOR START (DIRECT FIELD SCAN) ---");
+            console.log("--- LEAGUE GENERATOR START (RAW DATA SCAN) ---");
+            console.log(`Scanning ${rawFields.length} raw fields...`);
 
             const leagueBlocks = schedulableSlotBlocks.filter(b => {
                 const name = String(b.event || "").toLowerCase();
@@ -197,26 +201,35 @@
                 const preferredSports = league.sports || ["League Game"];
                 
                 // ----------------------------------------------------------------
-                // STEP 1: DIRECT FIELD SCAN
-                // Iterate every physical field to find *anything* open
+                // STEP 1: DIRECT RAW FIELD SCAN
                 // ----------------------------------------------------------------
                 const globalInventory = [];
                 
-                masterFields.forEach(fieldObj => {
+                rawFields.forEach(fieldObj => {
                     const fieldName = fieldObj.name;
-                    // What sports can this field host?
+
+                    // 1. Check Daily Disable List
+                    if (disabledFields && disabledFields.includes(fieldName)) {
+                        return; // Disabled for today
+                    }
+
+                    // 2. Check "Available" Toggle
+                    if (fieldObj.available === false) {
+                        return; // Disabled globally
+                    }
+
                     const supportedActivities = fieldObj.activities || [];
                     
-                    // Always try to fit the Preferred Sports first
+                    // 3. Check for Preferred Sports (Basketball)
                     preferredSports.forEach(sport => {
                         const isSupported = supportedActivities.some(s => s.toLowerCase() === sport.toLowerCase());
-                        // Even if not explicitly supported, we check if it fits (sometimes fields are flexible)
                         if (isSupported) {
                             checkAndAdd(sport, fieldName, true);
                         }
                     });
 
-                    // Then try all other supported sports (Fallback)
+                    // 4. Check for Fallback Sports (Soccer, Hockey, etc.)
+                    // This adds ANY sport the field supports as a backup option
                     supportedActivities.forEach(sport => {
                         const isPreferred = preferredSports.some(ps => ps.toLowerCase() === sport.toLowerCase());
                         if (!isPreferred) {
@@ -224,7 +237,6 @@
                         }
                     });
                     
-                    // Helper to check fit
                     function checkAndAdd(sportName, fName, isPref) {
                         const fits = window.SchedulerCoreUtils.canBlockFit(
                             {
@@ -279,6 +291,7 @@
                         return { ...opt, score };
                     });
 
+                    // Sort: High Score (Preferred) -> Low Score (Fallback)
                     optionsWithScores.sort((a, b) => b.score - a.score);
 
                     return {
