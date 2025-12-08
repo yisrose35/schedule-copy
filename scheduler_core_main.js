@@ -1,10 +1,10 @@
 // ============================================================================
-// scheduler_core_main.js (GCM PATCHED: TRACE LOGGING)
+// scheduler_core_main.js (GCM PATCHED: FUZZY BUNK LOOKUP)
 // PART 3 of 3: THE ORCHESTRATOR
 //
 // FIXES:
-// ✓ Unpacks 'fieldsBySport' properly.
-// ✓ TRACE LOGGING: Prints decision path for every "League" block.
+// ✓ Adds "Fuzzy Lookup" to find bunks even if Division names mismatch (3 vs 3rd Grade).
+// ✓ LOGS the actual bunk count being added for every league block.
 // ============================================================================
 
 (function () {
@@ -124,38 +124,20 @@
     // MAIN ENTRY (GCM PATCHED)
     // -------------------------------------------------------------------------
     window.runSkeletonOptimizer = function (manualSkeleton, externalOverrides) {
-        console.log(">>> OPTIMIZER STARTED (GCM PATCHED + TRACE)");
+        console.log(">>> OPTIMIZER STARTED (GCM PATCHED + FUZZY BUNKS)");
         const Utils = window.SchedulerCoreUtils;
         const config = Utils.loadAndFilterData();
         window.activityProperties = config.activityProperties;
         window.unifiedTimes = [];
 
-        // GCM FIX: Added 'fieldsBySport' to extraction list
-        const { 
-            divisions, 
-            activityProperties, 
-            masterLeagues, 
-            masterSpecialtyLeagues, 
-            masterSpecials, 
-            yesterdayHistory, 
-            rotationHistory, 
-            disabledLeagues, 
-            disabledSpecialtyLeagues, 
-            disabledFields, 
-            disabledSpecials, 
-            historicalCounts, 
-            specialActivityNames, 
-            bunkMetaData, 
-            dailyFieldAvailability,
-            fieldsBySport 
-        } = config;
+        const { divisions, activityProperties, masterLeagues, masterSpecialtyLeagues, masterSpecials, yesterdayHistory, rotationHistory, disabledLeagues, disabledSpecialtyLeagues, disabledFields, disabledSpecials, historicalCounts, specialActivityNames, bunkMetaData, dailyFieldAvailability, fieldsBySport } = config;
 
         window.SchedulerCoreUtils._bunkMetaData = bunkMetaData;
         window.SchedulerCoreUtils._sportMetaData = config.sportMetaData || {};
         window.fieldUsageBySlot = {};
         let fieldUsageBySlot = window.fieldUsageBySlot;
         window.scheduleAssignments = {};
-        window.leagueAssignments = {}; // RESET LEAGUE OUTPUT
+        window.leagueAssignments = {}; 
 
         if (!manualSkeleton || manualSkeleton.length === 0) return false;
 
@@ -193,14 +175,38 @@
             }
         });
 
+        // === HELPER: FUZZY BUNK LOOKUP ===
+        function getBunksForDivision(targetDiv) {
+            // 1. Exact Match
+            if (divisions[targetDiv]) return divisions[targetDiv].bunks || [];
+            
+            // 2. Fuzzy Match
+            const cleanTarget = String(targetDiv).toLowerCase().replace(/[^a-z0-9]/g, '');
+            const key = Object.keys(divisions).find(k => {
+                const cleanKey = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+                return cleanKey.includes(cleanTarget) || cleanTarget.includes(cleanKey);
+            });
+            
+            if (key) return divisions[key].bunks || [];
+            return [];
+        }
+
         // 5 — Collect blocks
         const schedulableSlotBlocks = [];
         const GENERATOR_TYPES = ["slot", "activity", "sports", "special", "league", "specialty_league"];
 
         manualSkeleton.forEach(item => {
             const divName = item.division;
-            const bunkList = divisions[divName]?.bunks || [];
-            if (bunkList.length === 0) return;
+            const bunkList = getBunksForDivision(divName); // Use Fuzzy Lookup
+
+            if (bunkList.length === 0) {
+                // Only warn if we haven't warned already
+                if (!window._hasWarnedDiv) {
+                    console.warn(`[SKIP] No bunks found for division '${divName}' (Lookup failed).`);
+                    window._hasWarnedDiv = true;
+                }
+                return;
+            }
 
             const sMin = Utils.parseTimeToMinutes(item.startTime);
             const eMin = Utils.parseTimeToMinutes(item.endTime);
@@ -213,25 +219,18 @@
             const finalName = normGA || normLg || normSL || item.event;
 
             const isGenerated = /general|sport|special|league/i.test(finalName);
-            
-            // GCM PATCHED: Aggressive League Detection
             const isLeague = /league/i.test(finalName) || /league/i.test(item.event);
-            
             const trans = Utils.getTransitionRules(finalName, activityProperties);
             const hasBuffer = (trans.preMin + trans.postMin) > 0;
             const isSchedulable = GENERATOR_TYPES.includes(item.type);
 
             // === TRACE LOGGING ===
-            if (item.event.toLowerCase().includes("league")) {
-                console.log(`[MAIN TRACE] Found block "${item.event}" (Div: ${divName})`);
-                console.log(`   -> isLeague: ${isLeague}`);
-                console.log(`   -> isGenerated: ${isGenerated}`);
-                console.log(`   -> isSchedulable: ${isSchedulable} (Type: ${item.type})`);
-                
-                if (isLeague) {
-                    console.log("   -> DECISION: Adding to Generator Queue.");
-                } else if ((item.type === "pinned" || !isGenerated) && !isSchedulable && item.type !== "smart" && !hasBuffer) {
-                    console.warn("   -> DECISION: TREATING AS PINNED (Skipping Generator!).");
+            if (isLeague) {
+                console.log(`[MAIN TRACE] Found League Block "${item.event}" (Div: ${divName})`);
+                if (bunkList.length > 0) {
+                    console.log(`   -> Pushing ${bunkList.length} items to queue.`);
+                } else {
+                    console.error("   -> CRITICAL: Bunk List is EMPTY. Item NOT added.");
                 }
             }
             // =====================
@@ -313,19 +312,7 @@
 
         // 7 — Leagues
         const leagueContext = {
-            schedulableSlotBlocks, 
-            fieldUsageBySlot, 
-            activityProperties, 
-            masterSpecialtyLeagues, 
-            disabledSpecialtyLeagues, 
-            masterLeagues, 
-            disabledLeagues, 
-            rotationHistory, 
-            yesterdayHistory, 
-            divisions, 
-            fieldsBySport, // No longer undefined
-            dailyLeagueSportsUsage: {}, 
-            fillBlock
+            schedulableSlotBlocks, fieldUsageBySlot, activityProperties, masterSpecialtyLeagues, disabledSpecialtyLeagues, masterLeagues, disabledLeagues, rotationHistory, yesterdayHistory, divisions, fieldsBySport, dailyLeagueSportsUsage: {}, fillBlock
         };
         window.SchedulerCoreLeagues?.processSpecialtyLeagues?.(leagueContext);
         window.SchedulerCoreLeagues?.processRegularLeagues?.(leagueContext);
