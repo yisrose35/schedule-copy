@@ -14,6 +14,7 @@
 // - FIX: Ensure same activity/sport for sharable fields (maxCapacity > 1)
 // - FIX: Enforce field's maxCapacity regardless of activity name similarity (prevent 6 bunks on a field).
 // - REFINEMENT: Stricter enforcement of same-activity rule to prevent different sports (e.g., Football & Kickball) on the same sharable field.
+// - CRITICAL PATCH: Handle argument mismatch from Total Solver (fixes ignored constraints).
 // ============================================================================
 
 (function () {
@@ -257,6 +258,18 @@
     };
 
     Utils.canBlockFit = function (block, fieldName, activityProperties, fieldUsageBySlot, actName, forceLeague = false) {
+        
+        // --- PATCH FOR TOTAL SOLVER ARGUMENT MISMATCH ---
+        // The Total Solver calls this with 4 args: (block, field, props, activityName).
+        // It skips fieldUsageBySlot. We must detect this and shift arguments.
+        if (typeof fieldUsageBySlot === 'string' && actName === undefined) {
+            actName = fieldUsageBySlot;
+            fieldUsageBySlot = window.fieldUsageBySlot; // Recover global usage map
+        }
+        // Safety fallback if undefined/null
+        if (!fieldUsageBySlot) fieldUsageBySlot = window.fieldUsageBySlot || {};
+        // ------------------------------------------------
+        
         if (!fieldName) return false;
 
         // Safe fallback props (Lunch, Snack, Free, Regroup, Dismissal, etc.)
