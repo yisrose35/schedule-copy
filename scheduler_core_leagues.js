@@ -1,8 +1,8 @@
 // ============================================================================
-// scheduler_core_leagues.js (GCM FINAL: MIXED SPORTS ENABLED)
+// scheduler_core_leagues.js (GCM FINAL: UNIVERSAL SYSTEM FALLBACK)
 // Integrated with league_scheduling.js
-// - FIX: Scans ALL league sports simultaneously.
-// - RESULT: If Sport A fills up, immediately assigns Sport B to remaining teams.
+// - FIX: Scans "League Sports" (High Priority) AND "All System Sports" (Backup).
+// - RESULT: Never TBD as long as ANY field on campus is open.
 // ============================================================================
 
 (function () {
@@ -55,6 +55,8 @@
     // ------------------------------------------------------------
     function calculateOptionScore(option, leagueName, teamA, teamB, totalSportsCount) {
         const sport = option.sport;
+        const isPreferred = option.isPreferred; // Passed from inventory
+        
         const histA = getTeamSportHistory(leagueName, teamA);
         const histB = getTeamSportHistory(leagueName, teamB);
 
@@ -63,9 +65,14 @@
 
         let score = 0;
 
-        // 1. BACK-TO-BACK PENALTY (Soft)
-        // If they just played this, we punish the score so they try to pick something else.
-        // But if this is the ONLY thing left (e.g., only Soccer fields open), they will still take it.
+        // 1. PREFERENCE BONUS (Critical Fix)
+        // If this sport is in the league's definition, boost it massively.
+        // If it's a fallback sport (e.g. random Soccer field), it gets 0 bonus.
+        if (isPreferred) {
+            score += 2000; 
+        }
+
+        // 2. BACK-TO-BACK PENALTY (Soft)
         if (sport === lastSportA || sport === lastSportB) {
             score -= 500; 
         }
@@ -79,10 +86,10 @@
         const playedByA = currentCycleSportsA.includes(sport);
         const playedByB = currentCycleSportsB.includes(sport);
 
-        // 2. FRESHNESS BONUSES
-        if (!playedByA && !playedByB) score += 100;      // GOLD
-        else if (!playedByA || !playedByB) score += 50;  // SILVER
-        else score += 10;                                // BRONZE
+        // 3. FRESHNESS BONUSES
+        if (!playedByA && !playedByB) score += 100;      
+        else if (!playedByA || !playedByB) score += 50;  
+        else score += 10;                                
 
         return score;
     }
@@ -131,7 +138,7 @@
                 fieldUsageBySlot
             } = context;
 
-            console.log("--- LEAGUE GENERATOR START (MIXED SPORTS) ---");
+            console.log("--- LEAGUE GENERATOR START (UNIVERSAL SCAN) ---");
 
             const leagueBlocks = schedulableSlotBlocks.filter(b => {
                 const name = String(b.event || "").toLowerCase();
@@ -185,17 +192,26 @@
                 if (!teams || teams.length < 2) return;
 
                 const proxyDivName = Array.from(group.involvedDivisions)[0] || "League";
-                const leagueSports = league.sports || ["League Game"];
-
+                
+                // 1. Identify Preferred vs Fallback Sports
+                const preferredSports = league.sports || ["League Game"];
+                const allSystemSports = Object.keys(fieldsBySport || {});
+                
+                // Combine into a unique set of all possible sports to scan
+                // We convert to LowerCase to dedup, but map back to original key
+                const uniqueSports = new Set([...preferredSports, ...allSystemSports]);
+                
                 // ----------------------------------------------------------------
                 // STEP 1: GLOBAL INVENTORY SCAN
-                // Find ALL physically possible (Sport + Field) combos for ALL sports in the league
                 // ----------------------------------------------------------------
                 const globalInventory = [];
                 
-                leagueSports.forEach(sport => {
+                uniqueSports.forEach(sport => {
                     const exactSportKey = Object.keys(fieldsBySport || {}).find(k => k.toLowerCase() === sport.toLowerCase());
-                    const possibleFields = exactSportKey ? fieldsBySport[exactSportKey] : [];
+                    if (!exactSportKey) return;
+
+                    const possibleFields = fieldsBySport[exactSportKey] || [];
+                    const isPreferred = preferredSports.some(ps => ps.toLowerCase() === sport.toLowerCase());
 
                     possibleFields.forEach(field => {
                         const fits = window.SchedulerCoreUtils.canBlockFit(
@@ -216,8 +232,9 @@
                         if (fits) {
                             globalInventory.push({ 
                                 id: `${sport}-${field}`, 
-                                sport: sport, 
-                                field: field 
+                                sport: exactSportKey, // Use proper casing 
+                                field: field,
+                                isPreferred: isPreferred // Flag for scoring boost
                             });
                         }
                     });
@@ -245,13 +262,12 @@
                         return { index, A, B, isBye: true, possibleOptions: [] };
                     }
 
-                    // Calculate score for EVERY available spot on the "Buffet"
                     const optionsWithScores = globalInventory.map(opt => {
-                        const score = calculateOptionScore(opt, leagueName, A, B, leagueSports.length);
+                        const score = calculateOptionScore(opt, leagueName, A, B, preferredSports.length);
                         return { ...opt, score };
                     });
 
-                    // Sort options BEST to WORST
+                    // Sort: Highest score (Preferred + Fresh) -> Lowest score
                     optionsWithScores.sort((a, b) => b.score - a.score);
 
                     return {
@@ -260,14 +276,12 @@
                         B,
                         isBye: false,
                         possibleOptions: optionsWithScores,
-                        // Flexibility: How many valid options do they have?
                         flexibility: optionsWithScores.length
                     };
                 });
 
                 // ----------------------------------------------------------------
-                // STEP 4: PRIORITY SORT (By Scarcity)
-                // Teams with fewer options pick first.
+                // STEP 4: PRIORITY SORT
                 // ----------------------------------------------------------------
                 matchupData.sort((a, b) => {
                     if (a.isBye) return 1; 
@@ -283,7 +297,7 @@
 
                 matchupData.forEach(match => {
                     if (match.isBye) {
-                        finalMatchups.push({ teamA: match.A, teamB: match.B, sport: leagueSports[0], field: null });
+                        finalMatchups.push({ teamA: match.A, teamB: match.B, sport: preferredSports[0], field: null });
                         return;
                     }
 
@@ -302,7 +316,6 @@
                             field: bestAvailable.field
                         });
                     } else {
-                        // Truly no fields left on entire campus for any sport
                         console.warn(`WARNING: Starvation! No fields left for ${match.A} vs ${match.B}`);
                         finalMatchups.push({
                             teamA: match.A,
