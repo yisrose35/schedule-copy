@@ -1,7 +1,10 @@
 // ============================================================================
 // scheduler_core_leagues.js (GCM FINAL: SAFETY NET + MAGNET)
-// MULTI-BLOCK ROUND ADVANCEMENT + VISUAL MATCHUPS RESTORED
-// NOW UPDATED WITH THE OLD LOGIC: NO GROUPING (1 BLOCK = 1 ROUND)
+// Integrated with league_scheduling.js:
+// - Uses window.getLeagueMatchups(...) for round progression
+// - Uses getLeagueCurrentRound(...) for Game X label
+// - Groups by (leagueName + division + startTime)
+// - Populates window.leagueAssignments for scheduler_ui.js
 // ============================================================================
 
 (function () {
@@ -32,50 +35,19 @@
     }
 
     // ------------------------------------------------------------
-    // GAME LABEL (READ-ONLY)
-    // ------------------------------------------------------------
-    function getGameLabel(leagueName) {
-        if (typeof window.getLeagueCurrentRound === "function")
-            return `Game ${window.getLeagueCurrentRound(leagueName)}`;
-
-        const round = window.leagueRoundState?.[leagueName]?.currentRound || 1;
-        return `Game ${round}`;
-    }
-
-    // ------------------------------------------------------------
-    // BACKUP SIMPLE ROUND-ROBIN
+    // FALLBACK SIMPLE ROUND-ROBIN (only if engine missing)
     // ------------------------------------------------------------
     function roundRobinPairs(teams) {
-        if (teams.length < 2) return [];
+        if (!teams || teams.length < 2) return [];
         const arr = teams.slice();
         if (arr.length % 2 !== 0) arr.push("BYE");
         const half = arr.length / 2;
         const round = [];
         const top = arr.slice(0, half);
         const bottom = arr.slice(half).reverse();
-        for (let i = 0; i < half; i++) round.push([top[i], bottom[i]]);
-        return round;
-    }
-
-    // ------------------------------------------------------------
-    // ⭐ GLOBAL ROUND ADVANCER (increments on EVERY block)
-    // ------------------------------------------------------------
-    function pullNextLeagueRound(leagueName, teams) {
-        window.leagueRoundState ??= {};
-        const state = window.leagueRoundState[leagueName] || { currentRound: 0 };
-
-        const schedule = window.generateRoundRobin?.(teams) || [];
-        if (!schedule.length) return [];
-
-        const roundIndex = state.currentRound % schedule.length;
-        const round = schedule[roundIndex];
-
-        window.leagueRoundState[leagueName] = {
-            currentRound: state.currentRound + 1
-        };
-
-        window.saveGlobalSettings?.("leagueRoundState", window.leagueRoundState);
-
+        for (let i = 0; i < half; i++) {
+            round.push([top[i], bottom[i]]);
+        }
         return round;
     }
 
@@ -95,7 +67,7 @@
 
     // ========================================================================
     // MAIN: PROCESS REGULAR LEAGUES
-    // Updated to use NO GROUPING (each block = one round)
+    // Uses league_scheduling.js as the source of truth
     // ========================================================================
     Leagues.processRegularLeagues = function (context) {
         try {
@@ -112,9 +84,6 @@
 
             console.log("--- LEAGUE GENERATOR START ---");
 
-            // ------------------------------------------------------------
-            // FIND EACH LEAGUE BLOCK (NOT grouping them anymore)
-            // ------------------------------------------------------------
             const leagueBlocks = schedulableSlotBlocks.filter(b => {
                 const name = String(b.event || "").toLowerCase();
                 const hasLeagueInName = name.includes("league") && !name.includes("specialty");
@@ -127,38 +96,70 @@
                 return;
             }
 
-            // ====================================================================
-            // PROCESS EACH BLOCK INDIVIDUALLY → NEW ROUND EACH TIME
-            // ====================================================================
+            // --------------------------------------------------------------------
+            // GROUP BLOCKS BY (leagueName + division + startTime)
+            // So one set of matchups per division/time, shared across bunks
+            // --------------------------------------------------------------------
+            const groups = {};
             leagueBlocks.forEach(block => {
-
-                // --------------------------------------------------------
-                // Identify which league this block belongs to
-                // --------------------------------------------------------
                 const lgEntry = Object.entries(masterLeagues).find(([name, L]) => {
                     if (!L.enabled || disabledLeagues.includes(name)) return false;
                     return L.divisions && L.divisions.some(d => isDivisionMatch(block.divName, d));
                 });
-
                 if (!lgEntry) return;
 
                 const [leagueName, league] = lgEntry;
-                const teams = league.teams.slice();
-                if (teams.length < 2) return;
+                const key = `${leagueName}-${block.divName}-${block.startTime}`;
 
-                // ⭐ AUTO ROUND ADVANCE ON EVERY BLOCK
-                let pairs = pullNextLeagueRound(leagueName, teams);
-                if (!Array.isArray(pairs) || !pairs.length)
+                groups[key] ??= {
+                    leagueName,
+                    league,
+                    divName: block.divName,
+                    startTime: block.startTime,
+                    endTime: block.endTime,
+                    slots: block.slots,
+                    bunks: []
+                };
+                groups[key].bunks.push(block.bunk);
+            });
+
+            // ====================================================================
+            // PROCESS EACH GROUP (ONE ROUND PER GROUP)
+            // ====================================================================
+            Object.values(groups).forEach(group => {
+                const { leagueName, league } = group;
+                const teams = (league.teams || []).slice();
+                if (!teams || teams.length < 2) return;
+
+                let pairs = [];
+
+                // ✅ USE THE GLOBAL LEAGUE ENGINE IF AVAILABLE
+                if (typeof window.getLeagueMatchups === "function") {
+                    pairs = window.getLeagueMatchups(leagueName, teams) || [];
+                } else {
+                    // Fallback (no persistence)
                     pairs = roundRobinPairs(teams);
+                }
 
-                const gameLabel = getGameLabel(leagueName);
+                if (!Array.isArray(pairs) || !pairs.length) {
+                    console.warn("No pairs generated for league:", leagueName, "div:", group.divName);
+                    return;
+                }
+
+                // ✅ Get the correct "Game X" AFTER calling getLeagueMatchups
+                let gameNumberLabel = "";
+                if (typeof window.getLeagueCurrentRound === "function") {
+                    gameNumberLabel = `Game ${window.getLeagueCurrentRound(leagueName)}`;
+                } else {
+                    gameNumberLabel = "Game ?";
+                }
+
                 const sports = league.sports?.length ? league.sports : ["League Game"];
-
                 const matchups = [];
                 const lockedFields = new Set();
 
                 // ====================================================================
-                // BUILD MATCHUPS
+                // BUILD MATCHUPS WITH FIELD ASSIGNMENTS
                 // ====================================================================
                 pairs.forEach((pair, i) => {
                     let A = pair[0];
@@ -167,6 +168,7 @@
                     if (!A || A === "BYE") A = "BYE";
                     if (!B || B === "BYE") B = "BYE";
 
+                    // BYE still displayed
                     if (A === "BYE" || B === "BYE") {
                         matchups.push({
                             teamA: A,
@@ -177,7 +179,6 @@
                         return;
                     }
 
-                    // Field assignment
                     const preferredSport = sports[i % sports.length];
                     const candidates = [preferredSport, ...sports.filter(s => s !== preferredSport)];
 
@@ -189,11 +190,11 @@
                         for (const field of possibleFields) {
                             const fits = window.SchedulerCoreUtils.canBlockFit(
                                 {
-                                    divName: block.divName,
+                                    divName: group.divName,
                                     bunk: "__LEAGUE__",
-                                    startTime: block.startTime,
-                                    endTime: block.endTime,
-                                    slots: block.slots
+                                    startTime: group.startTime,
+                                    endTime: group.endTime,
+                                    slots: group.slots
                                 },
                                 field,
                                 activityProperties,
@@ -201,6 +202,7 @@
                                 sport,
                                 true
                             );
+
                             if (fits || true) {
                                 chosenField = field;
                                 chosenSport = sport;
@@ -221,51 +223,67 @@
                 });
 
                 // ====================================================================
-                // VISUAL MATCHUPS TEXT (for UI)
+                // VISUAL MATCHUPS TEXT (for UI & bunk scan fallback)
                 // ====================================================================
                 const formattedMatchups = matchups.map(m => {
-                    if (m.teamA === "BYE" || m.teamB === "BYE")
+                    if (m.teamA === "BYE" || m.teamB === "BYE") {
                         return `${m.teamA} vs ${m.teamB}`;
+                    }
                     return `${m.teamA} vs ${m.teamB} — ${m.sport} @ ${m.field || "TBD"}`;
                 });
 
                 // ====================================================================
-                // WRITE INTO THE SCHEDULE
+                // STORE ASSIGNMENTS FOR scheduler_ui.js
                 // ====================================================================
-                fillBlock(
-                    {
-                        divName: block.divName,
-                        bunk: block.bunk,
-                        startTime: block.startTime,
-                        endTime: block.endTime,
-                        slots: block.slots
-                    },
-                    {
-                        field: "League Block",
-                        sport: null,
-                        _activity: "League Block",
-                        _fixed: true,
-                        _allMatchups: formattedMatchups,
-                        _gameLabel: gameLabel
-                    },
-                    fieldUsageBySlot,
-                    yesterdayHistory,
-                    true,
-                    activityProperties
-                );
+                window.leagueAssignments ??= {};
+                window.leagueAssignments[group.divName] ??= {};
+                const slotIndex = group.slots[0];
 
-                // Save field locks
-                lockedFields.forEach(f => writeLeagueReservationVeto(f, block));
+                window.leagueAssignments[group.divName][slotIndex] = {
+                    gameLabel: gameNumberLabel,
+                    startMin: group.startTime,
+                    endMin: group.endTime,
+                    matchups
+                };
+
+                // ====================================================================
+                // FILL BLOCKS FOR ALL BUNKS IN THIS GROUP
+                // ====================================================================
+                group.bunks.forEach(bunk => {
+                    fillBlock(
+                        {
+                            divName: group.divName,
+                            bunk,
+                            startTime: group.startTime,
+                            endTime: group.endTime,
+                            slots: group.slots
+                        },
+                        {
+                            field: "League Block",
+                            sport: null,
+                            _activity: "League Block",
+                            _fixed: true,
+                            _allMatchups: formattedMatchups,
+                            _gameLabel: gameNumberLabel
+                        },
+                        fieldUsageBySlot,
+                        yesterdayHistory,
+                        true,
+                        activityProperties
+                    );
+                });
+
+                // Lock fields globally for this block
+                lockedFields.forEach(f => writeLeagueReservationVeto(f, group));
             });
 
             console.log("--- LEAGUE GENERATOR SUCCESS ---");
-
         } catch (error) {
             console.error("❌ CRITICAL ERROR IN LEAGUE GENERATOR:", error);
         }
     };
 
-    // Specialty leagues placeholder
+    // Specialty leagues placeholder (can be wired similarly later)
     Leagues.processSpecialtyLeagues = function () {};
 
     window.SchedulerCoreLeagues = Leagues;
