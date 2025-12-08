@@ -210,14 +210,12 @@
     // Helper to safely normalize strings for strict comparison
     function normalizeActivityStrict(str) {
         if (!str) return "";
-        // Remove known prefixes if they exist in the activity name itself (rare but possible)
+        let s = String(str).trim();
+        // Remove known prefixes if they exist in the activity name itself
         // e.g., "Gym A - Basketball" -> "basketball"
-        // But also ensure we don't accidentally strip "Capture the Flag" -> "Flag"
-        const s = String(str).trim();
         const parts = s.split(/\s*[-–—]\s*/);
         if (parts.length > 1) {
-             // Heuristic: If it looks like "Field - Sport", take the last part.
-             // If it's just "Sport", take it.
+             // Take the LAST part as the activity
              return parts[parts.length - 1].trim().toLowerCase();
         }
         return s.toLowerCase();
