@@ -383,7 +383,11 @@ function addDropListeners(selector){
                 else if (tileData.type === 'special') { name = "Special Activity"; finalType = 'slot'; }
                 
                 else if(tileData.type==='custom') { name = prompt("Event Name:", "Regroup"); finalType = 'pinned'; }
-                else if(tileData.type==='league') { name = "League Game"; finalType = 'slot'; } 
+                else if(tileData.type==='league') {
+    name = "League Game";
+    finalType = 'league';
+}
+
                 else if(tileData.type==='specialty_league') { name = "Specialty League"; finalType = 'slot'; }
                 
                 if(!name) return;
