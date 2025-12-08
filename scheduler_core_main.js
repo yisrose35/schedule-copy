@@ -1,12 +1,10 @@
 // ============================================================================
-// scheduler_core_main.js
+// scheduler_core_main.js (GCM PATCHED: LEAGUE INTERCEPTOR)
 // PART 3 of 3: THE ORCHESTRATOR (Main Entry)
 //
-// GOALS:
-// - Uses loader + utils in a consistent way.
-// - fillBlock writes buffers + main activity and logs usage.
-// - registerSingleSlotUsage is fully defensive (no more "Gym A" crashes).
-// - Optimizer pipeline: Pinned → SmartTiles → Leagues → TotalSolver.
+// FIXES:
+// ✓ Forces "League Game" blocks into the Generator queue, even if marked "Pinned".
+// ✓ Ensures League Engine gets to process them and add matchups.
 // ============================================================================
 
 (function () {
@@ -30,7 +28,8 @@
     function normalizeLeague(name) {
         if (!name) return null;
         const s = name.toLowerCase().replace(/\s+/g, '');
-        const keys = ["leaguegame", "leaguegameslot", "lgame", "lg"];
+        // GCM FIX: Added "league" to catch simple labels
+        const keys = ["leaguegame", "leaguegameslot", "lgame", "lg", "league"]; 
         return keys.some(k => s.includes(k)) ? "League Game" : null;
     }
 
@@ -310,8 +309,13 @@
             const hasBuffer = (trans.preMin + trans.postMin) > 0;
             const isSchedulable = GENERATOR_TYPES.includes(item.type);
 
-            // Pinned / non-generated blocks
-            if ((item.type === "pinned" || !isGenerated) && !isSchedulable && item.type !== "smart" && !hasBuffer) {
+            // GCM FIX: INTERCEPT LEAGUES
+            // If it's a League, FORCE it to be treated as Schedulable, 
+            // even if the block Type is "pinned".
+            const isLeague = /league/i.test(finalName);
+
+            // Pinned / non-generated blocks (EXCLUDING LEAGUES)
+            if (!isLeague && (item.type === "pinned" || !isGenerated) && !isSchedulable && item.type !== "smart" && !hasBuffer) {
                 if (disabledFields.includes(finalName) || disabledSpecials.includes(finalName)) return;
                 bunkList.forEach(b => {
                     fillBlock(
@@ -358,8 +362,8 @@
                 return;
             }
 
-            // Generated blocks / buffers
-            if ((isSchedulable && isGenerated) || hasBuffer) {
+            // Generated blocks / buffers (INCLUDING LEAGUES)
+            if (isLeague || (isSchedulable && isGenerated) || hasBuffer) {
                 bunkList.forEach(b => {
                     schedulableSlotBlocks.push({
                         divName,
