@@ -1,8 +1,9 @@
 // ============================================================================
-// scheduler_core_leagues.js (GCM FINAL: INVENTORY FIRST ARCHITECTURE)
+// scheduler_core_leagues.js (GCM FINAL: HOLISTIC MATRIX OPTIMIZATION)
 // Integrated with league_scheduling.js
-// 1. INVENTORY SCAN: Finds all valid (Sport + Field) combos FIRST.
-// 2. MATCHUP LOGIC: Assigns best available option to teams based on history.
+// 1. INVENTORY SCAN: Finds all valid (Sport + Field) combos.
+// 2. SCARCITY ANALYSIS: Scores every option for every matchup.
+// 3. PRIORITY ASSIGNMENT: Schedules the most restricted teams FIRST.
 // ============================================================================
 
 (function () {
@@ -51,25 +52,22 @@
     }
 
     // ------------------------------------------------------------
-    // SCORING ALGORITHM (Prioritizes the Inventory List)
+    // SCORING ALGORITHM
+    // Returns a numeric score for how good this sport is for these teams.
     // ------------------------------------------------------------
-    function scoreOptionForMatchup(option, leagueName, teamA, teamB, totalSportsCount) {
-        // option = { sport: "Soccer", field: "Field 1" }
+    function calculateOptionScore(option, leagueName, teamA, teamB, totalSportsCount) {
         const sport = option.sport;
-        
         const histA = getTeamSportHistory(leagueName, teamA);
         const histB = getTeamSportHistory(leagueName, teamB);
 
         const lastSportA = histA.length > 0 ? histA[histA.length - 1] : null;
         const lastSportB = histB.length > 0 ? histB[histB.length - 1] : null;
 
-        // 1. FATAL PENALTY: Back-to-Back (The same sport they just played)
+        // 1. FATAL PENALTY: Back-to-Back (Immediate disqualify in scoring)
         if (sport === lastSportA || sport === lastSportB) {
             return -1000; 
         }
 
-        // 2. CYCLE CHECK: Have they played this recently?
-        // We look at the "current cycle" (e.g., last X games where X = number of sports)
         const cycleA = Math.floor(histA.length / totalSportsCount);
         const cycleB = Math.floor(histB.length / totalSportsCount);
         
@@ -81,9 +79,10 @@
 
         let score = 0;
 
+        // 2. VARIETY BONUSES
         if (!playedByA && !playedByB) score += 100;      // GOLD: Fresh for both
         else if (!playedByA || !playedByB) score += 50;  // SILVER: Fresh for one
-        else score += 10;                                // BRONZE: Repeat (but valid)
+        else score += 10;                                // BRONZE: Repeat
 
         return score;
     }
@@ -132,7 +131,7 @@
                 fieldUsageBySlot
             } = context;
 
-            console.log("--- LEAGUE GENERATOR START (INVENTORY FIRST) ---");
+            console.log("--- LEAGUE GENERATOR START (HOLISTIC MATRIX) ---");
 
             const leagueBlocks = schedulableSlotBlocks.filter(b => {
                 const name = String(b.event || "").toLowerCase();
@@ -185,24 +184,23 @@
                 const teams = (league.teams || []).slice();
                 if (!teams || teams.length < 2) return;
 
-                // 1. Define Proxy Identity (Div & Bunk) for Permissions
                 const proxyDivName = Array.from(group.involvedDivisions)[0] || "League";
-
-                // 2. INVENTORY SCAN: Build the "Menu" of valid options
-                const validOptions = [];
                 const leagueSports = league.sports || ["League Game"];
 
+                // ----------------------------------------------------------------
+                // STEP 1: GLOBAL INVENTORY SCAN
+                // Find ALL physically possible (Sport + Field) combos for this time slot
+                // ----------------------------------------------------------------
+                const globalInventory = [];
                 leagueSports.forEach(sport => {
-                    // Case-insensitive lookup
                     const exactSportKey = Object.keys(fieldsBySport || {}).find(k => k.toLowerCase() === sport.toLowerCase());
                     const possibleFields = exactSportKey ? fieldsBySport[exactSportKey] : [];
 
                     possibleFields.forEach(field => {
-                        // STRICT VALIDATION: Is this field ACTUALLY available right now?
                         const fits = window.SchedulerCoreUtils.canBlockFit(
                             {
                                 divName: proxyDivName,
-                                bunk: "__LEAGUE__", // Use generic identity
+                                bunk: "__LEAGUE__",
                                 startTime: group.startTime,
                                 endTime: group.endTime,
                                 slots: group.slots
@@ -211,16 +209,22 @@
                             activityProperties,
                             fieldUsageBySlot,
                             sport,
-                            true // Strict Mode
+                            true
                         );
 
                         if (fits) {
-                            validOptions.push({ sport: sport, field: field });
+                            globalInventory.push({ 
+                                id: `${sport}-${field}`, // Unique ID for tracking usage
+                                sport: sport, 
+                                field: field 
+                            });
                         }
                     });
                 });
 
-                // 3. GET TEAM PAIRS
+                // ----------------------------------------------------------------
+                // STEP 2: GET PAIRS (MATCHUPS)
+                // ----------------------------------------------------------------
                 let pairs = [];
                 if (typeof window.getLeagueMatchups === "function") {
                     pairs = window.getLeagueMatchups(leagueName, teams) || [];
@@ -229,7 +233,92 @@
                 }
                 if (!Array.isArray(pairs) || !pairs.length) return;
 
-                // 4. GET GAME LABEL
+                // ----------------------------------------------------------------
+                // STEP 3: BUILD THE "POSSIBILITY MATRIX"
+                // For each pair, calculate scores for ALL available inventory options.
+                // ----------------------------------------------------------------
+                const matchupData = pairs.map((pair, index) => {
+                    const A = pair[0] === "BYE" ? "BYE" : pair[0];
+                    const B = pair[1] === "BYE" ? "BYE" : pair[1];
+
+                    if (A === "BYE" || B === "BYE") {
+                        return { index, A, B, isBye: true, possibleOptions: [] };
+                    }
+
+                    // Score all options in globalInventory for this specific pair
+                    const optionsWithScores = globalInventory.map(opt => {
+                        const score = calculateOptionScore(opt, leagueName, A, B, leagueSports.length);
+                        return { ...opt, score };
+                    }).filter(opt => opt.score > -500); // Filter out back-to-back immediately
+
+                    // Sort options BEST to WORST
+                    optionsWithScores.sort((a, b) => b.score - a.score);
+
+                    return {
+                        index,
+                        A,
+                        B,
+                        isBye: false,
+                        possibleOptions: optionsWithScores,
+                        flexibility: optionsWithScores.length // Key metric for priority
+                    };
+                });
+
+                // ----------------------------------------------------------------
+                // STEP 4: PRIORITY SORT
+                // Sort matchups by Flexibility (Ascending). 
+                // Teams with FEWER options get to pick FIRST.
+                // ----------------------------------------------------------------
+                matchupData.sort((a, b) => {
+                    if (a.isBye) return 1; // Byes go last
+                    if (b.isBye) return -1;
+                    return a.flexibility - b.flexibility;
+                });
+
+                // ----------------------------------------------------------------
+                // STEP 5: ASSIGNMENT LOOP
+                // ----------------------------------------------------------------
+                const assignedFields = new Set();
+                const finalMatchups = [];
+
+                matchupData.forEach(match => {
+                    if (match.isBye) {
+                        finalMatchups.push({ teamA: match.A, teamB: match.B, sport: leagueSports[0], field: null });
+                        return;
+                    }
+
+                    // Find first option where the FIELD is not yet taken
+                    const bestAvailable = match.possibleOptions.find(opt => !assignedFields.has(opt.field));
+
+                    if (bestAvailable) {
+                        assignedFields.add(bestAvailable.field);
+                        recordSportHistory(leagueName, match.A, bestAvailable.sport);
+                        recordSportHistory(leagueName, match.B, bestAvailable.sport);
+                        
+                        finalMatchups.push({
+                            teamA: match.A,
+                            teamB: match.B,
+                            sport: bestAvailable.sport,
+                            field: bestAvailable.field
+                        });
+                    } else {
+                        // NO VALID FIELD FOUND (Starvation or total lack of fields)
+                        console.warn(`WARNING: Starvation! No fields left for ${match.A} vs ${match.B}`);
+                        finalMatchups.push({
+                            teamA: match.A,
+                            teamB: match.B,
+                            sport: "TBD",
+                            field: "TBD"
+                        });
+                    }
+                });
+
+                // ----------------------------------------------------------------
+                // STEP 6: FORMAT & OUTPUT
+                // ----------------------------------------------------------------
+                // Re-sort finalMatchups to original pair order if needed, or keep priority order?
+                // Usually keeping them in processed order is fine, or we can just list them.
+                
                 let gameNumberLabel = "";
                 if (typeof window.getLeagueCurrentRound === "function") {
                     gameNumberLabel = `Game ${window.getLeagueCurrentRound(leagueName)}`;
@@ -237,72 +326,9 @@
                     gameNumberLabel = "Game ?";
                 }
 
-                const matchups = [];
-                
-                // 5. ASSIGN OPTIONS TO PAIRS
-                pairs.forEach(pair => {
-                    let A = pair[0];
-                    let B = pair[1];
-
-                    if (!A || A === "BYE") A = "BYE";
-                    if (!B || B === "BYE") B = "BYE";
-
-                    if (A === "BYE" || B === "BYE") {
-                        matchups.push({
-                            teamA: A, teamB: B, sport: leagueSports[0], field: null
-                        });
-                        return;
-                    }
-
-                    // Filter out options whose FIELDS are already taken by previous pairs in this loop
-                    // (We don't need to check external usage because the Inventory Scan already did that)
-                    const currentlyAvailable = validOptions.filter(opt => 
-                        !matchups.some(m => m.field === opt.field)
-                    );
-
-                    let bestOption = null;
-                    let bestScore = -9999;
-
-                    if (currentlyAvailable.length > 0) {
-                        // Score every available option for THIS specific matchup
-                        currentlyAvailable.forEach(option => {
-                            const score = scoreOptionForMatchup(option, leagueName, A, B, leagueSports.length);
-                            if (score > bestScore) {
-                                bestScore = score;
-                                bestOption = option;
-                            }
-                        });
-                    }
-
-                    // Fallback
-                    const finalSport = bestOption ? bestOption.sport : "TBD";
-                    const finalField = bestOption ? bestOption.field : "TBD";
-
-                    // Record History (only if valid)
-                    if (bestOption) {
-                        recordSportHistory(leagueName, A, finalSport);
-                        recordSportHistory(leagueName, B, finalSport);
-                    } else {
-                        console.warn(`WARNING: No valid options left for ${A} vs ${B}`);
-                    }
-
-                    matchups.push({
-                        teamA: A,
-                        teamB: B,
-                        sport: finalSport,
-                        field: finalField
-                    });
-                });
-
-                // ====================================================================
-                // FORMAT & STORE
-                // ====================================================================
-                const formattedMatchups = matchups.map(m => {
+                const formattedMatchups = finalMatchups.map(m => {
                     if (m.teamA === "BYE" || m.teamB === "BYE") return `${m.teamA} vs ${m.teamB}`;
-                    
-                    if (m.sport === "TBD" && m.field === "TBD") {
-                        return `${m.teamA} vs ${m.teamB} — NO FIELDS AVAILABLE`;
-                    }
+                    if (m.sport === "TBD" && m.field === "TBD") return `${m.teamA} vs ${m.teamB} — NO FIELDS AVAILABLE`;
                     return `${m.teamA} vs ${m.teamB} — ${m.sport} @ ${m.field}`;
                 });
 
@@ -315,14 +341,11 @@
                         gameLabel: gameNumberLabel,
                         startMin: group.startTime,
                         endMin: group.endTime,
-                        matchups
+                        matchups: finalMatchups
                     };
                 });
 
-                // ====================================================================
-                // FILL BUNKS
-                // ====================================================================
-                const lockedFields = matchups.map(m => m.field).filter(f => f && f !== "TBD");
+                const lockedFields = finalMatchups.map(m => m.field).filter(f => f && f !== "TBD");
 
                 group.bunkData.forEach(item => {
                     fillBlock(
@@ -348,7 +371,6 @@
                     );
                 });
 
-                // Lock fields globally for this block
                 lockedFields.forEach(f => writeLeagueReservationVeto(f, group));
             });
 
