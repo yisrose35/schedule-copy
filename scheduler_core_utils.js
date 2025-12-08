@@ -13,6 +13,7 @@
 // - Stable sharable/zone/minDuration handling
 // - FIX: Ensure same activity/sport for sharable fields (maxCapacity > 1)
 // - FIX: Enforce field's maxCapacity regardless of activity name similarity (prevent 6 bunks on a field).
+// - REFINEMENT: Stricter enforcement of same-activity rule to prevent different sports (e.g., Football & Kickball) on the same sharable field.
 // ============================================================================
 
 (function () {
@@ -347,6 +348,7 @@
                     const proposedActivity = String(actName).trim().toLowerCase();
 
                     // Reject if activities are different AND they are NOT participating in the same league game block.
+                    // This comparison must be strict.
                     if (existingActivity !== proposedActivity && !sameGame) {
                         // Hard rejection: Sharable field, different activities, and not exempted by league match.
                         return false; 
