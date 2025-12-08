@@ -1,9 +1,11 @@
 // ============================================================================
-// scheduler_core_leagues.js (GCM FINAL: UNIFIED DIVS + STRICT RULE RESPECT)
+// scheduler_core_leagues.js (GCM FINAL: UNIFIED DIVS + AUTO-SWITCH SPORTS)
 // Integrated with league_scheduling.js:
 // - Uses window.getLeagueMatchups(...) for round progression
 // - Groups by (leagueName + startTime) -> MERGES DIVISIONS
-// - RESPECTS DAILY ADJUSTMENTS (No Force Overrides)
+// - RESPECTS DAILY ADJUSTMENTS (Strictly)
+// - FIX: If Sport A is disabled/full, AUTOMATICALLY switches to Sport B.
+// - NEVER generates "Sport @ TBD".
 // ============================================================================
 
 (function () {
@@ -46,7 +48,7 @@
     }
 
     function recordSportHistory(leagueName, teamName, sport) {
-        if (!teamName || teamName === "BYE" || !sport) return;
+        if (!teamName || teamName === "BYE" || !sport || sport === "TBD") return;
         window.leagueSportHistory[leagueName] ??= {};
         window.leagueSportHistory[leagueName][teamName] ??= [];
         window.leagueSportHistory[leagueName][teamName].push(sport);
@@ -138,7 +140,7 @@
                 fieldUsageBySlot
             } = context;
 
-            console.log("--- LEAGUE GENERATOR START (STRICT RULES) ---");
+            console.log("--- LEAGUE GENERATOR START (AUTO-SWITCH SPORTS) ---");
 
             const leagueBlocks = schedulableSlotBlocks.filter(b => {
                 const name = String(b.event || "").toLowerCase();
@@ -230,20 +232,21 @@
                         return;
                     }
 
-                    // 1. Sort Sports by Preference
+                    // 1. Sort Sports by Preference (Freshness, Anti-Back-to-Back)
                     const candidateSports = getPrioritizedSports(leagueName, A, B, baseSports);
                     
                     let chosenField = null;
-                    let chosenSport = candidateSports[0]; 
+                    let chosenSport = null; 
 
-                    // 2. FIND FIRST VALID FIELD
+                    // 2. FIND FIRST VALID FIELD (The "Auto-Switch" Loop)
+                    // We iterate through sports until we find one with a valid, enabled field.
                     for (const sport of candidateSports) {
                         const possibleFields = fieldsBySport?.[sport] || [];
                         
                         for (const field of possibleFields) {
                             if (lockedFields.has(field)) continue; 
 
-                            // STRICT CHECK: Verify field is physically available
+                            // STRICT CHECK: Is field physically enabled & empty?
                             const fits = window.SchedulerCoreUtils.canBlockFit(
                                 {
                                     divName: Array.from(group.involvedDivisions)[0],
@@ -259,23 +262,28 @@
                                 true 
                             );
 
-                            // 🛑 FIXED: Removed "|| true" override. 
-                            // Now strictly enforces daily adjustments/exclusions.
                             if (fits) { 
                                 chosenField = field;
                                 chosenSport = sport;
-                                break; 
+                                break; // Success! Found a valid field for this sport.
                             }
                         }
-                        if (chosenField) break; 
+                        if (chosenField) break; // Success! Stop looking at other sports.
                     }
 
-                    if (chosenField) {
+                    // 3. Fallback (Only happens if ALL fields for ALL sports are disabled)
+                    if (!chosenField) {
+                        // We intentionally leave chosenSport as null or TBD so we don't say "Baseball @ TBD"
+                        chosenSport = "TBD"; 
+                        console.warn(`WARNING: No fields enabled for ANY league sport for match ${A} vs ${B}`);
+                    } else {
                         lockedFields.add(chosenField);
                     }
                     
-                    recordSportHistory(leagueName, A, chosenSport);
-                    recordSportHistory(leagueName, B, chosenSport);
+                    if (chosenSport !== "TBD") {
+                        recordSportHistory(leagueName, A, chosenSport);
+                        recordSportHistory(leagueName, B, chosenSport);
+                    }
 
                     matchups.push({
                         teamA: A, teamB: B, sport: chosenSport, field: chosenField
@@ -287,7 +295,15 @@
                 // ====================================================================
                 const formattedMatchups = matchups.map(m => {
                     if (m.teamA === "BYE" || m.teamB === "BYE") return `${m.teamA} vs ${m.teamB}`;
-                    return `${m.teamA} vs ${m.teamB} — ${m.sport} @ ${m.field || "TBD"}`;
+                    
+                    const sp = m.sport || "TBD";
+                    const fd = m.field || "TBD";
+                    
+                    if (sp === "TBD" && fd === "TBD") {
+                        return `${m.teamA} vs ${m.teamB} — NO FIELDS AVAILABLE`;
+                    }
+                    
+                    return `${m.teamA} vs ${m.teamB} — ${sp} @ ${fd}`;
                 });
 
                 window.leagueAssignments ??= {};
