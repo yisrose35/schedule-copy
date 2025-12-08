@@ -1,11 +1,6 @@
 // ============================================================================
-// scheduler_core_loader.js (GCM PATCHED)
+// scheduler_core_loader.js (GCM PATCHED FOR SMART LEAGUE ENGINE v2)
 // FULL REWRITE — SPEC-COMPLIANT LOADER FOR ORCHESTRATOR V3
-//
-// FIXES:
-// - Sets default Field Capacity to 999 (instead of 1) to prevent false-negative fit checks.
-// - Ensures masterActivities includes generics (GA / Sports / Special).
-// - Ensures activityProperties contains BOTH activities and fields.
 // ============================================================================
 
 (function () {
@@ -33,7 +28,7 @@
         let list = [];
         const seenNames = new Set();
 
-        // 1. App defined activities
+        // 1. App-defined activities
         if (Array.isArray(app1.activities)) {
             app1.activities.forEach(a => {
                 if (a && a.name && !seenNames.has(a.name)) {
@@ -43,7 +38,7 @@
             });
         }
 
-        // 2. Special Activities (from Special Activities tab)
+        // 2. Special Activities
         if (Array.isArray(specials)) {
             specials.forEach(s => {
                 if (s && s.name && !seenNames.has(s.name)) {
@@ -53,58 +48,50 @@
             });
         }
 
-        // 3. AUTO-DISCOVER SPORTS FROM FIELDS
-        if (Array.isArray(fields)) {
-            fields.forEach(f => {
-                if (!f || !Array.isArray(f.activities)) return;
-                f.activities.forEach(sportName => {
-                    if (sportName && !seenNames.has(sportName)) {
-                        list.push({
-                            name: sportName,
-                            type: 'field',          // "Sport" logical type
-                            allowedFields: [f.name] // It can run on this field
-                        });
-                        seenNames.add(sportName);
-                    }
-                });
+        // 3. SPORTS FROM FIELDS (critical for league mapping)
+        fields.forEach(f => {
+            if (!f || !Array.isArray(f.activities)) return;
+            f.activities.forEach(sportName => {
+                if (sportName && !seenNames.has(sportName)) {
+                    list.push({
+                        name: sportName,
+                        type: 'field',
+                        allowedFields: [f.name]
+                    });
+                    seenNames.add(sportName);
+                }
             });
-        }
-
-        // 4. FORCE-INJECT GENERIC SLOTS
-        const generics = [
-            "General Activity Slot",
-            "Sports Slot",
-            "Special Activity"
-        ];
-        generics.forEach(genName => {
-            if (!seenNames.has(genName)) {
-                list.push({
-                    name: genName,
-                    type: 'General',
-                    duration: 60,
-                    available: true
-                });
-                seenNames.add(genName);
-            }
         });
+
+        // 4. GENERIC SLOTS
+        ["General Activity Slot", "Sports Slot", "Special Activity"]
+            .forEach(gen => {
+                if (!seenNames.has(gen)) {
+                    list.push({
+                        name: gen,
+                        type: "General",
+                        duration: 60,
+                        available: true
+                    });
+                    seenNames.add(gen);
+                }
+            });
 
         const defaultDurations = app1.defaultDurations || {};
         const increments = app1.increments || 30;
 
-        return list
-            .filter(a => a && a.name)
-            .map(a => ({
-                name: a.name,
-                duration: a.duration || defaultDurations[a.name] || increments,
-                type: a.type || "General",
-                allowedFields: a.allowedFields || a.fields || null,
-                divisions: a.divisions || null,
-                ...a
-            }));
+        return list.map(a => ({
+            name: a.name,
+            duration: a.duration || defaultDurations[a.name] || increments,
+            type: a.type || "General",
+            allowedFields: a.allowedFields || a.fields || null,
+            divisions: a.divisions || null,
+            ...a
+        }));
     }
 
     // ------------------------------------------------------------------------
-    // 2. TIME MAPPINGS (for legacy block generation; not unifiedTimes)
+    // 2. TIME MAPPINGS
     // ------------------------------------------------------------------------
     function toMin(t) {
         if (!t) return 0;
@@ -114,54 +101,51 @@
 
     function buildTimeMappings(app1) {
         const increments = app1.increments || 30;
-        const startTime = app1.startTime || "9:00";
-        const endTime = app1.endTime || "17:00";
-        const startMin = toMin(startTime);
-        const endMin = toMin(endTime);
-        const mappings = [];
+        const startMin = toMin(app1.startTime || "9:00");
+        const endMin = toMin(app1.endTime || "17:00");
+
+        const arr = [];
         let cur = startMin;
         while (cur < endMin) {
-            mappings.push({ start: cur, end: cur + increments });
+            arr.push({ start: cur, end: cur + increments });
             cur += increments;
         }
-        return mappings;
+        return arr;
     }
 
     // ------------------------------------------------------------------------
     // 3. ACTIVITY FILTERING
     // ------------------------------------------------------------------------
     function filterActivities(masterActivities, divisionsArray) {
-        if (!masterActivities.length) return [];
-        return masterActivities.filter(act => {
-            if (act.divisions && act.divisions.length) {
-                return divisionsArray.some(d => act.divisions.includes(d.name));
+        return masterActivities.filter(a => {
+            if (a.divisions?.length) {
+                return divisionsArray.some(d => a.divisions.includes(d.name));
             }
             return true;
         });
     }
 
     // ------------------------------------------------------------------------
-    // 4. LEGACY SCHEDULABLE BLOCKS (still used by some tools)
+    // 4. LEGACY SCHEDULABLE BLOCKS
     // ------------------------------------------------------------------------
     function generateSchedulableBlocks(filtered, bunks, TimeMappings, increments) {
         const blocks = [];
         bunks.forEach(bunk => {
-            if (!bunk) return;
-            const bunkName = (typeof bunk === 'string') ? bunk : bunk.name;
+            const bunkName = typeof bunk === "string" ? bunk : bunk.name;
             filtered.forEach(act => {
                 const dur = act.duration || increments;
                 const slotsNeeded = Math.ceil(dur / increments);
-                TimeMappings.forEach((tm, slotIndex) => {
-                    const endSlot = slotIndex + slotsNeeded - 1;
-                    if (endSlot < TimeMappings.length) {
+                TimeMappings.forEach((tm, idx) => {
+                    const end = idx + slotsNeeded - 1;
+                    if (end < TimeMappings.length) {
                         blocks.push({
                             bunk: bunkName,
                             activity: act.name,
                             event: act.name,
                             duration: dur,
-                            slots: Array.from({ length: slotsNeeded }, (_, i) => slotIndex + i),
-                            startTime: TimeMappings[slotIndex].start,
-                            endTime: TimeMappings[endSlot].end
+                            slots: Array.from({ length: slotsNeeded }, (_, i) => idx + i),
+                            startTime: TimeMappings[idx].start,
+                            endTime: TimeMappings[end].end
                         });
                     }
                 });
@@ -171,18 +155,16 @@
     }
 
     // ------------------------------------------------------------------------
-    // 5. ACTIVITY PROPERTIES (the backbone for canBlockFit / capacities)
+    // 5. ACTIVITY PROPERTIES
     // ------------------------------------------------------------------------
     function buildActivityProperties(masterActivities, fields) {
         const props = {};
 
-        // Base helper: safe default props
-        function makeDefaultProps(overrides = {}) {
+        function base(over) {
             return {
                 available: true,
                 sharable: false,
-                // GCM FIX: Default capacity to 999 (Infinite) unless overridden
-                sharableWith: { type: 'not_sharable', capacity: 999 }, 
+                sharableWith: { type: "not_sharable", capacity: 999 },
                 preferredDivisions: [],
                 allowedDivisions: [],
                 allowedFields: null,
@@ -193,95 +175,71 @@
                 minDurationMin: 0,
                 maxUsage: 0,
                 frequencyWeeks: 0,
-                ...overrides
+                ...over
             };
         }
 
-        // 5.1 Activities (including Specials and Sports)
-        masterActivities.forEach(act => {
-            if (!act || !act.name) return;
-            const name = act.name;
-            const base = makeDefaultProps({
-                available: act.available !== false,
-                sharable: act.sharable || false,
-                sharableWith: act.sharableWith || null,
-                preferredDivisions: act.divisions || [],
-                allowedDivisions: act.divisions || [],
-                allowedFields: act.allowedFields || null,
-                transition: act.transition || null,
-                preferences: act.preferences || null,
-                limitUsage: act.limitUsage || null,
-                timeRules: act.timeRules || [],
-                minDurationMin: act.minDurationMin || 0,
-                maxUsage: act.maxUsage || 0,
-                frequencyWeeks: act.frequencyWeeks || 0
+        masterActivities.forEach(a => {
+            props[a.name] = base({
+                available: a.available !== false,
+                sharable: a.sharable || false,
+                sharableWith: a.sharableWith || null,
+                preferredDivisions: a.divisions || [],
+                allowedDivisions: a.divisions || [],
+                allowedFields: a.allowedFields || null,
+                transition: a.transition || null,
+                preferences: a.preferences || null,
+                limitUsage: a.limitUsage || null,
+                timeRules: a.timeRules || [],
+                minDurationMin: a.minDurationMin || 0,
+                maxUsage: a.maxUsage || 0
             });
-            props[name] = base;
         });
 
-        // 5.2 Fields (Gym A, Nature, Ceramics, etc.)
-        if (Array.isArray(fields)) {
-            fields.forEach(f => {
-                if (!f || !f.name) return;
-                const name = f.name;
-                
-                // Fields are resources. 
-                // GCM FIX: Ensure we accept existing capacity if defined, else default high.
-                const existingCap = f.sharableWith?.capacity || (f.capacity ? parseInt(f.capacity) : 999);
-                
-                props[name] = makeDefaultProps({
-                    available: f.available !== false,
-                    sharable: f.sharable || false,
-                    sharableWith: f.sharableWith || { type: 'not_sharable', capacity: existingCap },
-                    allowedDivisions: [],  // by default, no restriction
-                    transition: f.transition || null,
-                    preferences: f.preferences || null,
-                    limitUsage: f.limitUsage || null,
-                    timeRules: f.timeRules || [],
-                    minDurationMin: 0
-                });
+        fields.forEach(f => {
+            const cap = f.sharableWith?.capacity || 999;
+            props[f.name] = base({
+                available: f.available !== false,
+                sharableWith: { ...f.sharableWith, capacity: cap },
+                allowedDivisions: [],
+                transition: f.transition || null,
+                preferences: f.preferences || null,
+                limitUsage: f.limitUsage || null,
+                timeRules: f.timeRules || []
             });
-        }
-
-        // Expose for debugging if needed
-        window.ACTIVITY_PROPERTIES_DEBUG = props;
+        });
 
         return props;
     }
 
     // ------------------------------------------------------------------------
-    // 6. FIELDS BY SPORT (for league / sport mapping)
+    // 6. FIELDS BY SPORT  (GCM LEAGUE FIX)
     // ------------------------------------------------------------------------
     function buildFieldsBySport(masterActivities, fields) {
         const map = {};
-        if (!Array.isArray(fields)) return map;
 
+        // Initialize every sport key so leagues never see undefined
         masterActivities.forEach(a => {
-            if (!a || !a.name) return;
-            // If activity has allowedFields, use that
-            if (a.allowedFields && a.allowedFields.length > 0) {
-                map[a.name] = a.allowedFields.slice();
-                return;
-            }
-            // If it's a "field" type sport, map via fields.activities
-            if (a.type === 'field') {
-                const relevant = fields
-                    .filter(f => Array.isArray(f.activities) && f.activities.includes(a.name))
-                    .map(f => f.name);
-                if (relevant.length > 0) map[a.name] = relevant;
-            }
+            if (a?.name) map[a.name] = [];
+        });
+
+        // Map field.activities
+        fields.forEach(f => {
+            if (!f?.activities) return;
+            f.activities.forEach(sport => {
+                if (!map[sport]) map[sport] = [];
+                map[sport].push(f.name);
+            });
         });
 
         return map;
     }
 
     // ------------------------------------------------------------------------
-    // 7. H2H / LEAGUE ACTIVITY NAMES
+    // 7. H2H / LEAGUE NAMES
     // ------------------------------------------------------------------------
     function buildH2HActivities(masterActivities) {
-        return masterActivities
-            .filter(a => a && typeof a.type === 'string' && /league/i.test(a.type))
-            .map(a => a.name);
+        return masterActivities.filter(a => /league/i.test(a.type)).map(a => a.name);
     }
 
     // ------------------------------------------------------------------------
@@ -292,25 +250,16 @@
         const bunks = app1.bunks || [];
         const fields = app1.fields || [];
         const specials = getSpecialActivities();
-        const rawDivisions = app1.divisions || {};
 
-        // --- DIVISION NORMALIZATION ---
-        // Supports:
-        //   - [ { name: "Junior", bunks: [...] }, ... ]
-        //   - { "Junior": { bunks: [...] }, ... }
-        let divisionsArray = [];
-        if (Array.isArray(rawDivisions)) {
-            divisionsArray = rawDivisions;
-        } else {
-            divisionsArray = Object.keys(rawDivisions).map(key => ({
-                name: key,
-                ...rawDivisions[key]
-            }));
-        }
+        const rawDivs = app1.divisions || {};
+        const divisionsArray = Array.isArray(rawDivs)
+            ? rawDivs
+            : Object.keys(rawDivs).map(name => ({ name, ...rawDivs[name] }));
 
         const dailyOverrides = getDailyOverrides();
         const masterActivities = buildMasterActivities(app1, specials, fields);
         const TimeMappings = buildTimeMappings(app1);
+
         const filteredActivities = filterActivities(masterActivities, divisionsArray);
         const blocks = generateSchedulableBlocks(
             filteredActivities,
@@ -320,35 +269,16 @@
         );
 
         const activityProperties = buildActivityProperties(masterActivities, fields);
-        const fieldsBySport = buildFieldsBySport(masterActivities, fields);
+        const fieldsBySport = buildFieldsBySport(masterActivities, fields);  // REQUIRED FOR NEW LEAGUE ENGINE
         const h2hActivities = buildH2HActivities(masterActivities);
+
         const masterSpecials = masterActivities.filter(a => a.type === "Special");
         const specialActivityNames = masterSpecials.map(s => s.name);
 
-        // Build Division Map
         const divisions = divisionsArray.reduce((m, d) => {
             if (d?.name) m[d.name] = d;
             return m;
         }, {});
-
-        const disabledFields = dailyOverrides.disabledFields || [];
-        const disabledSpecials = dailyOverrides.disabledSpecials || [];
-        const disabledLeagues = dailyOverrides.disabledLeagues || [];
-        const disabledSpecialtyLeagues = dailyOverrides.disabledSpecialtyLeagues || [];
-
-        const yesterdayHistory = window.loadYesterdayHistory?.() || {};
-        const rotationHistory = window.loadRotationHistory?.() || {};
-        const historicalCounts = window.loadHistoricalCounts?.() || {};
-        const dailyFieldAvailability = dailyOverrides.dailyFieldAvailability || {};
-        const masterZones = window.loadZones?.() || {};
-        const bunkMetaData = window.bunkMetaData || {};
-        const sportMetaData = window.sportMetaData || {};
-
-        // Debug hooks
-        window.__lastFilteredActivities = filteredActivities;
-        window.__lastSchedulableBlocks = blocks;
-        window.TimeMappings = TimeMappings;
-        window.__activityProperties = activityProperties;
 
         return {
             activities: filteredActivities,
@@ -362,26 +292,28 @@
             activityProperties,
             allActivities: masterActivities,
             h2hActivities,
-            fieldsBySport,
+            fieldsBySport,     // <<<<<< SMART LEAGUE ENGINE NEEDS THIS
             masterLeagues: window.masterLeagues || {},
             masterSpecialtyLeagues: window.masterSpecialtyLeagues || {},
-            disabledFields,
-            disabledSpecials,
-            disabledLeagues,
-            disabledSpecialtyLeagues,
-            historicalCounts,
-            yesterdayHistory,
-            rotationHistory,
+
+            disabledFields: dailyOverrides.disabledFields || [],
+            disabledSpecials: dailyOverrides.disabledSpecials || [],
+            disabledLeagues: dailyOverrides.disabledLeagues || [],
+            disabledSpecialtyLeagues: dailyOverrides.disabledSpecialtyLeagues || [],
+
+            historicalCounts: window.loadHistoricalCounts?.() || {},
+            yesterdayHistory: window.loadYesterdayHistory?.() || {},
+            rotationHistory: window.loadRotationHistory?.() || {},
             specialActivityNames,
-            dailyFieldAvailability,
-            masterZones,
-            bunkMetaData,
-            sportMetaData
+            dailyFieldAvailability: dailyOverrides.dailyFieldAvailability || {},
+            masterZones: window.loadZones?.() || {},
+            bunkMetaData: window.bunkMetaData || {},
+            sportMetaData: window.sportMetaData || {}
         };
     }
 
-    // Expose
     window.loadAndFilterData = loadAndFilterData;
     window.generateSchedulableBlocks = generateSchedulableBlocks;
 
 })();
+
