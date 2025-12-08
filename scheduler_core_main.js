@@ -243,6 +243,9 @@
         });
 
         console.log(`Schedulable Slot Blocks Count: ${schedulableSlotBlocks.length}`);
+        console.log(`Schedulable Slot Blocks Count: ${schedulableSlotBlocks.length}`);
+window._debugBlocks = schedulableSlotBlocks; // ADD THIS LINE
+console.log("Sample blocks:", schedulableSlotBlocks.slice(0, 5));
         console.log("Sample blocks:", schedulableSlotBlocks.slice(0, 5));
         console.log("Block events:", schedulableSlotBlocks.map(b => ({ event: b.event, type: b.type })));
 
