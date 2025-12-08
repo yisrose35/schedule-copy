@@ -1,18 +1,14 @@
 // ============================================================================
-// scheduler_core_leagues.js (GCM FINAL: UNIFIED DIVS + AUTO-SWITCH SPORTS)
-// Integrated with league_scheduling.js:
-// - Uses window.getLeagueMatchups(...) for round progression
-// - Groups by (leagueName + startTime) -> MERGES DIVISIONS
-// - RESPECTS DAILY ADJUSTMENTS (Strictly)
-// - FIX: If Sport A is disabled/full, AUTOMATICALLY switches to Sport B.
-// - NEVER generates "Sport @ TBD".
+// scheduler_core_leagues.js (GCM FINAL: INVENTORY FIRST ARCHITECTURE)
+// Integrated with league_scheduling.js
+// 1. INVENTORY SCAN: Finds all valid (Sport + Field) combos FIRST.
+// 2. MATCHUP LOGIC: Assigns best available option to teams based on history.
 // ============================================================================
 
 (function () {
     'use strict';
 
     const Leagues = {};
-    const INCREMENT_MINS = 30;
 
     // ------------------------------------------------------------
     // GLOBAL LEAGUE VETO LOGGER
@@ -55,45 +51,41 @@
     }
 
     // ------------------------------------------------------------
-    // SMART SPORT PRIORITIZER
+    // SCORING ALGORITHM (Prioritizes the Inventory List)
     // ------------------------------------------------------------
-    function getPrioritizedSports(leagueName, teamA, teamB, availableSports) {
-        if (!teamA || !teamB || teamA === "BYE" || teamB === "BYE") {
-            return availableSports;
-        }
-
+    function scoreOptionForMatchup(option, leagueName, teamA, teamB, totalSportsCount) {
+        // option = { sport: "Soccer", field: "Field 1" }
+        const sport = option.sport;
+        
         const histA = getTeamSportHistory(leagueName, teamA);
         const histB = getTeamSportHistory(leagueName, teamB);
 
         const lastSportA = histA.length > 0 ? histA[histA.length - 1] : null;
         const lastSportB = histB.length > 0 ? histB[histB.length - 1] : null;
 
-        const numSports = availableSports.length;
-        const cycleA = Math.floor(histA.length / numSports);
-        const cycleB = Math.floor(histB.length / numSports);
+        // 1. FATAL PENALTY: Back-to-Back (The same sport they just played)
+        if (sport === lastSportA || sport === lastSportB) {
+            return -1000; 
+        }
 
-        const currentCycleSportsA = histA.slice(cycleA * numSports);
-        const currentCycleSportsB = histB.slice(cycleB * numSports);
+        // 2. CYCLE CHECK: Have they played this recently?
+        // We look at the "current cycle" (e.g., last X games where X = number of sports)
+        const cycleA = Math.floor(histA.length / totalSportsCount);
+        const cycleB = Math.floor(histB.length / totalSportsCount);
+        
+        const currentCycleSportsA = histA.slice(cycleA * totalSportsCount);
+        const currentCycleSportsB = histB.slice(cycleB * totalSportsCount);
 
-        const scoredSports = availableSports.map(sport => {
-            let score = 0; 
-            
-            // PENALTY: Back-to-Back (Last Resort)
-            if (sport === lastSportA || sport === lastSportB) score -= 1000; 
+        const playedByA = currentCycleSportsA.includes(sport);
+        const playedByB = currentCycleSportsB.includes(sport);
 
-            const playedByA = currentCycleSportsA.includes(sport);
-            const playedByB = currentCycleSportsB.includes(sport);
+        let score = 0;
 
-            // BONUS: Freshness
-            if (!playedByA && !playedByB) score += 100;      // Gold
-            else if (!playedByA || !playedByB) score += 50;  // Silver
-            else score += 10;                                // Bronze
+        if (!playedByA && !playedByB) score += 100;      // GOLD: Fresh for both
+        else if (!playedByA || !playedByB) score += 50;  // SILVER: Fresh for one
+        else score += 10;                                // BRONZE: Repeat (but valid)
 
-            return { sport, score };
-        });
-
-        scoredSports.sort((a, b) => b.score - a.score);
-        return scoredSports.map(s => s.sport);
+        return score;
     }
 
     // ------------------------------------------------------------
@@ -125,7 +117,7 @@
     }
 
     // ========================================================================
-    // MAIN: PROCESS REGULAR LEAGUES
+    // MAIN PROCESS
     // ========================================================================
     Leagues.processRegularLeagues = function (context) {
         try {
@@ -140,7 +132,7 @@
                 fieldUsageBySlot
             } = context;
 
-            console.log("--- LEAGUE GENERATOR START (AUTO-SWITCH SPORTS) ---");
+            console.log("--- LEAGUE GENERATOR START (INVENTORY FIRST) ---");
 
             const leagueBlocks = schedulableSlotBlocks.filter(b => {
                 const name = String(b.event || "").toLowerCase();
@@ -155,7 +147,7 @@
             }
 
             // --------------------------------------------------------------------
-            // GROUP BY (LEAGUE + TIME) -> Unified Divisions
+            // GROUP BY (LEAGUE + TIME)
             // --------------------------------------------------------------------
             const groups = {};
             leagueBlocks.forEach(block => {
@@ -193,17 +185,51 @@
                 const teams = (league.teams || []).slice();
                 if (!teams || teams.length < 2) return;
 
-                // 1. Get Pairs
+                // 1. Define Proxy Identity (Div & Bunk) for Permissions
+                const proxyDivName = Array.from(group.involvedDivisions)[0] || "League";
+
+                // 2. INVENTORY SCAN: Build the "Menu" of valid options
+                const validOptions = [];
+                const leagueSports = league.sports || ["League Game"];
+
+                leagueSports.forEach(sport => {
+                    // Case-insensitive lookup
+                    const exactSportKey = Object.keys(fieldsBySport || {}).find(k => k.toLowerCase() === sport.toLowerCase());
+                    const possibleFields = exactSportKey ? fieldsBySport[exactSportKey] : [];
+
+                    possibleFields.forEach(field => {
+                        // STRICT VALIDATION: Is this field ACTUALLY available right now?
+                        const fits = window.SchedulerCoreUtils.canBlockFit(
+                            {
+                                divName: proxyDivName,
+                                bunk: "__LEAGUE__", // Use generic identity
+                                startTime: group.startTime,
+                                endTime: group.endTime,
+                                slots: group.slots
+                            },
+                            field,
+                            activityProperties,
+                            fieldUsageBySlot,
+                            sport,
+                            true // Strict Mode
+                        );
+
+                        if (fits) {
+                            validOptions.push({ sport: sport, field: field });
+                        }
+                    });
+                });
+
+                // 3. GET TEAM PAIRS
                 let pairs = [];
                 if (typeof window.getLeagueMatchups === "function") {
                     pairs = window.getLeagueMatchups(leagueName, teams) || [];
                 } else {
                     pairs = roundRobinPairs(teams);
                 }
-
                 if (!Array.isArray(pairs) || !pairs.length) return;
 
-                // 2. Get Label
+                // 4. GET GAME LABEL
                 let gameNumberLabel = "";
                 if (typeof window.getLeagueCurrentRound === "function") {
                     gameNumberLabel = `Game ${window.getLeagueCurrentRound(leagueName)}`;
@@ -211,14 +237,10 @@
                     gameNumberLabel = "Game ?";
                 }
 
-                const baseSports = league.sports?.length ? league.sports : ["League Game"];
                 const matchups = [];
-                const lockedFields = new Set(); 
-
-                // ====================================================================
-                // ASSIGN SPORTS & FIELDS
-                // ====================================================================
-                pairs.forEach((pair) => {
+                
+                // 5. ASSIGN OPTIONS TO PAIRS
+                pairs.forEach(pair => {
                     let A = pair[0];
                     let B = pair[1];
 
@@ -227,83 +249,61 @@
 
                     if (A === "BYE" || B === "BYE") {
                         matchups.push({
-                            teamA: A, teamB: B, sport: baseSports[0], field: null
+                            teamA: A, teamB: B, sport: leagueSports[0], field: null
                         });
                         return;
                     }
 
-                    // 1. Sort Sports by Preference (Freshness, Anti-Back-to-Back)
-                    const candidateSports = getPrioritizedSports(leagueName, A, B, baseSports);
-                    
-                    let chosenField = null;
-                    let chosenSport = null; 
+                    // Filter out options whose FIELDS are already taken by previous pairs in this loop
+                    // (We don't need to check external usage because the Inventory Scan already did that)
+                    const currentlyAvailable = validOptions.filter(opt => 
+                        !matchups.some(m => m.field === opt.field)
+                    );
 
-                    // 2. FIND FIRST VALID FIELD (The "Auto-Switch" Loop)
-                    // We iterate through sports until we find one with a valid, enabled field.
-                    for (const sport of candidateSports) {
-                        const possibleFields = fieldsBySport?.[sport] || [];
-                        
-                        for (const field of possibleFields) {
-                            if (lockedFields.has(field)) continue; 
+                    let bestOption = null;
+                    let bestScore = -9999;
 
-                            // STRICT CHECK: Is field physically enabled & empty?
-                            const fits = window.SchedulerCoreUtils.canBlockFit(
-                                {
-                                    divName: Array.from(group.involvedDivisions)[0],
-                                    bunk: "__LEAGUE__",
-                                    startTime: group.startTime,
-                                    endTime: group.endTime,
-                                    slots: group.slots
-                                },
-                                field,
-                                activityProperties,
-                                fieldUsageBySlot,
-                                sport,
-                                true 
-                            );
-
-                            if (fits) { 
-                                chosenField = field;
-                                chosenSport = sport;
-                                break; // Success! Found a valid field for this sport.
+                    if (currentlyAvailable.length > 0) {
+                        // Score every available option for THIS specific matchup
+                        currentlyAvailable.forEach(option => {
+                            const score = scoreOptionForMatchup(option, leagueName, A, B, leagueSports.length);
+                            if (score > bestScore) {
+                                bestScore = score;
+                                bestOption = option;
                             }
-                        }
-                        if (chosenField) break; // Success! Stop looking at other sports.
+                        });
                     }
 
-                    // 3. Fallback (Only happens if ALL fields for ALL sports are disabled)
-                    if (!chosenField) {
-                        // We intentionally leave chosenSport as null or TBD so we don't say "Baseball @ TBD"
-                        chosenSport = "TBD"; 
-                        console.warn(`WARNING: No fields enabled for ANY league sport for match ${A} vs ${B}`);
+                    // Fallback
+                    const finalSport = bestOption ? bestOption.sport : "TBD";
+                    const finalField = bestOption ? bestOption.field : "TBD";
+
+                    // Record History (only if valid)
+                    if (bestOption) {
+                        recordSportHistory(leagueName, A, finalSport);
+                        recordSportHistory(leagueName, B, finalSport);
                     } else {
-                        lockedFields.add(chosenField);
-                    }
-                    
-                    if (chosenSport !== "TBD") {
-                        recordSportHistory(leagueName, A, chosenSport);
-                        recordSportHistory(leagueName, B, chosenSport);
+                        console.warn(`WARNING: No valid options left for ${A} vs ${B}`);
                     }
 
                     matchups.push({
-                        teamA: A, teamB: B, sport: chosenSport, field: chosenField
+                        teamA: A,
+                        teamB: B,
+                        sport: finalSport,
+                        field: finalField
                     });
                 });
 
                 // ====================================================================
-                // STORE DATA
+                // FORMAT & STORE
                 // ====================================================================
                 const formattedMatchups = matchups.map(m => {
                     if (m.teamA === "BYE" || m.teamB === "BYE") return `${m.teamA} vs ${m.teamB}`;
                     
-                    const sp = m.sport || "TBD";
-                    const fd = m.field || "TBD";
-                    
-                    if (sp === "TBD" && fd === "TBD") {
+                    if (m.sport === "TBD" && m.field === "TBD") {
                         return `${m.teamA} vs ${m.teamB} — NO FIELDS AVAILABLE`;
                     }
-                    
-                    return `${m.teamA} vs ${m.teamB} — ${sp} @ ${fd}`;
+                    return `${m.teamA} vs ${m.teamB} — ${m.sport} @ ${m.field}`;
                 });
 
                 window.leagueAssignments ??= {};
@@ -322,6 +322,8 @@
                 // ====================================================================
                 // FILL BUNKS
                 // ====================================================================
+                const lockedFields = matchups.map(m => m.field).filter(f => f && f !== "TBD");
+
                 group.bunkData.forEach(item => {
                     fillBlock(
                         {
@@ -346,6 +348,7 @@
                     );
                 });
 
+                // Lock fields globally for this block
                 lockedFields.forEach(f => writeLeagueReservationVeto(f, group));
             });
 
