@@ -54,9 +54,11 @@
 
             console.log("--- LEAGUE GENERATOR START ---");
             const leagueBlocks = schedulableSlotBlocks.filter(b => {
-                const name = String(b.event || "").toLowerCase();
-                return name.includes("league") && !name.includes("specialty");
-            });
+    const name = String(b.event || "").toLowerCase();
+    const hasLeagueInName = name.includes("league") && !name.includes("specialty");
+    const hasLeagueType = b.type === 'league';
+    return hasLeagueInName || hasLeagueType;
+});
 
             if (leagueBlocks.length === 0) {
                 console.warn("ABORT: No 'League' blocks in queue.");
