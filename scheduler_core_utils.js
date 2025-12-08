@@ -11,6 +11,7 @@
 // - Removed outdated league text veto
 // - Deterministic canBlockFit()
 // - Stable sharable/zone/minDuration handling
+// - FIX: Ensure same activity/sport for sharable fields (maxCapacity > 1)
 // ============================================================================
 
 (function () {
@@ -337,6 +338,20 @@
                 const myLabel = block._gameLabel || (String(actName).includes("League") ? actName : null);
 
                 const sameGame = myLabel && theirLabel && (String(myLabel) === String(theirLabel));
+
+                // === START: GCM FIX for Same Activity on Sharable Field ===
+                // Constraint: If field is sharable (capacity > 1), all bunks must be doing the same activity.
+                if (maxCapacity > 1) { 
+                    const existingActivity = String(existingName).trim().toLowerCase();
+                    const proposedActivity = String(actName).trim().toLowerCase();
+
+                    // Reject if activities are different AND they are NOT participating in the same league game block.
+                    if (existingActivity !== proposedActivity && !sameGame) {
+                        // Hard rejection: Sharable field, different activities, and not exempted by league match.
+                        return false; 
+                    }
+                }
+                // === END: GCM FIX ===
 
                 if (!sameGame) {
                     currentWeight += calculateAssignmentWeight(existingName, existingEntry);
