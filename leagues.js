@@ -1,6 +1,5 @@
-
 // =================================================================
-// leagues.js — THEMED VERSION (Emerald Jade Theme)
+// leagues.js — THEMED VERSION (FIXED: CONSTANT REFERENCE)
 // =================================================================
 (function () {
     'use strict';
@@ -8,8 +7,12 @@
     // -------------------------------------------------------------
     // GLOBAL LEAGUE STORAGE
     // -------------------------------------------------------------
-    let leaguesByName = {};
+    // GCM FIX: Use const so the reference never changes
+    const leaguesByName = {}; 
+    
+    // Bind to window immediately
     window.leaguesByName = leaguesByName;
+    window.masterLeagues = leaguesByName; 
 
     let leagueRoundState = {};
     window.leagueRoundState = leagueRoundState;
@@ -48,8 +51,16 @@
 
     function loadLeaguesData() {
         const global = window.loadGlobalSettings?.() || {};
-        leaguesByName = global.leaguesByName || {};
+        const loadedData = global.leaguesByName || {};
 
+        // GCM FIX: Don't replace the object. Clear and refill it.
+        // 1. Remove old keys
+        Object.keys(leaguesByName).forEach(k => delete leaguesByName[k]);
+        
+        // 2. Add new keys
+        Object.assign(leaguesByName, loadedData);
+
+        // 3. Ensure defaults
         Object.values(leaguesByName).forEach((l) => {
             l.divisions = l.divisions || [];
             l.sports = l.sports || [];
@@ -62,8 +73,9 @@
                 l.standings[team] = l.standings[team] || { w: 0, l: 0, t: 0 };
             });
         });
-
-        window.leaguesByName = leaguesByName;
+        
+        // No need to re-bind window.masterLeagues because the reference is const
+        console.log("Leagues Loaded via Mutation:", Object.keys(leaguesByName));
     }
 
     // -------------------------------------------------------------
@@ -1046,7 +1058,7 @@
         });
     }
 
-   // =================================================================
+    // =================================================================
     // FINAL LOAD — SAFE EXPORTS
     // =================================================================
     window.loadLeagueGlobals = function () {
@@ -1058,7 +1070,7 @@
         }
     };
     
-    // GCM FIX: Export the correct variable name
-    window.masterLeagues = leaguesByName; 
+    // Auto-load on script run
+    window.loadLeagueGlobals();
 
 })();
