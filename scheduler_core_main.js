@@ -1,10 +1,11 @@
 // ============================================================================
-// scheduler_core_main.js (GCM FINAL: CRASH FIX)
+// scheduler_core_main.js (GCM FINAL: CRASH FIX + TYPE PRESERVATION)
 // PART 3 of 3: THE ORCHESTRATOR
 //
 // FIXES:
 // ✓ Unpacks 'fieldsBySport' to prevent ReferenceError crash.
 // ✓ Forces "League Game" blocks into the Generator queue.
+// ✓ Preserves item.type when creating schedulableSlotBlocks.
 // ============================================================================
 
 (function () {
@@ -123,39 +124,6 @@
     // -------------------------------------------------------------------------
     // MAIN ENTRY (GCM PATCHED)
     // -------------------------------------------------------------------------
-   // --- GCM INLINE PROBE START ---
-    console.group("🛑 GCM IN-CONTEXT DIAGNOSTICS");
-    
-    // 1. SCOPE CHECK
-    console.log("Scope Check: Running inside generation logic.");
-
-    // 2. VARIABLE DUMP (Using try-catch to avoid crashing if variable is missing)
-    const safeLog = (name, val) => {
-        try {
-            console.log(`${name}:`, val);
-            if (Array.isArray(val)) console.log(`   -> Length: ${val.length}`);
-        } catch (e) {
-            console.error(`${name} is NOT ACCESSIBLE in this scope.`);
-        }
-    };
-
-    safeLog("allTasks", typeof allTasks !== 'undefined' ? allTasks : "UNDEFINED");
-    safeLog("fixedEvents", typeof fixedEvents !== 'undefined' ? fixedEvents : "UNDEFINED");
-    safeLog("currentViewDate", typeof currentViewDate !== 'undefined' ? currentViewDate : "UNDEFINED");
-    
-    // 3. LOGIC SIMULATION
-    if (typeof allTasks !== 'undefined' && Array.isArray(allTasks)) {
-        const active = allTasks.filter(t => !t.completed);
-        console.log(`Active Tasks Count: ${active.length}`);
-        if (active.length > 0) {
-            console.log("Sample Task[0]:", active[0]);
-        } else {
-            console.warn("WARNING: Task list is empty or all are completed.");
-        }
-    }
-
-    console.groupEnd();
-    // --- GCM INLINE PROBE END ---
     window.runSkeletonOptimizer = function (manualSkeleton, externalOverrides) {
         console.log(">>> OPTIMIZER STARTED (GCM FINAL)");
         const Utils = window.SchedulerCoreUtils;
@@ -259,24 +227,24 @@
                 return;
             }
 
-           if (isLeague || (isSchedulable && isGenerated) || hasBuffer) {
-    bunkList.forEach(b => {
-        schedulableSlotBlocks.push({ 
-            divName, 
-            bunk: b, 
-            event: finalName,
-            type: item.type,  // ← ADD THIS LINE to preserve original type
-            startTime: sMin, 
-            endTime: eMin, 
-            slots 
+            if (isLeague || (isSchedulable && isGenerated) || hasBuffer) {
+                bunkList.forEach(b => {
+                    schedulableSlotBlocks.push({ 
+                        divName, 
+                        bunk: b, 
+                        event: finalName,
+                        type: item.type,  // ← PRESERVE ORIGINAL TYPE
+                        startTime: sMin, 
+                        endTime: eMin, 
+                        slots 
+                    });
+                });
+            }
         });
-    });
-}
 
         console.log(`Schedulable Slot Blocks Count: ${schedulableSlotBlocks.length}`);
-        console.log(`Schedulable Slot Blocks Count: ${schedulableSlotBlocks.length}`);
-console.log("Sample blocks:", schedulableSlotBlocks.slice(0, 5)); // Add this
-console.log("Block events:", schedulableSlotBlocks.map(b => b.event)); // Add this
+        console.log("Sample blocks:", schedulableSlotBlocks.slice(0, 5));
+        console.log("Block events:", schedulableSlotBlocks.map(b => ({ event: b.event, type: b.type })));
 
         // 6 — Smart Tiles
         const smartJobs = window.SmartLogicAdapter?.preprocessSmartTiles?.(manualSkeleton, externalOverrides, masterSpecials) || [];
