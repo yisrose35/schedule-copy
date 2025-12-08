@@ -1,10 +1,10 @@
 // ============================================================================
-// scheduler_core_main.js (GCM PATCHED: FINAL FIX)
+// scheduler_core_main.js (GCM PATCHED: TRACE LOGGING)
 // PART 3 of 3: THE ORCHESTRATOR
 //
 // FIXES:
-// ✓ Unpacks 'fieldsBySport' properly to prevent ReferenceError.
-// ✓ Maintains the League Interceptor logic.
+// ✓ Unpacks 'fieldsBySport' properly.
+// ✓ TRACE LOGGING: Prints decision path for every "League" block.
 // ============================================================================
 
 (function () {
@@ -25,7 +25,6 @@
     function normalizeLeague(name) {
         if (!name) return null;
         const s = name.toLowerCase().replace(/\s+/g, '');
-        // GCM PATCHED: Aggressive matching
         if (s.includes("league") && !s.includes("specialty")) return "League Game";
         return null;
     }
@@ -125,7 +124,7 @@
     // MAIN ENTRY (GCM PATCHED)
     // -------------------------------------------------------------------------
     window.runSkeletonOptimizer = function (manualSkeleton, externalOverrides) {
-        console.log(">>> OPTIMIZER STARTED (GCM PATCHED)");
+        console.log(">>> OPTIMIZER STARTED (GCM PATCHED + TRACE)");
         const Utils = window.SchedulerCoreUtils;
         const config = Utils.loadAndFilterData();
         window.activityProperties = config.activityProperties;
@@ -148,7 +147,7 @@
             specialActivityNames, 
             bunkMetaData, 
             dailyFieldAvailability,
-            fieldsBySport // <--- ADDED HERE
+            fieldsBySport 
         } = config;
 
         window.SchedulerCoreUtils._bunkMetaData = bunkMetaData;
@@ -222,8 +221,20 @@
             const hasBuffer = (trans.preMin + trans.postMin) > 0;
             const isSchedulable = GENERATOR_TYPES.includes(item.type);
 
-            // LOG LEAGUE DETECTION (Console Spam Reduced)
-            // if (isLeague) console.log(`   -> Intercepted: "${item.event}"`);
+            // === TRACE LOGGING ===
+            if (item.event.toLowerCase().includes("league")) {
+                console.log(`[MAIN TRACE] Found block "${item.event}" (Div: ${divName})`);
+                console.log(`   -> isLeague: ${isLeague}`);
+                console.log(`   -> isGenerated: ${isGenerated}`);
+                console.log(`   -> isSchedulable: ${isSchedulable} (Type: ${item.type})`);
+                
+                if (isLeague) {
+                    console.log("   -> DECISION: Adding to Generator Queue.");
+                } else if ((item.type === "pinned" || !isGenerated) && !isSchedulable && item.type !== "smart" && !hasBuffer) {
+                    console.warn("   -> DECISION: TREATING AS PINNED (Skipping Generator!).");
+                }
+            }
+            // =====================
 
             // Pinned (Non-League)
             if (!isLeague && (item.type === "pinned" || !isGenerated) && !isSchedulable && item.type !== "smart" && !hasBuffer) {
