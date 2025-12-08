@@ -12,6 +12,7 @@
 // - Deterministic canBlockFit()
 // - Stable sharable/zone/minDuration handling
 // - FIX: Ensure same activity/sport for sharable fields (maxCapacity > 1)
+// - FIX: Enforce field's maxCapacity regardless of activity name similarity (prevent 6 bunks on a field).
 // ============================================================================
 
 (function () {
@@ -353,9 +354,13 @@
                 }
                 // === END: GCM FIX ===
 
-                if (!sameGame) {
-                    currentWeight += calculateAssignmentWeight(existingName, existingEntry);
-                }
+                // === START: GCM FIX for Max Field Capacity Enforcement ===
+                // Every existing assignment must count against the field's capacity, regardless of activity,
+                // otherwise capacity checks fail when different activities (that passed the same-activity check above)
+                // occupy a sharable field (e.g., Soccer & Running Bases in a cage).
+                // The assignment weight calculation must happen *before* the capacity check.
+                currentWeight += calculateAssignmentWeight(existingName, existingEntry);
+                // === END: GCM FIX ===
             }
 
             const myWeight = isLeague ? 1 : 1;
