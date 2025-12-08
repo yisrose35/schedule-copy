@@ -267,6 +267,9 @@
         });
 
         console.log(`Schedulable Slot Blocks Count: ${schedulableSlotBlocks.length}`);
+        console.log(`Schedulable Slot Blocks Count: ${schedulableSlotBlocks.length}`);
+console.log("Sample blocks:", schedulableSlotBlocks.slice(0, 5)); // Add this
+console.log("Block events:", schedulableSlotBlocks.map(b => b.event)); // Add this
 
         // 6 — Smart Tiles
         const smartJobs = window.SmartLogicAdapter?.preprocessSmartTiles?.(manualSkeleton, externalOverrides, masterSpecials) || [];
