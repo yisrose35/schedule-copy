@@ -1,20 +1,11 @@
 // ============================================================================
 // scheduler_core_utils.js
-// PART 1 of 3: THE FOUNDATION (FULLY REWRITTEN — GCM VERSION)
+// PART 1 of 3: THE FOUNDATION (STRICT CAPACITY & ROBUST ARGUMENTS)
 //
 // Fixes Included:
-// - Safe default props for ALL activities (Free/Lunch/Snack/etc)
-// - Correct League weight model (no capacity poisoning)
-// - Correct headcount logic (no 0-capacity bug)
-// - Eliminated division mismatch poisoning
-// - Eliminated over-strict transition zone failures
-// - Removed outdated league text veto
-// - Deterministic canBlockFit()
-// - Stable sharable/zone/minDuration handling
-// - FIX: STRICT EXACT MATCH enforcement for sharable fields.
-// - FIX: Robust Regex for field name matching.
-// - CRITICAL PATCH: Argument mismatch handling.
-// - FINAL FIX: Lock & Key logic for strict activity matching on shared fields.
+// - STRICT Capacity: Ignores capacity number if "Sharable" is unchecked.
+// - Argument Recovery: Prevents "undefined" errors in canBlockFit.
+// - Lock & Key: Ensures shared fields respect activity matching strings.
 // ============================================================================
 
 (function () {
@@ -208,26 +199,18 @@
         return combined;
     }
 
-    // Helper to safely normalize strings for strict comparison
     function normalizeActivityStrict(str) {
         if (!str) return "";
         let s = String(str).trim();
-        
-        // Remove "Field Name - " prefix pattern aggressively
-        // Matches: "Any Text - ActivityName" -> returns "ActivityName"
-        // Matches: "Soccer Cage - Soccer" -> "Soccer"
-        // Matches: "Soccer" -> "Soccer"
-        
         const parts = s.split(/\s*[-–—]\s*/);
         if (parts.length > 1) {
-             // Take the LAST part as the activity
              return parts[parts.length - 1].trim().toLowerCase();
         }
         return s.toLowerCase();
     }
 
     // =================================================================
-    // 4. MAIN FIT LOGIC (REWRITTEN)
+    // 4. MAIN FIT LOGIC (STRICT CAPACITY ENFORCEMENT)
     // =================================================================
 
     Utils.isTimeAvailable = function (slotIndex, props) {
@@ -275,13 +258,21 @@
 
     Utils.canBlockFit = function (block, fieldName, activityProperties, fieldUsageBySlot, actName, forceLeague = false) {
         
-        // --- PATCH FOR TOTAL SOLVER ARGUMENT MISMATCH ---
+        // --- IMPROVED ARGUMENT RECOVERY ---
+        // Handles cases where fieldUsageBySlot is missed or arguments shifted
         if (typeof fieldUsageBySlot === 'string' && actName === undefined) {
+            // Case: Called as (block, fieldName, props, actName)
             actName = fieldUsageBySlot;
             fieldUsageBySlot = window.fieldUsageBySlot; 
+        } else if (typeof fieldUsageBySlot === 'boolean' && actName === undefined) {
+             // Case: Called as (block, fieldName, props, forceLeague)
+             forceLeague = fieldUsageBySlot;
+             fieldUsageBySlot = window.fieldUsageBySlot;
+             actName = fieldName;
         }
+        
+        // Ensure usage map exists (Critical for Solver)
         if (!fieldUsageBySlot) fieldUsageBySlot = window.fieldUsageBySlot || {};
-        // ------------------------------------------------
         
         if (!fieldName) return false;
 
@@ -305,9 +296,15 @@
         if (activityDuration <= 0 || activityDuration < (rules.minDurationMin || 0))
             return false;
 
+        // --- STRICT CAPACITY LOGIC ---
+        // If 'Sharable' is NOT checked (type != all/custom), limit is ALWAYS 1.
+        // This ignores any hidden capacity numbers in the data.
         let maxCapacity = 1;
-        if (props.sharableWith?.capacity) maxCapacity = parseInt(props.sharableWith.capacity);
-        else if (props.sharable || props.sharableWith?.type === "all") maxCapacity = 2;
+        if (props.sharableWith?.type === "all" || props.sharableWith?.type === "custom") {
+            maxCapacity = parseInt(props.sharableWith.capacity) || 2;
+        } else {
+            maxCapacity = 1; // Strict limit for not_sharable
+        }
 
         const bunkMeta = window.bunkMetaData || {};
         const sportMeta = window.sportMetaData || {};
@@ -347,12 +344,10 @@
             const isLeague = forceLeague || isLeagueAssignment(myObj, actName);
 
             // === START: LOCK & KEY ACTIVITY CHECK ===
-            // Identify the "Locked Activity" for this slot if any bunk is already present.
             let lockedActivity = null;
             let isLockedByLeague = false;
 
             if (existing.length > 0) {
-                // Find the first valid activity to lock onto
                 for (const b of existing) {
                     const activity = usage.bunks[b];
                     if (activity) {
@@ -361,39 +356,30 @@
                             isLockedByLeague = true;
                         }
                         lockedActivity = normalizeActivityStrict(activity);
-                        break; // Found the lock, stop searching
+                        break; 
                     }
                 }
             }
 
-            // Check if proposed activity matches the lock
             if (maxCapacity > 1 && lockedActivity) {
                 const proposedNorm = normalizeActivityStrict(actName);
-                
-                // If the field is locked by a league game, ONLY league games can join (if capacity allows)
-                if (isLockedByLeague && !isLeague) {
-                    return false;
-                }
-
-                // If not a league game, Strict string match required
-                if (!isLockedByLeague && proposedNorm !== lockedActivity) {
-                    return false; // REJECT: Does not match the locked activity
-                }
+                if (isLockedByLeague && !isLeague) return false;
+                if (!isLockedByLeague && proposedNorm !== lockedActivity) return false;
             }
             // === END: LOCK & KEY ===
 
             for (const b of existing) {
                 if (b === block.bunk) continue;
-
                 const existingEntry = window.scheduleAssignments?.[b]?.[idx];
                 const existingName = usage.bunks[b];
-
-                // === CAPACITY ENFORCEMENT ===
-                // Count every existing occupant.
+                
+                // Count every existing occupant based on their weight
                 currentWeight += calculateAssignmentWeight(existingName, existingEntry);
             }
 
             const myWeight = isLeague ? 1 : 1;
+            
+            // --- CRITICAL OVERUSE CHECK ---
             if (currentWeight + myWeight > maxCapacity) return false;
 
             if (maxHeadcount !== Infinity) {
@@ -463,10 +449,6 @@
             return maxLoad;
         }
     };
-
-    // =================================================================
-    // 6. Delegated Loader
-    // =================================================================
 
     Utils.loadAndFilterData = function () {
         if (typeof window.loadAndFilterData !== "function") {
