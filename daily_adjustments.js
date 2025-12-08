@@ -90,10 +90,10 @@ function mapEventNameForOptimizer(name) {
     const lower = name.toLowerCase().trim();
 
     // Core slots
-    if (lower === 'activity')          return { type: 'slot', event: 'General Activity Slot' };
-    if (lower === 'sports')            return { type: 'slot', event: 'Sports Slot' };
+    if (lower === 'activity')           return { type: 'slot', event: 'General Activity Slot' };
+    if (lower === 'sports')             return { type: 'slot', event: 'Sports Slot' };
     if (lower === 'special activity' ||
-        lower === 'special')           return { type: 'slot', event: 'Special Activity' };
+        lower === 'special')            return { type: 'slot', event: 'Special Activity' };
 
     // League handling — FIXED
     if (lower.includes('specialty league'))
@@ -405,6 +405,44 @@ function addDropListeners(gridContainer) {
           }
         };
 
+      // --- LEAGUE TILE HANDLER (Fix #1) ---
+      } else if (tileData.type === 'league') {
+        eventType = 'league';
+        eventName = 'League Game';
+
+        let startTime = prompt(`League Game start time:`, defaultStartTime);
+        if (!startTime) return;
+        let endTime = prompt(`League Game end time:`);
+        if (!endTime) return;
+
+        newEvent = {
+          id: `evt_${Math.random().toString(36).slice(2, 9)}`,
+          type: 'league',
+          event: 'League Game',
+          division: divName,
+          startTime,
+          endTime
+        };
+
+      // --- SPECIALTY LEAGUE TILE HANDLER (Fix #2) ---
+      } else if (tileData.type === 'specialty_league') {
+        eventType = 'specialty_league';
+        eventName = 'Specialty League';
+
+        let startTime = prompt(`Specialty League start time:`, defaultStartTime);
+        if (!startTime) return;
+        let endTime = prompt(`Specialty League end time:`);
+        if (!endTime) return;
+
+        newEvent = {
+          id: `evt_${Math.random().toString(36).slice(2, 9)}`,
+          type: 'specialty_league',
+          event: 'Specialty League',
+          division: divName,
+          startTime,
+          endTime
+        };
+
       // --- Pinned tiles ---
       } else if (['lunch','snacks','custom','dismissal','swim'].includes(tileData.type)) {
         eventType = 'pinned';
@@ -418,6 +456,11 @@ function addDropListeners(gridContainer) {
 
       // Standard single-event fallback (Activity / Sports / Special / generic slot)
       if (!newEvent) {
+        // SAFETY FIX: If the name contains "league", make sure type = league (Fix #3)
+        if (/league/i.test(eventName) && eventType === 'slot') {
+            eventType = 'league';
+        }
+
         let startTime, endTime, startMin, endMin;
 
         if (tileData.type === 'activity') eventName = 'General Activity Slot';
@@ -476,8 +519,8 @@ function addRemoveListeners(gridContainer) {
 function renderEventTile(event, top, height) {
   let tile = TILES.find(t => t.name === event.event);
   if (!tile) {
-    if (event.type === 'split')        tile = TILES.find(t => t.type === 'split');
-    else if (event.type === 'smart')   tile = TILES.find(t => t.type === 'smart');
+    if (event.type === 'split')         tile = TILES.find(t => t.type === 'split');
+    else if (event.type === 'smart')    tile = TILES.find(t => t.type === 'smart');
     else if (event.event === 'General Activity Slot') tile = TILES.find(t => t.type === 'activity');
     else if (event.event === 'Sports Slot')           tile = TILES.find(t => t.type === 'sports');
     else if (event.event === 'Special Activity')      tile = TILES.find(t => t.type === 'special');
@@ -511,9 +554,9 @@ function renderEventTile(event, top, height) {
          data-event-id="${event.id}"
          title="Click to remove this event"
          style="${tripStyle || style};padding:2px 5px;border-radius:4px;text-align:center;
-                margin:0 1px;font-size:.9em;position:absolute;
-                top:${top}px;height:${height}px;width:calc(100% - 4px);
-                box-sizing:border-box;overflow:hidden;cursor:pointer;">
+                 margin:0 1px;font-size:.9em;position:absolute;
+                 top:${top}px;height:${height}px;width:calc(100% - 4px);
+                 box-sizing:border-box;overflow:hidden;cursor:pointer;">
       ${innerHtml}
     </div>`;
 }
