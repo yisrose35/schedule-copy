@@ -17,7 +17,7 @@
     const MAX_MATCHUP_ITERATIONS = 2000;
     
     // !!! GCM CONFIGURATION !!!
-    const FORCE_FIT_MODE = true; 
+    const FORCE_FIT_MODE = false; 
 
     // Runtime globals
     let globalConfig = null;
