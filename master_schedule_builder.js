@@ -6,6 +6,7 @@
 // 2. Added Timeline Gatekeeper to Drag-and-Drop.
 // 3. Aligned Smart Tile prompts with new logic.
 // 4. FIXED: Standardized Activity Types ('activity' -> 'slot')
+// 5. FIXED: Specialty League type typo & Added League Safety Check
 // =================================================================
 
 (function(){
@@ -384,13 +385,22 @@ function addDropListeners(selector){
                 
                 else if(tileData.type==='custom') { name = prompt("Event Name:", "Regroup"); finalType = 'pinned'; }
                 else if(tileData.type==='league') {
-    name = "League Game";
-    finalType = 'league';
-}
-
-                else if(tileData.type==='specialty_league') { name = "Specialty League"; finalType = 'speciality league'; }
+                    name = "League Game";
+                    finalType = 'league';
+                }
+                
+                // FIX #2: Correctly spelled specialty_league
+                else if(tileData.type === 'specialty_league') { 
+                    name = "Specialty League"; 
+                    finalType = 'specialty_league'; 
+                }
                 
                 if(!name) return;
+
+                // FIX #3: Safety Auto-fix for League
+                if (/league/i.test(name) && finalType === 'slot') {
+                    finalType = 'league';
+                }
                 
                 let st=prompt(`${name} Start:`, startStr); if(!st) return;
                 let et=prompt(`${name} End:`, endStr); if(!et) return;
