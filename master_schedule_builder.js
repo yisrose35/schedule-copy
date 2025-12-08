@@ -388,7 +388,7 @@ function addDropListeners(selector){
     finalType = 'league';
 }
 
-                else if(tileData.type==='specialty_league') { name = "Specialty League"; finalType = 'slot'; }
+                else if(tileData.type==='specialty_league') { name = "Specialty League"; finalType = 'speciality league'; }
                 
                 if(!name) return;
                 
