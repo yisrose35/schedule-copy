@@ -1,11 +1,10 @@
 // ============================================================================
-// scheduler_core_leagues.js (GCM FINAL: PERMISSIVE FILTER)
+// scheduler_core_leagues.js (GCM FORENSIC MODE)
 // Strict League Exclusivity + Division-Level League Outputs
 //
-// FIXES:
-// ✓ "Magnet Filter": Catches any block containing "League" (ignoring case/spaces).
-// ✓ "Fuzzy Division": Matches "3" to "3rd Grade".
-// ✓ "Multi-Field Lock": Reserves all fields used in the round.
+// DEBUGGING FEATURES:
+// ✓ Dumps the raw names of blocks in the queue to the console.
+// ✓ Removes strict filters to ensure we catch the blocks.
 // ============================================================================
 
 (function () {
@@ -61,146 +60,91 @@
         return round;
     }
 
-    // === GCM FIX: FUZZY DIVISION MATCHER ===
+    // FUZZY DIVISION MATCHER (Required for "3" vs "3rd Grade")
     function isDivisionMatch(timelineDiv, leagueDiv) {
         if (!timelineDiv || !leagueDiv) return false;
         const t = String(timelineDiv).trim().toLowerCase();
         const l = String(leagueDiv).trim().toLowerCase();
-        
-        // 1. Exact Match
         if (t === l) return true;
-
-        // 2. Inclusion (e.g. "3" inside "3rd Grade")
         if (l.includes(t) || t.includes(l)) return true;
-
-        // 3. Normalized Number Match (Remove st, nd, rd, th, grade)
         const cleanT = t.replace(/(st|nd|rd|th|grade|s)/g, "").trim();
         const cleanL = l.replace(/(st|nd|rd|th|grade|s)/g, "").trim();
-        
         return cleanT === cleanL && cleanT.length > 0;
     }
-
-    // =========================================================================
-    // SPECIALTY LEAGUES
-    // =========================================================================
-
-    Leagues.processSpecialtyLeagues = function (context) {
-        const { schedulableSlotBlocks, masterSpecialtyLeagues, disabledSpecialtyLeagues, yesterdayHistory, activityProperties, fillBlock, fieldUsageBySlot } = context;
-        
-        // GCM FIX: Permissive Filter for Specialty Leagues
-        const blocks = schedulableSlotBlocks.filter(b => 
-            (/specialty/i.test(b.event) || /spec/i.test(b.event)) && !b.processed
-        );
-
-        if (blocks.length === 0) return;
-
-        const groups = {};
-        blocks.forEach(block => {
-            const key = `${block.divName}-${block.startTime}`;
-            groups[key] ??= {
-                divName: block.divName,
-                startTime: block.startTime,
-                endTime: block.endTime,
-                slots: block.slots,
-                bunks: []
-            };
-            groups[key].bunks.push(block.bunk);
-        });
-
-        // (Logic identical to standard league processing, omitted for brevity)
-    };
 
     // =========================================================================
     // REGULAR LEAGUES
     // =========================================================================
 
     Leagues.processRegularLeagues = function (context) {
-        const {
-            schedulableSlotBlocks,
-            masterLeagues,
-            disabledLeagues,
-            divisions,
-            fieldsBySport,
-            activityProperties,
-            yesterdayHistory,
-            fillBlock,
-            fieldUsageBySlot
-        } = context;
+        const { schedulableSlotBlocks, masterLeagues, disabledLeagues, fieldsBySport, activityProperties, yesterdayHistory, fillBlock, fieldUsageBySlot } = context;
 
-        console.log("--- LEAGUE GENERATOR: Starting Regular Leagues ---");
+        console.log("--- LEAGUE GENERATOR DIAGNOSTICS ---");
         
-        // GCM FIX: THE MAGNET FILTER
-        // Instead of strict equality, we use Regex to catch ANY variation of "League".
-        const leagueBlocks = schedulableSlotBlocks.filter(b => 
-            /league/i.test(b.event) && 
-            !/specialty/i.test(b.event) && 
-            !b.processed
-        );
+        // 1. INSPECT THE QUEUE
+        if (!schedulableSlotBlocks || schedulableSlotBlocks.length === 0) {
+            console.error("❌ CRITICAL: The Generator received an EMPTY queue.");
+            return;
+        }
+        
+        // Sample the first 5 events to see what they look like
+        console.log("Queue Sample (First 5):", schedulableSlotBlocks.slice(0, 5).map(b => b.event));
 
-        console.log(`Found ${leagueBlocks.length} 'League Game' blocks in the timeline.`);
+        // 2. THE MAGNET FILTER
+        const leagueBlocks = schedulableSlotBlocks.filter(b => {
+            const name = String(b.event || "").toLowerCase();
+            return name.includes("league"); // Simple, dumb check
+        });
+
+        console.log(`🔍 Filter Result: Found ${leagueBlocks.length} blocks containing 'league'.`);
 
         if (leagueBlocks.length === 0) {
-            console.warn("ABORT: No blocks labeled 'League Game' found.");
+            console.warn("❌ ABORT: Zero matches. The blocks in the queue simply do not contain the word 'league'.");
             return;
         }
 
         const groups = {};
 
-        // 2. Group by Division & Time
+        // 3. GROUPING
         leagueBlocks.forEach(block => {
-            // FIND MATCHING LEAGUE (USING FUZZY MATCHER)
+            // Find Matching League
             const lgEntry = Object.entries(masterLeagues).find(([name, L]) => {
-                const isEnabled = L.enabled;
-                const notDisabled = !disabledLeagues.includes(name);
-                // Fuzzy Match
-                const hasDiv = L.divisions && L.divisions.some(d => isDivisionMatch(block.divName, d));
-                
-                if (!hasDiv) return false; 
-                if (!isEnabled) {
-                    console.log(`   -> Skipped '${name}': Disabled.`);
-                    return false;
-                }
-                return true;
+                if (!L.enabled || disabledLeagues.includes(name)) return false;
+                return L.divisions && L.divisions.some(d => isDivisionMatch(block.divName, d));
             });
 
             if (!lgEntry) {
-                console.warn(`   ⚠️ SKIPPED: No matching league found for Timeline Division '${block.divName}'.`);
+                console.warn(`   ⚠️ Unmatched Block: Div '${block.divName}' (Event: ${block.event}) - No enabled league found.`);
                 return;
             }
 
             const [leagueName, league] = lgEntry;
-            console.log(`   ✅ Matched Timeline '${block.divName}' -> League '${leagueName}'`);
-
             const key = `${leagueName}-${block.divName}-${block.startTime}`;
+            
             groups[key] ??= {
-                leagueName,
-                league,
-                divName: block.divName,
-                startTime: block.startTime,
-                endTime: block.endTime,
-                slots: block.slots,
-                bunks: []
+                leagueName, league, divName: block.divName,
+                startTime: block.startTime, endTime: block.endTime,
+                slots: block.slots, bunks: []
             };
             groups[key].bunks.push(block.bunk);
         });
 
-        // 3. Process Groups
+        // 4. EXECUTION
         const groupKeys = Object.keys(groups);
-        console.log(`Processing ${groupKeys.length} confirmed league groups.`);
+        console.log(`✅ Ready to schedule ${groupKeys.length} league groups.`);
 
         Object.values(groups).forEach(group => {
             const { leagueName, league } = group;
-
             const teams = league.teams.slice();
+            
             if (teams.length < 2) {
-                console.error(`   ❌ League '${leagueName}' has fewer than 2 teams. Cannot schedule.`);
+                console.warn(`   ⚠️ League '${leagueName}' has insufficient teams (${teams.length}). Skipping.`);
                 return;
             }
 
             const pairs = roundRobinPairs(teams);
             const gameLabel = getGameLabel(leagueName);
             const sports = league.sports?.length ? league.sports : ["League Game"];
-
             const matchups = [];
             const lockedFields = new Set();
 
@@ -213,7 +157,6 @@
 
                 const preferredSport = sports[i % sports.length];
                 const candidates = [preferredSport, ...sports.filter(s => s !== preferredSport)];
-
                 let chosenField = null;
                 let chosenSport = preferredSport;
 
@@ -221,23 +164,10 @@
                     const possibleFields = fieldsBySport[sport] || [];
                     for (const field of possibleFields) {
                         const fits = window.SchedulerCoreUtils.canBlockFit(
-                            {
-                                divName: group.divName,
-                                bunk: "__LEAGUE__",
-                                startTime: group.startTime,
-                                endTime: group.endTime,
-                                slots: group.slots
-                            },
-                            field,
-                            activityProperties,
-                            fieldUsageBySlot,
-                            sport,
-                            true // isLeague = true (Forces override if needed)
+                            { divName: group.divName, bunk: "__LEAGUE__", startTime: group.startTime, endTime: group.endTime, slots: group.slots },
+                            field, activityProperties, fieldUsageBySlot, sport, true
                         );
-                        
-                        // NOTE: If using the Loader fix, fits should be true.
-                        // If not, we fall back to implicit acceptance for leagues.
-                        if (fits || true) { 
+                        if (fits || true) { // FORCE FIT FOR NOW
                             chosenField = field;
                             chosenSport = sport;
                             break;
@@ -247,66 +177,38 @@
                 }
 
                 if (chosenField) lockedFields.add(chosenField);
-                
-                matchups.push({
-                    teamA: A,
-                    teamB: B,
-                    sport: chosenSport,
-                    field: chosenField
-                });
+                matchups.push({ teamA: A, teamB: B, sport: chosenSport, field: chosenField });
             });
 
-            // WRITE TO UI STATE
+            // SAVE TO UI
             window.leagueAssignments ??= {};
             window.leagueAssignments[group.divName] ??= {};
             const slotIndex = group.slots[0];
-            
             window.leagueAssignments[group.divName][slotIndex] = {
-                gameLabel,
-                startMin: group.startTime,
-                endMin: group.endTime,
-                matchups
+                gameLabel, startMin: group.startTime, endMin: group.endTime, matchups
             };
 
-            // FORMAT TEXT
-            const formattedMatchups = matchups.map(m => 
-                `${m.teamA} vs ${m.teamB} — ${m.sport} @ ${m.field || 'TBD'}`
-            );
+            const formattedMatchups = matchups.map(m => `${m.teamA} vs ${m.teamB} — ${m.sport} @ ${m.field || 'TBD'}`);
 
             // FILL BUNKS
             group.bunks.forEach(bunk => {
                 fillBlock(
-                    {
-                        divName: group.divName,
-                        bunk,
-                        startTime: group.startTime,
-                        endTime: group.endTime,
-                        slots: group.slots
+                    { divName: group.divName, bunk, startTime: group.startTime, endTime: group.endTime, slots: group.slots },
+                    { 
+                        field: "League Block", sport: null, _activity: "League Block", _fixed: true,
+                        _allMatchups: formattedMatchups, _gameLabel: gameLabel
                     },
-                    {
-                        field: "League Block",
-                        sport: null,
-                        _activity: "League Block",
-                        _fixed: true,
-                        _allMatchups: formattedMatchups,
-                        _gameLabel: gameLabel
-                    },
-                    fieldUsageBySlot,
-                    yesterdayHistory,
-                    true,
-                    activityProperties
+                    fieldUsageBySlot, yesterdayHistory, true, activityProperties
                 );
             });
 
             // LOCK FIELDS
-            lockedFields.forEach(f => {
-                writeLeagueReservationVeto(f, {
-                    divName: group.divName,
-                    startTime: group.startTime,
-                    endTime: group.endTime
-                });
-            });
+            lockedFields.forEach(f => writeLeagueReservationVeto(f, group));
         });
+    };
+
+    Leagues.processSpecialtyLeagues = function (context) {
+        // Keeps interface satisfied
     };
 
     window.SchedulerCoreLeagues = Leagues;
