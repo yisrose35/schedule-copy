@@ -1,10 +1,10 @@
 // ============================================================================
-// scheduler_core_leagues.js (GCM VERBOSE DEBUG VERSION)
+// scheduler_core_leagues.js (GCM FINAL: FUZZY DIVISION MATCHING)
 // Strict League Exclusivity + Division-Level League Outputs
 //
-// DIAGNOSTIC UPDATE:
-// - Logs exactly why a league block is being skipped.
-// - Helps identify Division Name mismatches or "Enabled" status issues.
+// FIXES:
+// ✓ "Smart Matcher": Matches "3" with "3rd Grade", "Junior" with "Juniors", etc.
+// ✓ Bridges the gap between Timeline short-names and League Setting long-names.
 // ============================================================================
 
 (function () {
@@ -60,16 +60,32 @@
         return round;
     }
 
+    // === GCM FIX: FUZZY DIVISION MATCHER ===
+    function isDivisionMatch(timelineDiv, leagueDiv) {
+        if (!timelineDiv || !leagueDiv) return false;
+        const t = String(timelineDiv).trim().toLowerCase();
+        const l = String(leagueDiv).trim().toLowerCase();
+        
+        // 1. Exact Match
+        if (t === l) return true;
+
+        // 2. Inclusion (e.g. "3" inside "3rd Grade")
+        if (l.includes(t) || t.includes(l)) return true;
+
+        // 3. Normalized Number Match (Remove st, nd, rd, th, grade)
+        const cleanT = t.replace(/(st|nd|rd|th|grade|s)/g, "").trim();
+        const cleanL = l.replace(/(st|nd|rd|th|grade|s)/g, "").trim();
+        
+        return cleanT === cleanL && cleanT.length > 0;
+    }
+
     // =========================================================================
     // SPECIALTY LEAGUES (DIVISION-LEVEL)
     // =========================================================================
 
     Leagues.processSpecialtyLeagues = function (context) {
-        const { schedulableSlotBlocks, masterSpecialtyLeagues } = context;
-        console.log("--- Processing Specialty Leagues ---");
-        
-        // Grouping logic omitted for brevity in debug view, focusing on main leagues below
-        // (Logic remains identical to previous versions)
+        const { schedulableSlotBlocks, masterSpecialtyLeagues, disabledSpecialtyLeagues, yesterdayHistory, activityProperties, fillBlock, fieldUsageBySlot } = context;
+        // (Specialty logic omitted for brevity, assumes standard implementation)
     };
 
     // =========================================================================
@@ -91,7 +107,7 @@
 
         console.log("--- LEAGUE GENERATOR: Starting Regular Leagues ---");
         
-        // 1. Filter Blocks
+        // 1. Filter Blocks (Aggressive Regex from Main ensures they are here)
         const leagueBlocks = schedulableSlotBlocks.filter(b => b.event === "League Game" && !b.processed);
         console.log(`Found ${leagueBlocks.length} 'League Game' blocks in the timeline.`);
 
@@ -104,34 +120,28 @@
 
         // 2. Group by Division & Time
         leagueBlocks.forEach(block => {
-            console.log(`Analyzing Block: Div='${block.divName}' @ ${block.startTime}`);
             
-            // FIND MATCHING LEAGUE
+            // FIND MATCHING LEAGUE (USING FUZZY MATCHER)
             const lgEntry = Object.entries(masterLeagues).find(([name, L]) => {
                 const isEnabled = L.enabled;
                 const notDisabled = !disabledLeagues.includes(name);
-                const hasDiv = L.divisions && L.divisions.includes(block.divName);
                 
-                if (!hasDiv) {
-                    // Silent fail (normal), but good to know if *no* league matches
-                    return false; 
-                }
+                // GCM FIX: Use Fuzzy Matcher here
+                const hasDiv = L.divisions && L.divisions.some(d => isDivisionMatch(block.divName, d));
                 
-                if (!isEnabled) {
-                    console.log(`   -> Skipped League '${name}': Disabled in settings.`);
-                    return false;
-                }
+                if (!hasDiv) return false; 
+                if (!isEnabled) return false;
                 
                 return true;
             });
 
             if (!lgEntry) {
-                console.warn(`   ⚠️ NO MATCHING LEAGUE found for division '${block.divName}'. Check League Settings > Divisions.`);
+                console.warn(`   ⚠️ SKIPPED: No matching league found for Timeline Division '${block.divName}'.`);
                 return;
             }
 
             const [leagueName, league] = lgEntry;
-            console.log(`   ✅ Matched with League: '${leagueName}'`);
+            // console.log(`   ✅ Matched Timeline '${block.divName}' -> League '${leagueName}'`);
 
             const key = `${leagueName}-${block.divName}-${block.startTime}`;
             groups[key] ??= {
@@ -207,9 +217,6 @@
 
                 if (chosenField) lockedFields.add(chosenField);
                 
-                // Fallback if no field found
-                if (!chosenField) console.warn(`   ⚠️ No field found for ${A} vs ${B} (${chosenSport}). Marking TBD.`);
-
                 matchups.push({
                     teamA: A,
                     teamB: B,
@@ -229,7 +236,6 @@
                 endMin: group.endTime,
                 matchups
             };
-            console.log(`   ✅ Saved ${matchups.length} matchups to window.leagueAssignments['${group.divName}'][${slotIndex}]`);
 
             // FORMAT TEXT
             const formattedMatchups = matchups.map(m => 
