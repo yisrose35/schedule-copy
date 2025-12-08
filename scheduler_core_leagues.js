@@ -1,11 +1,12 @@
 // ============================================================================
-// scheduler_core_leagues.js (GCM FINAL: SAFETY NET + MAGNET + SMART ROTATION + UNIFIED DIVS)
+// scheduler_core_leagues.js (GCM FINAL: UNIFIED DIVS + CAPACITY FALLBACK)
 // Integrated with league_scheduling.js:
 // - Uses window.getLeagueMatchups(...) for round progression
-// - Uses getLeagueCurrentRound(...) for Game X label
-// - Groups by (leagueName + startTime) -> MERGES DIVISIONS IN SAME LEAGUE
-// - Populates window.leagueAssignments for scheduler_ui.js
-// - Enforces Sport Rotation & Anti-Back-to-Back Logic
+// - Groups by (leagueName + startTime) -> MERGES DIVISIONS
+// - Smart Sport Rotation:
+//   1. Tries to keep everyone on the same sport if fields exist.
+//   2. If fields run out, seamlessly switches specific matchups to the next sport.
+//   3. Prevents back-to-back sports.
 // ============================================================================
 
 (function () {
@@ -20,10 +21,7 @@
     function writeLeagueReservationVeto(field, block) {
         window.fieldReservationLog ??= {};
         window.fieldReservationLog[field] ??= [];
-        
-        // Use the first division in the set as the "owner" for the log
         const divLabel = Array.from(block.involvedDivisions)[0] || "League";
-
         const exists = window.fieldReservationLog[field].some(
             r => r.bunk === "__LEAGUE_VETO__" && r.startMin === block.startTime
         );
@@ -40,7 +38,7 @@
     }
 
     // ------------------------------------------------------------
-    // NEW: SPORT HISTORY TRACKER
+    // SPORT HISTORY TRACKER
     // ------------------------------------------------------------
     window.leagueSportHistory ??= {};
 
@@ -59,6 +57,10 @@
 
     // ------------------------------------------------------------
     // SMART SPORT PRIORITIZER
+    // Returns sports sorted by:
+    // 1. Fresh (Unplayed)
+    // 2. Played (Rematch allowed)
+    // 3. Back-to-Back (Heavily penalized, only if desperate)
     // ------------------------------------------------------------
     function getPrioritizedSports(leagueName, teamA, teamB, availableSports) {
         if (!teamA || !teamB || teamA === "BYE" || teamB === "BYE") {
@@ -80,24 +82,28 @@
 
         const scoredSports = availableSports.map(sport => {
             let score = 0; 
+            
+            // PENALTY: Back-to-Back (Last Resort)
             if (sport === lastSportA || sport === lastSportB) score -= 1000; 
 
             const playedByA = currentCycleSportsA.includes(sport);
             const playedByB = currentCycleSportsB.includes(sport);
 
-            if (!playedByA && !playedByB) score += 100;
-            else if (!playedByA || !playedByB) score += 50;
-            else score += 10;
+            // BONUS: Freshness
+            if (!playedByA && !playedByB) score += 100;      // Gold: Fresh for both
+            else if (!playedByA || !playedByB) score += 50;  // Silver: Fresh for one
+            else score += 10;                                // Bronze: Rematch (played before but valid)
 
             return { sport, score };
         });
 
+        // Sort high score to low score
         scoredSports.sort((a, b) => b.score - a.score);
         return scoredSports.map(s => s.sport);
     }
 
     // ------------------------------------------------------------
-    // FALLBACK
+    // UTILS
     // ------------------------------------------------------------
     function roundRobinPairs(teams) {
         if (!teams || teams.length < 2) return [];
@@ -140,7 +146,7 @@
                 fieldUsageBySlot
             } = context;
 
-            console.log("--- LEAGUE GENERATOR START (UNIFIED DIVISIONS) ---");
+            console.log("--- LEAGUE GENERATOR START (CAPACITY CHECK) ---");
 
             const leagueBlocks = schedulableSlotBlocks.filter(b => {
                 const name = String(b.event || "").toLowerCase();
@@ -155,8 +161,7 @@
             }
 
             // --------------------------------------------------------------------
-            // GROUP BLOCKS BY (leagueName + startTime)
-            // *CHANGED*: Removed 'divName' from key so 5th/6th merge into one group
+            // GROUP BY (LEAGUE + TIME) -> Unified Divisions
             // --------------------------------------------------------------------
             const groups = {};
             leagueBlocks.forEach(block => {
@@ -167,17 +172,16 @@
                 if (!lgEntry) return;
 
                 const [leagueName, league] = lgEntry;
-                // KEY CHANGE: Unified key for all divisions in this league at this time
                 const key = `${leagueName}-${block.startTime}`;
 
                 groups[key] ??= {
                     leagueName,
                     league,
-                    involvedDivisions: new Set(), // Track which divisions are here
+                    involvedDivisions: new Set(),
                     startTime: block.startTime,
                     endTime: block.endTime,
                     slots: block.slots,
-                    bunkData: [] // Store { bunk, divName } objects
+                    bunkData: []
                 };
                 
                 groups[key].involvedDivisions.add(block.divName);
@@ -195,21 +199,17 @@
                 const teams = (league.teams || []).slice();
                 if (!teams || teams.length < 2) return;
 
+                // 1. Get Pairs
                 let pairs = [];
-
-                // 1. Single call to engine (Handles progression for the WHOLE league)
                 if (typeof window.getLeagueMatchups === "function") {
                     pairs = window.getLeagueMatchups(leagueName, teams) || [];
                 } else {
                     pairs = roundRobinPairs(teams);
                 }
 
-                if (!Array.isArray(pairs) || !pairs.length) {
-                    console.warn("No pairs generated for league:", leagueName);
-                    return;
-                }
+                if (!Array.isArray(pairs) || !pairs.length) return;
 
-                // 2. Single call for Game Label
+                // 2. Get Label
                 let gameNumberLabel = "";
                 if (typeof window.getLeagueCurrentRound === "function") {
                     gameNumberLabel = `Game ${window.getLeagueCurrentRound(leagueName)}`;
@@ -219,12 +219,12 @@
 
                 const baseSports = league.sports?.length ? league.sports : ["League Game"];
                 const matchups = [];
-                const lockedFields = new Set();
+                const lockedFields = new Set(); // Tracks fields used IN THIS ROUND
 
                 // ====================================================================
-                // BUILD MATCHUPS
+                // ASSIGN SPORTS & FIELDS
                 // ====================================================================
-                pairs.forEach((pair, i) => {
+                pairs.forEach((pair) => {
                     let A = pair[0];
                     let B = pair[1];
 
@@ -238,18 +238,24 @@
                         return;
                     }
 
+                    // 1. Get sports sorted by preference (Freshest -> ... -> Back-to-Back)
                     const candidateSports = getPrioritizedSports(leagueName, A, B, baseSports);
+                    
                     let chosenField = null;
-                    let chosenSport = candidateSports[0];
+                    let chosenSport = candidateSports[0]; // Default to #1 preference
 
+                    // 2. CAPACITY LOOP: Try #1 sport. If no fields, try #2, then #3...
                     for (const sport of candidateSports) {
                         const possibleFields = fieldsBySport?.[sport] || [];
+                        
+                        // Check if ANY field for this sport is free
                         for (const field of possibleFields) {
-                            if (lockedFields.has(field)) continue;
+                            if (lockedFields.has(field)) continue; // ALREADY TAKEN BY ANOTHER PAIR
 
+                            // Check physical availability (occupied by other activity?)
                             const fits = window.SchedulerCoreUtils.canBlockFit(
                                 {
-                                    divName: Array.from(group.involvedDivisions)[0], // Use 1st div as proxy
+                                    divName: Array.from(group.involvedDivisions)[0],
                                     bunk: "__LEAGUE__",
                                     startTime: group.startTime,
                                     endTime: group.endTime,
@@ -259,26 +265,26 @@
                                 activityProperties,
                                 fieldUsageBySlot,
                                 sport,
-                                true
+                                true // GCM Force Mode (tries hard to fit)
                             );
 
                             if (fits || true) { 
                                 chosenField = field;
                                 chosenSport = sport;
-                                break;
+                                break; // Found a field! Stop looking at fields.
                             }
                         }
-                        if (chosenField) break;
+                        if (chosenField) break; // Found a sport! Stop looking at sports.
                     }
 
+                    // 3. Record History & Save
                     if (chosenField) {
                         lockedFields.add(chosenField);
-                        recordSportHistory(leagueName, A, chosenSport);
-                        recordSportHistory(leagueName, B, chosenSport);
-                    } else {
-                        recordSportHistory(leagueName, A, chosenSport);
-                        recordSportHistory(leagueName, B, chosenSport);
                     }
+                    
+                    // Always record sport (even if field is null) to rotate logic next time
+                    recordSportHistory(leagueName, A, chosenSport);
+                    recordSportHistory(leagueName, B, chosenSport);
 
                     matchups.push({
                         teamA: A, teamB: B, sport: chosenSport, field: chosenField
@@ -286,16 +292,13 @@
                 });
 
                 // ====================================================================
-                // VISUAL TEXT
+                // STORE DATA
                 // ====================================================================
                 const formattedMatchups = matchups.map(m => {
                     if (m.teamA === "BYE" || m.teamB === "BYE") return `${m.teamA} vs ${m.teamB}`;
                     return `${m.teamA} vs ${m.teamB} — ${m.sport} @ ${m.field || "TBD"}`;
                 });
 
-                // ====================================================================
-                // STORE ASSIGNMENTS FOR ALL INVOLVED DIVISIONS
-                // ====================================================================
                 window.leagueAssignments ??= {};
                 const slotIndex = group.slots[0];
                 
@@ -310,12 +313,12 @@
                 });
 
                 // ====================================================================
-                // FILL BLOCKS (Using bunk-specific divName)
+                // FILL BUNKS
                 // ====================================================================
                 group.bunkData.forEach(item => {
                     fillBlock(
                         {
-                            divName: item.divName, // Correct div for this specific bunk
+                            divName: item.divName,
                             bunk: item.bunk,
                             startTime: group.startTime,
                             endTime: group.endTime,
@@ -346,7 +349,6 @@
     };
 
     Leagues.processSpecialtyLeagues = function () {};
-
     window.SchedulerCoreLeagues = Leagues;
 
 })();
