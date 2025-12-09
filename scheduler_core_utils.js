@@ -1,11 +1,11 @@
 // ============================================================================
-// scheduler_core_utils.js
-// PART 1 of 3: THE FOUNDATION (ORIGINAL / REVERTED)
+// scheduler_core_utils.js (FIXED v2)
+// PART 1 of 3: THE FOUNDATION
 //
-// Reverted to original state:
-// - Standard capacity check (permissive).
-// - Standard argument handling.
-// - No strict lock-and-key activity matching.
+// CRITICAL FIXES:
+// 1. STRICT capacity enforcement (no exceeding max bunks)
+// 2. SAME ACTIVITY requirement when sharing fields
+// 3. Adjacent bunk preference scoring helper
 // ============================================================================
 
 (function () {
@@ -58,6 +58,7 @@
         if (f && typeof f === "object" && typeof f.name === "string") return f.name;
         return "";
     };
+
     Utils.fmtTime = function (d) {
         if (!d) return "";
         if (typeof d === 'string') d = new Date(d);
@@ -158,48 +159,93 @@
     };
 
     // =================================================================
-    // 3. HELPERS — League + Root fields + Usage
+    // 3. BUNK NUMBER EXTRACTION (for adjacent pairing)
     // =================================================================
 
-    function isLeagueAssignment(assignmentObj, actName) {
-        if (assignmentObj?._gameLabel || assignmentObj?._allMatchups) return true;
-        const s = String(actName || "").toLowerCase();
-        return s.includes("league game") || s.includes("specialty league");
+    Utils.getBunkNumber = function (bunkName) {
+        if (!bunkName) return Infinity;
+        const match = String(bunkName).match(/(\d+)/);
+        return match ? parseInt(match[1], 10) : Infinity;
+    };
+
+    Utils.getBunkDistance = function (bunk1, bunk2) {
+        const num1 = Utils.getBunkNumber(bunk1);
+        const num2 = Utils.getBunkNumber(bunk2);
+        if (num1 === Infinity || num2 === Infinity) return Infinity;
+        return Math.abs(num1 - num2);
+    };
+
+    // =================================================================
+    // 4. FIELD USAGE HELPERS
+    // =================================================================
+
+    /**
+     * Get current usage for a field at a slot
+     * Returns: { count, bunks: {bunkName: activityName}, activities: Set }
+     */
+    function getFieldUsageAtSlot(slotIndex, fieldName, fieldUsageBySlot) {
+        const result = { 
+            count: 0, 
+            bunks: {}, 
+            activities: new Set(),
+            bunkList: []
+        };
+        
+        if (!fieldUsageBySlot || !fieldUsageBySlot[slotIndex]) return result;
+        
+        const slotData = fieldUsageBySlot[slotIndex];
+        const fieldData = slotData[fieldName];
+        
+        if (!fieldData) return result;
+        
+        result.count = fieldData.count || 0;
+        result.bunks = fieldData.bunks || {};
+        result.bunkList = Object.keys(result.bunks);
+        
+        // Extract unique activities
+        Object.values(result.bunks).forEach(actName => {
+            if (actName) result.activities.add(actName.toLowerCase().trim());
+        });
+        
+        return result;
     }
 
-    function calculateAssignmentWeight(activityName, assignmentObj) {
-        return isLeagueAssignment(assignmentObj, activityName) ? 1 : 1;
-    }
-
-    function getRootFieldName(name) {
-        if (!name) return "";
-        return String(name).split(/\s*[-–—]\s*/)[0].trim().toLowerCase();
-    }
-
-    function getCombinedUsage(slotIndex, proposedFieldName, usageMap) {
-        const combined = { count: 0, divisions: [], bunks: {} };
-        const slotData = usageMap[slotIndex];
-        if (!slotData) return combined;
-
-        const target = getRootFieldName(proposedFieldName);
-
-        for (const key of Object.keys(slotData)) {
-            if (getRootFieldName(key) !== target) continue;
-
-            const u = slotData[key];
-            combined.count += (u.count || 0);
-
-            if (Array.isArray(u.divisions))
-                u.divisions.forEach(d => { if (!combined.divisions.includes(d)) combined.divisions.push(d); });
-
-            Object.assign(combined.bunks, u.bunks || {});
+    /**
+     * Also check window.scheduleAssignments for more accurate count
+     */
+    function getScheduleUsageAtSlot(slotIndex, fieldName) {
+        const result = { 
+            count: 0, 
+            bunks: {}, 
+            activities: new Set(),
+            bunkList: []
+        };
+        
+        const schedules = window.scheduleAssignments || {};
+        
+        for (const [bunk, slots] of Object.entries(schedules)) {
+            const entry = slots?.[slotIndex];
+            if (!entry) continue;
+            
+            const entryField = Utils.fieldLabel(entry.field) || entry._activity;
+            if (!entryField) continue;
+            
+            // Check if this is the same field
+            if (entryField.toLowerCase().trim() === fieldName.toLowerCase().trim()) {
+                result.count++;
+                result.bunks[bunk] = entry._activity || entry.sport || entryField;
+                result.bunkList.push(bunk);
+                
+                const actName = entry._activity || entry.sport;
+                if (actName) result.activities.add(actName.toLowerCase().trim());
+            }
         }
-
-        return combined;
+        
+        return result;
     }
 
     // =================================================================
-    // 4. MAIN FIT LOGIC (ORIGINAL)
+    // 5. MAIN FIT LOGIC (STRICT ENFORCEMENT)
     // =================================================================
 
     Utils.isTimeAvailable = function (slotIndex, props) {
@@ -245,10 +291,18 @@
         return true;
     };
 
+    /**
+     * MAIN FIT CHECK - Now with strict enforcement
+     * 
+     * @param block - The block to place
+     * @param fieldName - The field/activity name
+     * @param activityProperties - Properties lookup
+     * @param fieldUsageBySlot - Usage tracking map
+     * @param actName - The specific activity/sport being assigned
+     * @param forceLeague - Whether this is a league placement
+     */
     Utils.canBlockFit = function (block, fieldName, activityProperties, fieldUsageBySlot, actName, forceLeague = false) {
-        // [Reverted] No argument shifting logic here.
         if (!fieldUsageBySlot) fieldUsageBySlot = window.fieldUsageBySlot || {};
-        
         if (!fieldName) return false;
 
         const baseProps = {
@@ -259,8 +313,9 @@
             transition: { preMin: 0, postMin: 0, zone: "default", occupiesField: false }
         };
 
-        const props = activityProperties[fieldName] || baseProps;
+        const props = activityProperties?.[fieldName] || baseProps;
 
+        // Get transition rules
         const rules = Utils.getTransitionRules(fieldName, activityProperties);
         const {
             blockStartMin, blockEndMin,
@@ -271,21 +326,18 @@
         if (activityDuration <= 0 || activityDuration < (rules.minDurationMin || 0))
             return false;
 
-        // [Reverted] Original Permissive Capacity Logic
+        // =================================================================
+        // CAPACITY CALCULATION (STRICT)
+        // =================================================================
         let maxCapacity = 1;
-        if (props.sharableWith?.capacity) maxCapacity = parseInt(props.sharableWith.capacity);
-        else if (props.sharable || props.sharableWith?.type === "all") maxCapacity = 2;
+        
+        if (props.sharableWith?.capacity) {
+            maxCapacity = parseInt(props.sharableWith.capacity) || 1;
+        } else if (props.sharable || props.sharableWith?.type === "all" || props.sharableWith?.type === "custom") {
+            maxCapacity = 2;
+        }
 
-        const bunkMeta = window.bunkMetaData || {};
-        const sportMeta = window.sportMetaData || {};
-
-        const maxHeadcount =
-            sportMeta[actName]?.maxCapacity ??
-            props?.sharableWith?.capacity ??
-            Infinity;
-
-        const mySize = bunkMeta[block.bunk]?.size || 0;
-
+        // Basic availability checks
         if (!props.available) return false;
         if (props.allowedDivisions?.length && !props.allowedDivisions.includes(block.divName)) return false;
         if (props.preferences?.enabled && props.preferences.exclusive &&
@@ -298,45 +350,140 @@
             if (Array.isArray(rule) && !rule.includes(block.bunk)) return false;
         }
 
+        // Get slots to check
         const slots = rules.occupiesField
             ? Utils.findSlotsForRange(blockStartMin, blockEndMin)
             : Utils.findSlotsForRange(effectiveStart, effectiveEnd);
 
         const uniqueSlots = [...new Set(slots)].sort((a, b) => a - b);
 
+        // =================================================================
+        // CHECK EACH SLOT
+        // =================================================================
         for (const idx of uniqueSlots) {
-            const usage = getCombinedUsage(idx, fieldName, fieldUsageBySlot);
+            // Get usage from BOTH sources for accuracy
+            const trackedUsage = getFieldUsageAtSlot(idx, fieldName, fieldUsageBySlot);
+            const scheduleUsage = getScheduleUsageAtSlot(idx, fieldName);
+            
+            // Merge the two usage sources
+            const allBunks = new Set([...trackedUsage.bunkList, ...scheduleUsage.bunkList]);
+            const allActivities = new Set([...trackedUsage.activities, ...scheduleUsage.activities]);
+            
+            // Remove self if already counted
+            allBunks.delete(block.bunk);
+            
+            const currentCount = allBunks.size;
 
-            let currentWeight = 0;
-            const existing = Object.keys(usage.bunks);
-
-            const myObj = { _gameLabel: block._gameLabel, _activity: actName };
-            const isLeague = forceLeague || isLeagueAssignment(myObj, actName);
-
-            // [Reverted] No Lock & Key logic
-
-            for (const b of existing) {
-                if (b === block.bunk) continue;
-                const existingEntry = window.scheduleAssignments?.[b]?.[idx];
-                const existingName = usage.bunks[b];
-                currentWeight += calculateAssignmentWeight(existingName, existingEntry);
+            // =================================================================
+            // FIX #1: STRICT CAPACITY CHECK
+            // =================================================================
+            if (currentCount >= maxCapacity) {
+                // Field is FULL - reject
+                return false;
             }
 
-            const myWeight = isLeague ? 1 : 1;
-            if (currentWeight + myWeight > maxCapacity) return false;
-
-            if (maxHeadcount !== Infinity) {
-                let currHead = 0;
-                for (const b of Object.keys(usage.bunks)) {
-                    currHead += (bunkMeta[b]?.size || 0);
+            // =================================================================
+            // FIX #2: SAME ACTIVITY REQUIREMENT WHEN SHARING
+            // =================================================================
+            if (currentCount > 0 && actName) {
+                const myActivity = actName.toLowerCase().trim();
+                
+                // If there are existing activities, we must match one of them
+                if (allActivities.size > 0) {
+                    const activitiesMatch = allActivities.has(myActivity);
+                    
+                    if (!activitiesMatch) {
+                        // Different activity - reject sharing
+                        console.log(`[SHARING BLOCKED] ${block.bunk} wants ${actName} on ${fieldName}, but existing bunks have: [${[...allActivities].join(', ')}]`);
+                        return false;
+                    }
                 }
-                if (currHead + mySize > maxHeadcount) return false;
             }
 
+            // Time availability check
             if (!Utils.isTimeAvailable(idx, props)) return false;
+
+            // Headcount check (sport max capacity)
+            const bunkMeta = window.bunkMetaData || Utils._bunkMetaData || {};
+            const sportMeta = window.sportMetaData || Utils._sportMetaData || {};
+            
+            const maxHeadcount = sportMeta[actName]?.maxCapacity ?? Infinity;
+            
+            if (maxHeadcount !== Infinity) {
+                let currentHeadcount = 0;
+                allBunks.forEach(b => {
+                    currentHeadcount += (bunkMeta[b]?.size || 0);
+                });
+                const mySize = bunkMeta[block.bunk]?.size || 0;
+                
+                if (currentHeadcount + mySize > maxHeadcount) {
+                    return false;
+                }
+            }
         }
 
         return true;
+    };
+
+    /**
+     * Calculate sharing score - HIGHER is better
+     * Used by solver to prefer adjacent bunks
+     */
+    Utils.calculateSharingScore = function (block, fieldName, fieldUsageBySlot, actName) {
+        if (!fieldUsageBySlot) fieldUsageBySlot = window.fieldUsageBySlot || {};
+        
+        let score = 0;
+        const myBunkNum = Utils.getBunkNumber(block.bunk);
+        
+        const slots = Utils.findSlotsForRange(block.startTime, block.endTime);
+        
+        for (const idx of slots) {
+            const scheduleUsage = getScheduleUsageAtSlot(idx, fieldName);
+            
+            if (scheduleUsage.count === 0) {
+                // Empty field - good base score
+                score += 100;
+            } else {
+                // Field has existing bunks - check adjacency
+                let minDistance = Infinity;
+                let sameActivity = true;
+                
+                for (const existingBunk of scheduleUsage.bunkList) {
+                    const distance = Utils.getBunkDistance(block.bunk, existingBunk);
+                    minDistance = Math.min(minDistance, distance);
+                    
+                    // Check activity match
+                    const existingActivity = scheduleUsage.bunks[existingBunk];
+                    if (existingActivity && actName) {
+                        if (existingActivity.toLowerCase().trim() !== actName.toLowerCase().trim()) {
+                            sameActivity = false;
+                        }
+                    }
+                }
+                
+                // =================================================================
+                // FIX #3: SCORING FOR ADJACENT BUNK PREFERENCE
+                // =================================================================
+                // Bunks 10 & 11 (distance 1) = +90 points
+                // Bunks 10 & 12 (distance 2) = +80 points
+                // Bunks 10 & 15 (distance 5) = +50 points
+                // etc.
+                
+                if (minDistance < Infinity) {
+                    score += Math.max(0, 100 - (minDistance * 10));
+                }
+                
+                // Bonus for same activity
+                if (sameActivity) {
+                    score += 50;
+                } else {
+                    // Heavy penalty for different activities (shouldn't happen with canBlockFit check)
+                    score -= 1000;
+                }
+            }
+        }
+        
+        return score;
     };
 
     Utils.canLeagueGameFit = function (block, fieldName, usage, props) {
@@ -344,7 +491,7 @@
     };
 
     // =================================================================
-    // 5. TIMELINE
+    // 6. TIMELINE
     // =================================================================
 
     Utils.timeline = {
@@ -361,8 +508,7 @@
                     const name = Utils.fieldLabel(entry.field) || entry._activity;
                     if (!name) continue;
                     if (name.toLowerCase() === resourceName.toLowerCase()) {
-                        const isLeague = entry._h2h || String(entry._activity).includes("League");
-                        current += (isLeague ? capacity : 1);
+                        current++;
                     }
                 }
                 if (current + weight > capacity) return false;
@@ -383,8 +529,7 @@
                     const name = Utils.fieldLabel(entry.field) || entry._activity;
                     if (!name) continue;
                     if (name.toLowerCase() === resourceName.toLowerCase()) {
-                        const isLeague = entry._h2h || String(entry._activity).includes("League");
-                        current += (isLeague ? 2 : 1);
+                        current++;
                     }
                 }
                 maxLoad = Math.max(maxLoad, current);
