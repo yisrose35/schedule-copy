@@ -1,8 +1,9 @@
-
 // =================================================================
 // special_activities.js  — Modern Pro Camp THEMED VERSION
 //
 // ✦ UPDATE: Added Transition, Buffer Occupancy, Zone, and Min Duration.
+// ✦ UPDATE: Added "Priority & Exclusive Mode" (Restrictions).
+// ✦ UPDATE: Added "Sharing Capacity" (Max Bunks at Once).
 // =================================================================
 
 (function() {
@@ -29,13 +30,20 @@ function initSpecialActivitiesTab() {
         s.available = s.available !== false;
         s.timeRules = s.timeRules || [];
         s.sharableWith = s.sharableWith || { type: 'not_sharable', divisions: [] };
+        
+        // Ensure default capacity is set if sharable
+        if (!s.sharableWith.capacity) s.sharableWith.capacity = 2;
+
         s.limitUsage = s.limitUsage || { enabled: false, divisions: {} };
         // Ensure maxUsage is number or null
         s.maxUsage = (s.maxUsage !== undefined && s.maxUsage !== "") ? s.maxUsage : null;
         // Ensure frequency is set (default 0 = lifetime/unlimited period)
         s.frequencyWeeks = s.frequencyWeeks || 0; 
         
-        // NEW: Transition fields
+        // Priority Preferences (From Fields)
+        s.preferences = s.preferences || { enabled: false, exclusive: false, list: [] };
+
+        // Transition fields
         s.transition = s.transition || {
             preMin: 0,
             postMin: 0,
@@ -46,7 +54,7 @@ function initSpecialActivitiesTab() {
         };
     });
 
-    // ==== THEMED HTML SHELL ====
+    // ==== THEMED HTML SHELL ====<
     container.innerHTML = `
         <div class="setup-grid">
 
@@ -137,6 +145,35 @@ function initSpecialActivitiesTab() {
             }
 
             .muted { color:#6b7280; font-size:0.86rem; }
+
+            /* Priority list row styling (From Fields) */
+            .priority-list-item {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                padding: 6px 8px;
+                border-radius: 10px;
+                border: 1px solid #E5E7EB;
+                margin-bottom: 4px;
+                background: #F9FAFB;
+            }
+            .priority-controls button {
+                background: #FFFFFF;
+                border: 1px solid #CBD5E1;
+                border-radius: 8px;
+                padding: 2px 6px;
+                cursor: pointer;
+                font-size: 0.8rem;
+                box-shadow: 0 2px 5px rgba(15, 23, 42, 0.06);
+            }
+            .priority-controls button:hover:not(:disabled) {
+                border-color: #00C896;
+            }
+            .priority-controls button:disabled {
+                opacity: 0.4;
+                cursor: default;
+                box-shadow: none;
+            }
         </style>
     `;
 
@@ -562,8 +599,9 @@ function addSpecial() {
     specialActivities.push({
         name: n,
         available: true,
-        sharableWith: { type:'not_sharable', divisions:[] },
+        sharableWith: { type:'not_sharable', divisions:[], capacity: 2 },
         limitUsage: { enabled:false, divisions:{} },
+        preferences: { enabled: false, exclusive: false, list: [] },
         timeRules: [],
         maxUsage: null,
         frequencyWeeks: 0,
@@ -740,69 +778,97 @@ function renderTimeRulesUI(item, onSave, onRerender) {
 }
 
 /*********************************************************
- * SHARABLE UI
+ * SHARABLE UI (Updated to match Fields - With Capacity)
  *********************************************************/
 function renderSharableControls(item, onSave, onRerender) {
-    const wrap = document.createElement("div");
-    wrap.innerHTML = `<strong>Sharing Rules:</strong>`;
-
-    const rules = item.sharableWith || { type:'not_sharable', divisions:[] };
+    const container = document.createElement("div");
+    container.innerHTML = `<strong>Sharing Rules:</strong>`;
+    
+    // Ensure default capacity exists
+    if (!item.sharableWith) { item.sharableWith = { type: 'not_sharable', capacity: 2 }; }
+    if (!item.sharableWith.capacity) { item.sharableWith.capacity = 2; }
+    
+    const rules = item.sharableWith;
     const isSharable = rules.type !== 'not_sharable';
 
-    const row = document.createElement("label");
-    Object.assign(row.style,{
-        display:"flex",
-        alignItems:"center",
-        gap:"10px",
-        marginTop:"10px"
-    });
-
+    const tog = document.createElement("label");
+    tog.className = "switch";
+    tog.title = "Toggle Sharable";
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.checked = isSharable;
-
     cb.onchange = () => {
-        rules.type = cb.checked ? "all":"not_sharable";
+        if (cb.checked) { rules.type = 'all'; } 
+        else { rules.type = 'not_sharable'; }
         rules.divisions = [];
         onSave();
         onRerender();
     };
+    const sl = document.createElement("span"); sl.className = "slider";
+    tog.appendChild(cb); tog.appendChild(sl);
+    const togLabel = document.createElement("span");
+    togLabel.textContent = "Sharable";
+    const shareWrap = document.createElement("label");
+    shareWrap.style.display="flex";
+    shareWrap.style.alignItems="center";
+    shareWrap.style.gap="5px";
+    shareWrap.style.cursor="pointer";
+    shareWrap.style.marginTop = '5px';
+    shareWrap.appendChild(tog);
+    shareWrap.appendChild(togLabel);
+    container.appendChild(shareWrap);
 
-    const txt = document.createElement("span");
-    txt.textContent = "Sharable";
-
-    row.appendChild(cb);
-    row.appendChild(txt);
-    wrap.appendChild(row);
-
-    // If sharable → show division chips
     if (isSharable) {
-        const box = document.createElement("div");
-        box.style.marginTop = "10px";
-        box.style.paddingLeft = "20px";
+        // --- CAPACITY INPUT (New) ---
+        const capDiv = document.createElement("div");
+        capDiv.style.marginTop = "8px";
+        capDiv.style.paddingLeft = "12px";
+        capDiv.style.display = "flex";
+        capDiv.style.alignItems = "center";
+        capDiv.style.gap = "8px";
+        
+        const capLabel = document.createElement("span");
+        capLabel.textContent = "Max Total Bunks at once:";
+        capLabel.style.fontSize = "0.85rem";
+        
+        const capInput = document.createElement("input");
+        capInput.type = "number";
+        capInput.min = "2";
+        capInput.value = rules.capacity || 2;
+        capInput.style.width = "60px";
+        capInput.style.padding = "2px 6px";
+        capInput.style.borderRadius = "6px";
+        capInput.style.border = "1px solid #d1d5db";
+        
+        capInput.onchange = (e) => {
+            const val = parseInt(e.target.value);
+            rules.capacity = val >= 2 ? val : 2;
+            onSave();
+        };
+        
+        capDiv.appendChild(capLabel);
+        capDiv.appendChild(capInput);
+        container.appendChild(capDiv);
 
-        const help = document.createElement("div");
-        help.textContent = "Limit to divisions (optional):";
-        help.style.fontSize = "0.82rem";
-        help.style.color = "#6b7280";
-        help.style.marginBottom = "4px";
-        box.appendChild(help);
-
-        const chips = createChipPicker(
-            window.availableDivisions || [],
-            rules.divisions,
-            () => {
-                rules.type = rules.divisions.length ? "custom":"all";
-                onSave();
-                onRerender();
-            }
-        );
-
-        box.appendChild(chips);
-        wrap.appendChild(box);
+        // --- SPECIFIC DIVISIONS ---
+        const customPanel = document.createElement("div");
+        customPanel.style.paddingLeft = "12px";
+        customPanel.style.marginTop = "8px";
+        const divLabel = document.createElement("div");
+        divLabel.textContent = "Optionally limit sharing to specific divisions:";
+        divLabel.style.fontSize = "0.78rem";
+        divLabel.style.color = "#4b5563";
+        customPanel.appendChild(divLabel);
+        const onDivToggle = () => {
+            rules.type = (rules.divisions.length > 0) ? 'custom' : 'all';
+            onSave();
+            onRerender();
+        };
+        const divChipBox = createChipPicker(window.availableDivisions || [], rules.divisions, onDivToggle);
+        customPanel.appendChild(divChipBox);
+        container.appendChild(customPanel);
     }
-
-    return wrap;
+    return container;
 }
 
 function createChipPicker(all, selected, onToggle) {
@@ -841,150 +907,263 @@ function createChipPicker(all, selected, onToggle) {
  * ALLOWED DIVISION/BUNK RULES (Themed Perfectly)
  *********************************************************/
 function renderAllowedBunksControls(item, onSave, onRerender) {
-    const wrap = document.createElement("div");
-    wrap.style.marginTop = "16px";
-    wrap.style.paddingTop = "16px";
-    wrap.style.borderTop = "1px solid #e5e7eb";
+    const container = document.createElement("div");
+    container.style.marginTop = "4px";
 
-    wrap.innerHTML = `<strong>Allowed Divisions & Bunks:</strong>`;
+    if (!item.limitUsage) { item.limitUsage = { enabled: false, divisions: {} }; }
+    if (!item.preferences) { item.preferences = { enabled: false, exclusive: false, list: [] }; }
 
-    const rules = item.limitUsage || { enabled:false, divisions:{} };
-    item.limitUsage = rules;
+    const rules = item.limitUsage;
+    const prefs = item.preferences;
+    prefs.enabled = !!rules.enabled;
 
-    // TOGGLE
-    const mode = document.createElement("label");
-    Object.assign(mode.style,{
-        display:"flex",
-        alignItems:"center",
-        gap:"12px",
-        marginTop:"10px",
-        cursor:"pointer"
+    container.innerHTML = `<strong>Division Restrictions & Priority:</strong>`;
+
+    // --- 1. Master Toggle (All vs Specific) ---
+    const modeLabel = document.createElement("label");
+    modeLabel.style.display = "flex";
+    modeLabel.style.alignItems = "center";
+    modeLabel.style.gap = "10px";
+    modeLabel.style.cursor = "pointer";
+    modeLabel.style.marginTop = '6px';
+
+    const textAll = document.createElement("span");
+    textAll.textContent = "All Divisions (No Restrictions)";
+    const toggleTrack = document.createElement("span");
+    Object.assign(toggleTrack.style, {
+        "width": "44px", "height": "24px", "borderRadius": "999px", "position": "relative",
+        "display": "inline-block", "border": "1px solid #CBD5E1",
+        "backgroundColor": rules.enabled ? '#D1D5DB' : '#22C55E',
+        "transition": "background-color 0.2s"
     });
-
-    const tAll = document.createElement("span");
-    tAll.textContent = "All Divisions";
-
-    const track = document.createElement("span");
-    Object.assign(track.style,{
-        width:"44px",
-        height:"24px",
-        borderRadius:"999px",
-        display:"inline-block",
-        position:"relative",
-        border:"1px solid #cbd5e1",
-        background: rules.enabled ? "#d1d5db" : "#22c55e",
-        transition:"0.2s"
+    const toggleKnob = document.createElement("span");
+    Object.assign(toggleKnob.style, {
+        "width": "20px", "height": "20px", "borderRadius": "50%", "backgroundColor": "white",
+        "position": "absolute", "top": "1px", "left": rules.enabled ? '21px' : '1px',
+        "transition": "left 0.2s"
     });
-
-    const knob = document.createElement("span");
-    Object.assign(knob.style,{
-        width:"20px",
-        height:"20px",
-        borderRadius:"50%",
-        background:"#ffffff",
-        position:"absolute",
-        top:"1px",
-        left: rules.enabled ? "21px" : "1px",
-        transition:"0.2s"
-    });
-
-    track.appendChild(knob);
-
-    const tSpec = document.createElement("span");
-    tSpec.textContent = "Specific Divisions/Bunks";
-
-    mode.appendChild(tAll);
-    mode.appendChild(track);
-    mode.appendChild(tSpec);
-
-    mode.onclick = () => {
+    toggleTrack.appendChild(toggleKnob);
+    const textLimit = document.createElement("span");
+    textLimit.textContent = "Specific Restrictions/Priority";
+    
+    textAll.style.fontWeight = rules.enabled ? 'normal' : 'bold';
+    textLimit.style.fontWeight = rules.enabled ? 'bold' : 'normal';
+    
+    modeLabel.onclick = () => {
         rules.enabled = !rules.enabled;
+        prefs.enabled = rules.enabled;
         onSave();
         onRerender();
     };
+    modeLabel.appendChild(textAll);
+    modeLabel.appendChild(toggleTrack);
+    modeLabel.appendChild(textLimit);
+    container.appendChild(modeLabel);
 
-    wrap.appendChild(mode);
-
-    // If NOT enabled → done
-    if (!rules.enabled) return wrap;
-
-    // PANEL
-    const panel = document.createElement("div");
-    panel.style.marginTop = "12px";
-    panel.style.paddingLeft = "20px";
-    panel.style.borderLeft = "3px solid #e5e7eb";
-
-    const allDivs = window.availableDivisions || [];
-    allDivs.forEach(div => {
-        const divWrap = document.createElement("div");
-        divWrap.style.marginTop = "8px";
-
-        const isAllowed = div in rules.divisions;
-        const bunks = window.divisions[div]?.bunks || [];
-        const allowedBunks = rules.divisions[div] || [];
-
-        const chip = createLimitChip(div, isAllowed, true);
-        chip.onclick = () => {
-            if (isAllowed) delete rules.divisions[div];
-            else rules.divisions[div] = [];
+    if (rules.enabled) {
+        const customPanel = document.createElement("div");
+        customPanel.style.padding = "12px 0 0";
+        customPanel.style.borderTop = "1px solid #F3F4F6";
+        
+        // --- 2. Priority and Exclusive Toggle ---
+        const prioritySettings = document.createElement("div");
+        prioritySettings.style.cssText = "background:#F9FAFB; padding:10px; border-radius:12px; border:1px solid #E5E7EB; margin-bottom:12px;";
+        
+        // Exclusive Mode
+        const exclDiv = document.createElement("div");
+        const exclLabel = document.createElement("label");
+        exclLabel.style.cursor = "pointer";
+        exclLabel.style.display = "flex";
+        exclLabel.style.alignItems = "center";
+        exclLabel.innerHTML = `<input type="checkbox" ${!!prefs.exclusive ? 'checked' : ''} style="margin-right:6px;"> <strong>Exclusive Mode:</strong> Only Divisions/Bunks listed below can use this field.`;
+        exclLabel.querySelector("input").onchange = (e) => {
+            prefs.exclusive = e.target.checked;
             onSave();
-            onRerender();
         };
-        divWrap.appendChild(chip);
+        exclDiv.appendChild(exclLabel);
+        prioritySettings.appendChild(exclDiv);
 
-        // Show bunk chips
-        if (isAllowed) {
-            const bunkBox = document.createElement("div");
-            bunkBox.style.display = "flex";
-            bunkBox.style.flexWrap = "wrap";
-            bunkBox.style.gap = "6px";
-            bunkBox.style.marginTop = "6px";
-            bunkBox.style.paddingLeft = "22px";
+        // --- Priority List (Visible when enabled) ---
+        const listHeader = document.createElement("div");
+        listHeader.textContent = "Division Priority Order (top = first choice):";
+        listHeader.style.marginTop = "8px";
+        listHeader.style.fontWeight = "600";
+        listHeader.style.fontSize = "0.78rem";
+        prioritySettings.appendChild(listHeader);
 
-            if (allowedBunks.length > 0) {
-                const allChip = createLimitChip("All " + div, false, false);
-                allChip.style.borderColor = "#00C896";
-                allChip.style.color = "#00C896";
-                allChip.onclick = () => {
-                    rules.divisions[div] = [];
+        const priorityListContainer = document.createElement("ul");
+        priorityListContainer.style.cssText = "list-style:none; padding:0; margin-top:5px;";
+        
+        // Render Priority List Items
+        prefs.list = (prefs.list || []).filter(divName => rules.divisions.hasOwnProperty(divName));
+        prefs.list.forEach((divName, idx) => {
+            const li = document.createElement("li");
+            li.className = "priority-list-item";
+
+            li.innerHTML = `
+                <span style="font-weight:bold; width: 30px; text-align:center;">#${idx + 1}</span>
+                <span style="flex-grow:1;">${divName}</span>
+                <div class="priority-controls">
+                    <button data-action="up" data-div="${divName}" ${idx === 0 ? 'disabled' : ''}>↑</button>
+                    <button data-action="down" data-div="${divName}" ${idx === prefs.list.length - 1 ? 'disabled' : ''}>↓</button>
+                    <button data-action="rem" data-div="${divName}" style="color:#B91C1C; border-color:#FECACA;">x</button>
+                </div>
+            `;
+            
+            li.querySelector('[data-action="up"]').onclick = () => {
+                if (idx > 0) {
+                    [prefs.list[idx - 1], prefs.list[idx]] = [prefs.list[idx], prefs.list[idx - 1]];
                     onSave();
                     onRerender();
-                };
-                bunkBox.appendChild(allChip);
+                }
+            };
+            li.querySelector('[data-action="down"]').onclick = () => {
+                if (idx < prefs.list.length - 1) {
+                    [prefs.list[idx + 1], prefs.list[idx]] = [prefs.list[idx], prefs.list[idx + 1]];
+                    onSave();
+                    onRerender();
+                }
+            };
+            li.querySelector('[data-action="rem"]').onclick = () => {
+                prefs.list = prefs.list.filter(d => d !== divName);
+                onSave();
+                onRerender();
+            };
+
+            priorityListContainer.appendChild(li);
+        });
+
+        prioritySettings.appendChild(priorityListContainer);
+
+        // --- Add to Priority Dropdown ---
+        const priorityAddRow = document.createElement("div");
+        priorityAddRow.style.cssText = "margin-top:8px; padding-top:6px; border-top:1px dashed #E5E7EB; display:flex; gap:6px;";
+        
+        const select = document.createElement("select");
+        select.innerHTML = `<option value="">-- Add Division to Priority --</option>`;
+        Object.keys(rules.divisions).forEach(divName => {
+            if (!prefs.list.includes(divName)) {
+                select.innerHTML += `<option value="${divName}">${divName}</option>`;
             }
+        });
 
-            bunks.forEach(b => {
-                const bc = createLimitChip(b, allowedBunks.includes(b), false);
-                bc.onclick = () => {
-                    const idx = allowedBunks.indexOf(b);
-                    if (idx>-1) allowedBunks.splice(idx,1);
-                    else allowedBunks.push(b);
-                    onSave();
-                    onRerender();
-                };
-                bunkBox.appendChild(bc);
-            });
+        const addBtn = document.createElement("button");
+        addBtn.textContent = "Add";
+        addBtn.style.padding = "4px 10px";
+        addBtn.style.borderRadius = "999px";
+        addBtn.style.border = "none";
+        addBtn.style.background = "#00C896";
+        addBtn.style.color = "#FFFFFF";
+        addBtn.style.fontSize = "0.8rem";
+        addBtn.style.cursor = "pointer";
+        addBtn.style.boxShadow = "0 3px 8px rgba(0, 200, 150, 0.35)";
+        addBtn.onclick = () => {
+            if (select.value) {
+                prefs.list.push(select.value);
+                onSave();
+                onRerender();
+            }
+        };
+        priorityAddRow.appendChild(select);
+        priorityAddRow.appendChild(addBtn);
+        prioritySettings.appendChild(priorityAddRow);
+        
+        customPanel.appendChild(prioritySettings);
 
-            divWrap.appendChild(bunkBox);
-        }
+        // --- 3. Allowed Divisions/Bunks Chips ---
+        const allowedHeader = document.createElement("div");
+        allowedHeader.style.cssText = "margin-top:10px; font-weight:600; font-size:0.8rem;";
+        allowedHeader.textContent = "Select Allowed Divisions & Per-Bunk Restrictions:";
+        customPanel.appendChild(allowedHeader);
+        
+        const availableDivisions = window.availableDivisions || []; 
 
-        panel.appendChild(divWrap);
-    });
+        // --- Division/Bunk Chips ---
+        availableDivisions.forEach(divName => {
+            const divWrapper = document.createElement("div");
+            divWrapper.style.marginTop = "8px";
+            
+            const isAllowed = divName in rules.divisions;
+            const allowedBunks = rules.divisions[divName] || [];
+            
+            const divChip = createLimitChip(divName, isAllowed, true);
+            
+            divChip.onclick = () => {
+                if (isAllowed) {
+                    delete rules.divisions[divName];
+                    prefs.list = prefs.list.filter(d => d !== divName); // Remove from Priority List
+                } else {
+                    rules.divisions[divName] = []; 
+                }
+                onSave();
+                onRerender();
+            };
+            
+            divWrapper.appendChild(divChip);
 
-    wrap.appendChild(panel);
-    return wrap;
+            if (isAllowed) {
+                const bunkList = document.createElement("div");
+                bunkList.style.display = "flex";
+                bunkList.style.flexWrap = "wrap";
+                bunkList.style.gap = "5px";
+                bunkList.style.marginTop = "5px";
+                bunkList.style.paddingLeft = "25px";
+                
+                const bunksInDiv = (window.divisions[divName]?.bunks || []);
+                if (bunksInDiv.length === 0) {
+                    bunkList.innerHTML = `<span class="muted" style="font-size: 0.8rem;">No bunks in this division.</span>`;
+                }
+
+                if (allowedBunks.length > 0) {
+                    const allBunksChip = createLimitChip(`All ${divName}`, false, false);
+                    allBunksChip.style.backgroundColor = "#F3F4F6";
+                    allBunksChip.style.color = "#2563EB";
+                    allBunksChip.style.borderColor = "#93C5FD";
+                    allBunksChip.onclick = () => {
+                        rules.divisions[divName] = []; 
+                        onSave();
+                        onRerender();
+                    };
+                    bunkList.appendChild(allBunksChip);
+                }
+
+                bunksInDiv.forEach(bunkName => {
+                    const bunkChip = createLimitChip(bunkName, allowedBunks.includes(bunkName), false);
+                    bunkChip.onclick = () => {
+                        const bunkIdx = allowedBunks.indexOf(bunkName);
+                        if (bunkIdx > -1) {
+                            allowedBunks.splice(bunkIdx, 1);
+                        } else {
+                            allowedBunks.push(bunkName);
+                        }
+                        onSave();
+                        onRerender();
+                    };
+                    bunkList.appendChild(bunkChip);
+                });
+                divWrapper.appendChild(bunkList);
+            }
+            customPanel.appendChild(divWrapper);
+        });
+
+        container.appendChild(customPanel);
+    }
+    return container;
 }
 
-function createLimitChip(text, active) {
+function createLimitChip(text, active, isDivision = true) {
     const c = document.createElement("span");
     c.textContent = text;
     c.style.padding = "6px 12px";
     c.style.borderRadius = "999px";
     c.style.cursor = "pointer";
-    c.style.fontSize = "0.8rem";
-    c.style.border = "1px solid #D1D5DB";
-    c.style.background = active ? "#00C896" : "#F3F4F6";
-    c.style.color = active ? "#FFFFFF" : "#111827";
+    c.style.fontSize = isDivision ? "0.82rem" : "0.78rem";
+    const activeBG = isDivision ? "#00C896" : "#38BDF8"; 
+    const activeColor = "#FFFFFF";
+    const inactiveBG = isDivision ? "#F3F4F6" : "#F9FAFB";
+    const inactiveColor = "#111827";
+    c.style.backgroundColor = active ? activeBG : inactiveBG;
+    c.style.color = active ? activeColor : inactiveColor;
     return c;
 }
 
