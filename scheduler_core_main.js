@@ -6,6 +6,7 @@
 // ✓ Unpacks 'fieldsBySport' to prevent ReferenceError crash.
 // ✓ Forces "League Game" blocks into the Generator queue.
 // ✓ Preserves item.type when creating schedulableSlotBlocks.
+// ✓ ADDED: Safer league filter (checks both event name AND type)
 // ============================================================================
 
 (function () {
@@ -122,16 +123,16 @@
     window.fillBlock = fillBlock;
 
     // -------------------------------------------------------------------------
-    // MAIN ENTRY (GCM PATCHED)
+    // MAIN ENTRY (GCM PATCHED + LEAGUE FILTER FIX)
     // -------------------------------------------------------------------------
     window.runSkeletonOptimizer = function (manualSkeleton, externalOverrides) {
-        console.log(">>> OPTIMIZER STARTED (GCM FINAL)");
+        console.log(">>> OPTIMIZER STARTED (GCM FINAL - FIXED)");
         const Utils = window.SchedulerCoreUtils;
         const config = Utils.loadAndFilterData();
         window.activityProperties = config.activityProperties;
         window.unifiedTimes = [];
 
-        // GCM FIX: UNPACK 'fieldsBySport' (This was causing the ReferenceError)
+        // GCM FIX: UNPACK 'fieldsBySport'
         const { 
             divisions, 
             activityProperties, 
@@ -148,7 +149,7 @@
             specialActivityNames, 
             bunkMetaData, 
             dailyFieldAvailability,
-            fieldsBySport // <--- CRITICAL FIX
+            fieldsBySport
         } = config;
 
         window.SchedulerCoreUtils._bunkMetaData = bunkMetaData;
@@ -233,7 +234,7 @@
                         divName, 
                         bunk: b, 
                         event: finalName,
-                        type: item.type,  // ← PRESERVE ORIGINAL TYPE
+                        type: item.type,
                         startTime: sMin, 
                         endTime: eMin, 
                         slots 
@@ -243,11 +244,6 @@
         });
 
         console.log(`Schedulable Slot Blocks Count: ${schedulableSlotBlocks.length}`);
-        console.log(`Schedulable Slot Blocks Count: ${schedulableSlotBlocks.length}`);
-window._debugBlocks = schedulableSlotBlocks; // ADD THIS LINE
-console.log("Sample blocks:", schedulableSlotBlocks.slice(0, 5));
-        console.log("Sample blocks:", schedulableSlotBlocks.slice(0, 5));
-        console.log("Block events:", schedulableSlotBlocks.map(b => ({ event: b.event, type: b.type })));
 
         // 6 — Smart Tiles
         const smartJobs = window.SmartLogicAdapter?.preprocessSmartTiles?.(manualSkeleton, externalOverrides, masterSpecials) || [];
@@ -317,16 +313,21 @@ console.log("Sample blocks:", schedulableSlotBlocks.slice(0, 5));
             rotationHistory, 
             yesterdayHistory, 
             divisions, 
-            fieldsBySport, // Pass the unpacked variable
+            fieldsBySport,
             dailyLeagueSportsUsage: {}, 
-            fillBlock
+            fillBlock,
+            fields: config.masterFields || []
         };
         window.SchedulerCoreLeagues?.processSpecialtyLeagues?.(leagueContext);
         window.SchedulerCoreLeagues?.processRegularLeagues?.(leagueContext);
 
-        // 8 — Total Solver
+        // 8 — Total Solver (WITH LEAGUE FILTER FIX)
         const remainingActivityBlocks = schedulableSlotBlocks
-            .filter(b => !/league/i.test(b.event) && !b.processed)
+            .filter(b => {
+                // ✅ FIXED: Check both event name AND type
+                const isLeague = /league/i.test(b.event) || b.type === 'league' || b.type === 'specialty_league';
+                return !isLeague && !b.processed;
+            })
             .filter(block => {
                 const s = block.slots;
                 if (!s || s.length === 0) return false;
