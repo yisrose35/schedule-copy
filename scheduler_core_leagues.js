@@ -1,12 +1,13 @@
 // ============================================================================
-// scheduler_core_leagues.js (COMPLETE - With Concurrency Fix)
+// scheduler_core_leagues.js (COMPLETE - With "Shared Slot" Logic Fix)
 // 
 // FIXES APPLIED:
 // 1. League teams independent of bunks ✅
 // 2. Multi-division leagues work correctly ✅
-// 3. Field restrictions respected (Strict Mode) ✅
-// 4. FIX: Prevents "Double Booking" inside the same loop (New) ✅
-//    - Tracks fields assigned within the current calculation cycle
+// 3. Field restrictions respected ✅
+// 4. FIX: "Double Booking" prevention (reservedFieldsThisSlot) ✅
+// 5. FIX: "Zero Fields" bug when separate divisions share a slot (New) ✅
+//    - Falls back to loose checking if team divisions aren't explicitly mapped
 // ============================================================================
 
 (function () {
@@ -21,6 +22,7 @@
     function getDivisionForTeam(teamName, context) {
         if (!context.divisions) return null;
         for (const [divName, data] of Object.entries(context.divisions)) {
+            // Check if team is in the explicit team list of the division
             if (data.teams && data.teams.includes(teamName)) {
                 return divName;
             }
@@ -73,9 +75,11 @@
         
         if (requireAll) {
             // STRICT: Must be allowed for ALL listed divisions
+            // (Used when we know the specific teams playing)
             return divisionNames.every(divName => allowedDivisions.includes(divName));
         } else {
             // LOOSE: Must be allowed for AT LEAST ONE division
+            // (Used when we are searching a mixed pool of divisions)
             return divisionNames.some(divName => allowedDivisions.includes(divName));
         }
     }
@@ -170,10 +174,12 @@
 
             const matchups = getMatchupsForLeague(league, context);
             const leagueSport = league.sport || (league.sports && league.sports[0]) || "General";
+            
+            // Specialty leagues are usually single-division, so strict checking is safe
             const availableFields = getFieldsForSport(leagueSport, context, [divName], true);
 
             const matchupAssignments = [];
-            const reservedFieldsThisSlot = new Set(); // ✅ Prevent double booking
+            const reservedFieldsThisSlot = new Set();
             let fieldIdx = 0;
 
             matchups.forEach((matchup) => {
@@ -184,10 +190,9 @@
                 for (let i = 0; i < availableFields.length; i++) {
                     const testField = availableFields[(fieldIdx + i) % availableFields.length];
                     
-                    // Check global usage AND local usage
                     if (!reservedFieldsThisSlot.has(testField) && canFieldHostLeague(testField, testBlock, context)) {
                         assignedField = testField;
-                        reservedFieldsThisSlot.add(testField); // ✅ Mark as used immediately
+                        reservedFieldsThisSlot.add(testField);
                         fieldIdx = (fieldIdx + i + 1) % availableFields.length;
                         break;
                     }
@@ -260,30 +265,39 @@
 
             const leagueSports = league.sports || ["General Sport"];
             const matchupAssignments = [];
-            
-            // ✅ KEY FIX: Local Reservation Set for this time slot
-            const reservedFieldsThisSlot = new Set(); 
+            const reservedFieldsThisSlot = new Set();
             
             let globalFieldIdx = 0;
             const gameNumber = getCurrentRoundIndex(league.name, context) + 1;
+
+            console.log(`\n📋 Processing League: ${league.name} (Divisions: ${divisionNames.join(", ")})`);
 
             matchups.forEach((matchup, idx) => {
                 const [team1, team2] = matchup;
                 const selectedSport = leagueSports[idx % leagueSports.length];
                 
-                // Determine divisions for these specific teams
+                // 1. Identify Divisions for Teams
                 const div1 = getDivisionForTeam(team1, context);
                 const div2 = getDivisionForTeam(team2, context);
                 
-                const gameDivisions = [];
-                if (div1) gameDivisions.push(div1);
-                if (div2 && div2 !== div1) gameDivisions.push(div2);
-                
-                // If lookup fails, fallback to general league divisions
-                const divsToCheck = gameDivisions.length > 0 ? gameDivisions : divisionNames;
+                let validFieldsForGame = [];
+                let logicStrategy = "";
 
-                // Get fields strictly for THESE divisions
-                const validFieldsForGame = getFieldsForSport(selectedSport, context, divsToCheck, true);
+                if (div1 || div2) {
+                    // STRATEGY A: We know at least one team's division. Be STRICT.
+                    const knownDivs = [];
+                    if (div1) knownDivs.push(div1);
+                    if (div2 && div2 !== div1) knownDivs.push(div2);
+                    
+                    logicStrategy = `Strict (Teams: ${div1 || '?'}, ${div2 || '?'})`;
+                    validFieldsForGame = getFieldsForSport(selectedSport, context, knownDivs, true);
+                } else {
+                    // STRATEGY B: We don't know the team divisions.
+                    // Fallback to "Loose" matching on the whole block.
+                    // This allows fields that belong to ANY of the active divisions.
+                    logicStrategy = `Loose Fallback (Divisions: ${divisionNames.join(",")})`;
+                    validFieldsForGame = getFieldsForSport(selectedSport, context, divisionNames, false);
+                }
 
                 let assignedField = null;
                 const testBlock = timeData.allBlocks[0]; 
@@ -291,10 +305,9 @@
                 for (let i = 0; i < validFieldsForGame.length; i++) {
                     const testField = validFieldsForGame[(globalFieldIdx + i) % validFieldsForGame.length];
                     
-                    // ✅ CHECK RESERVED SET
                     if (!reservedFieldsThisSlot.has(testField) && canFieldHostLeague(testField, testBlock, context)) {
                         assignedField = testField;
-                        reservedFieldsThisSlot.add(testField); // ✅ RESERVE IMMEDIATELY
+                        reservedFieldsThisSlot.add(testField);
                         globalFieldIdx = (globalFieldIdx + 1); 
                         break;
                     }
@@ -306,15 +319,13 @@
                         field: assignedField,
                         sport: selectedSport
                     });
-                    
                     console.log(`   ✅ ${team1} vs ${team2} @ ${assignedField} (${selectedSport})`);
-
+                    
+                    // Update Rotation History
                     if (rotationHistory && rotationHistory.leagues) {
                         const key = [team1, team2].sort().join("|");
                         const leagueKey = `${league.name}|${key}`;
-                        if (!rotationHistory.leagues[leagueKey]) {
-                            rotationHistory.leagues[leagueKey] = [];
-                        }
+                        if (!rotationHistory.leagues[leagueKey]) rotationHistory.leagues[leagueKey] = [];
                         rotationHistory.leagues[leagueKey].push({
                             date: window.currentScheduleDate,
                             sport: selectedSport,
@@ -322,7 +333,12 @@
                         });
                     }
                 } else {
-                    console.log(`   ❌ No valid field for ${team1} vs ${team2}`);
+                    console.log(`   ❌ No valid field for ${team1} vs ${team2} [${logicStrategy}]`);
+                    if (validFieldsForGame.length === 0) {
+                        console.log(`      (0 fields found for sport '${selectedSport}'. Check Division limits)`);
+                    } else {
+                        console.log(`      (All ${validFieldsForGame.length} candidate fields were taken)`);
+                    }
                 }
             });
 
