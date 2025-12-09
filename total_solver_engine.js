@@ -1,11 +1,12 @@
 // ============================================================================
-// total_solver_engine.js (FIXED v2)
+// total_solver_engine.js (FIXED v3 - WITH DEBUGGING)
 // Backtracking Constraint Solver + League Engine
 // ----------------------------------------------------------------------------
 // CRITICAL FIXES:
 // 1. Adjacent bunk preference when sharing fields (10+11 > 10+15)
 // 2. Same activity requirement when sharing (enforced in scoring)
 // 3. Proper capacity respect
+// 4. EXTENSIVE DEBUGGING to find missing fields
 // ============================================================================
 
 (function () {
@@ -16,6 +17,9 @@
     
     // STRICT MODE - Enforce all constraints
     const FORCE_FIT_MODE = false; 
+    
+    // DEBUG MODE - Set to true to see why fields are rejected
+    const DEBUG_MODE = true;
 
     // Runtime globals
     let globalConfig = null;
@@ -42,6 +46,16 @@
     function getBunkNumber(name) {
         const m = String(name).match(/(\d+)/);
         return m ? parseInt(m[1], 10) : null;
+    }
+
+    // ============================================================================
+    // DEBUG LOGGING
+    // ============================================================================
+    
+    function debugLog(...args) {
+        if (DEBUG_MODE) {
+            console.log('[SOLVER DEBUG]', ...args);
+        }
     }
 
     // ============================================================================
@@ -111,7 +125,7 @@
             if (fieldCount > 0 && existingActivities.size > 0) {
                 const myActivity = (act || '').toLowerCase().trim();
                 if (!existingActivities.has(myActivity)) {
-                    console.log(`[SOLVER] Rejecting ${bunk} ${act} on ${fieldName} - existing activities: [${[...existingActivities].join(', ')}]`);
+                    debugLog(`Rejecting ${bunk} ${act} on ${fieldName} - existing activities: [${[...existingActivities].join(', ')}]`);
                     return 888888; // Different activity - reject
                 }
             }
@@ -344,7 +358,7 @@
     };
 
     // ============================================================================
-    // MAIN SOLVER (ENHANCED)
+    // MAIN SOLVER (ENHANCED WITH DEBUGGING)
     // ============================================================================
 
     Solver.sortBlocksByDifficulty = function (blocks, config) {
@@ -368,8 +382,117 @@
         });
     };
 
+    /**
+     * Build all candidate options from multiple sources
+     */
+    function buildAllCandidateOptions(config) {
+        const options = [];
+        const seenKeys = new Set();
+        
+        // Source 1: masterFields with activities
+        debugLog('=== BUILDING CANDIDATE OPTIONS ===');
+        debugLog('masterFields:', config.masterFields?.length || 0);
+        
+        config.masterFields?.forEach(f => {
+            debugLog(`  Field: ${f.name}, activities:`, f.activities);
+            (f.activities || []).forEach(sport => {
+                const key = `${f.name}|${sport}`;
+                if (!seenKeys.has(key)) {
+                    seenKeys.add(key);
+                    options.push({ 
+                        field: f.name, 
+                        sport, 
+                        activityName: sport, 
+                        type: "sport" 
+                    });
+                }
+            });
+        });
+        
+        // Source 2: masterSpecials
+        debugLog('masterSpecials:', config.masterSpecials?.length || 0);
+        config.masterSpecials?.forEach(s => {
+            debugLog(`  Special: ${s.name}`);
+            const key = `${s.name}|special`;
+            if (!seenKeys.has(key)) {
+                seenKeys.add(key);
+                options.push({ 
+                    field: s.name, 
+                    sport: null, 
+                    activityName: s.name, 
+                    type: "special" 
+                });
+            }
+        });
+        
+        // Source 3: activityProperties (fallback - in case fields are defined there but not in masterFields)
+        debugLog('activityProperties keys:', Object.keys(activityProperties).length);
+        for (const [fieldName, props] of Object.entries(activityProperties)) {
+            if (!props.available) continue;
+            
+            // If this field has activities defined
+            if (props.activities && Array.isArray(props.activities)) {
+                props.activities.forEach(sport => {
+                    const key = `${fieldName}|${sport}`;
+                    if (!seenKeys.has(key)) {
+                        debugLog(`  Adding from activityProperties: ${fieldName} -> ${sport}`);
+                        seenKeys.add(key);
+                        options.push({ 
+                            field: fieldName, 
+                            sport, 
+                            activityName: sport, 
+                            type: "sport" 
+                        });
+                    }
+                });
+            }
+            
+            // Also try to add the field itself as an activity if it's not a pure container
+            // This catches fields like "Soccer Cage" that might host multiple sports
+            const key = `${fieldName}|${fieldName}`;
+            if (!seenKeys.has(key) && !fieldName.includes('Gym') && !fieldName.includes('Field')) {
+                // Only if it looks like an activity name
+                debugLog(`  Adding field as activity: ${fieldName}`);
+                seenKeys.add(key);
+                options.push({ 
+                    field: fieldName, 
+                    sport: fieldName, 
+                    activityName: fieldName, 
+                    type: "sport" 
+                });
+            }
+        }
+        
+        // Source 4: fieldsBySport from loadAndFilterData
+        const loadedData = window.SchedulerCoreUtils?.loadAndFilterData?.() || {};
+        const fieldsBySport = loadedData.fieldsBySport || {};
+        
+        debugLog('fieldsBySport:', Object.keys(fieldsBySport));
+        for (const [sport, fields] of Object.entries(fieldsBySport)) {
+            (fields || []).forEach(fieldName => {
+                const key = `${fieldName}|${sport}`;
+                if (!seenKeys.has(key)) {
+                    debugLog(`  Adding from fieldsBySport: ${fieldName} -> ${sport}`);
+                    seenKeys.add(key);
+                    options.push({ 
+                        field: fieldName, 
+                        sport, 
+                        activityName: sport, 
+                        type: "sport" 
+                    });
+                }
+            });
+        }
+        
+        debugLog('=== TOTAL CANDIDATE OPTIONS:', options.length, '===');
+        debugLog('Options:', options.map(o => `${o.field}:${o.activityName}`).join(', '));
+        
+        return options;
+    }
+
     Solver.getValidActivityPicks = function (block) {
         const picks = [];
+        const rejectionReasons = {};
         
         for (const cand of allCandidateOptions) {
             // Use the new strict canBlockFit with activity name
@@ -393,8 +516,19 @@
                 // Skip impossible placements
                 if (cost < 500000) {
                     picks.push({ pick, cost });
+                } else {
+                    rejectionReasons[`${cand.field}:${cand.activityName}`] = `High penalty: ${cost}`;
                 }
+            } else {
+                rejectionReasons[`${cand.field}:${cand.activityName}`] = 'canBlockFit=false';
             }
+        }
+        
+        // DEBUG: Log rejections for this block if we have very few picks
+        if (picks.length < 3 && DEBUG_MODE) {
+            debugLog(`Block ${block.bunk} at ${block.startTime} has only ${picks.length} valid picks`);
+            debugLog(`  Valid picks: ${picks.map(p => `${p.pick.field}:${p.pick._activity}`).join(', ')}`);
+            debugLog(`  Sample rejections:`, Object.entries(rejectionReasons).slice(0, 5));
         }
         
         // Always have Free as fallback
@@ -446,26 +580,15 @@
         let iterations = 0;
         const SAFETY_LIMIT = 100000;
 
-        // Build candidate options
-        allCandidateOptions = [];
-        config.masterFields?.forEach(f => {
-            (f.activities || []).forEach(sport => {
-                allCandidateOptions.push({ 
-                    field: f.name, 
-                    sport, 
-                    activityName: sport, 
-                    type: "sport" 
-                });
-            });
-        });
-        config.masterSpecials?.forEach(s => {
-            allCandidateOptions.push({ 
-                field: s.name, 
-                sport: null, 
-                activityName: s.name, 
-                type: "special" 
-            });
-        });
+        // Build candidate options from ALL sources
+        allCandidateOptions = buildAllCandidateOptions(config);
+        
+        // If we still have no options, something is very wrong
+        if (allCandidateOptions.length === 0) {
+            console.error('[SOLVER] NO CANDIDATE OPTIONS BUILT! Check masterFields and activityProperties.');
+            console.error('  config.masterFields:', config.masterFields);
+            console.error('  activityProperties keys:', Object.keys(activityProperties));
+        }
 
         if (!window.leagueRoundState) window.leagueRoundState = {};
         if (!globalConfig.rotationHistory) globalConfig.rotationHistory = {};
@@ -476,7 +599,7 @@
         const leagueBlocks = sorted.filter(b => b._isLeague);
         const activityBlocks = sorted.filter(b => !b._isLeague);
 
-        console.log(`[SOLVER] Processing ${activityBlocks.length} activity blocks`);
+        console.log(`[SOLVER] Processing ${activityBlocks.length} activity blocks with ${allCandidateOptions.length} candidate options`);
 
         const solvedLeague = Solver.solveLeagueSchedule(leagueBlocks);
 
@@ -543,6 +666,39 @@
                 endTime: a.block.endTime, 
                 solution: a.solution 
             }));
+        }
+    };
+    
+    // ============================================================================
+    // DEBUG UTILITIES - Call from console to diagnose issues
+    // ============================================================================
+    
+    Solver.debugFieldAvailability = function() {
+        console.log('=== FIELD AVAILABILITY DEBUG ===');
+        console.log('activityProperties:', activityProperties);
+        console.log('allCandidateOptions:', allCandidateOptions);
+        
+        // Test a sample block
+        const testBlock = {
+            bunk: 'Test',
+            divName: 'Test Division',
+            startTime: 660, // 11:00 AM
+            endTime: 720,   // 12:00 PM
+            slots: [0, 1]
+        };
+        
+        console.log('Testing field availability for sample block:', testBlock);
+        
+        for (const cand of allCandidateOptions) {
+            const fits = window.SchedulerCoreUtils?.canBlockFit?.(
+                testBlock, 
+                cand.field, 
+                activityProperties, 
+                window.fieldUsageBySlot || {},
+                cand.activityName,
+                false
+            );
+            console.log(`  ${cand.field} (${cand.activityName}): ${fits ? 'AVAILABLE' : 'BLOCKED'}`);
         }
     };
 
