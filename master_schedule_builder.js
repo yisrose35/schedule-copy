@@ -1,12 +1,10 @@
 // =================================================================
-// master_schedule_builder.js (FIXED & TIMELINE INTEGRATED)
+// master_schedule_builder.js (UPDATED - FIELD RESERVATION FEATURE)
 //
 // Updates:
-// 1. Fixed Grid Rendering (Prevents "Just Words" glitch).
-// 2. Added Timeline Gatekeeper to Drag-and-Drop.
-// 3. Aligned Smart Tile prompts with new logic.
-// 4. FIXED: Standardized Activity Types ('activity' -> 'slot')
-// 5. FIXED: Specialty League type typo & Added League Safety Check
+// 1. Added reservedFields property to pinned/custom tiles
+// 2. When placing a custom pinned event, user is asked which fields it uses
+// 3. Scheduler will block reserved fields during those times
 // =================================================================
 
 (function(){
@@ -61,6 +59,57 @@ function mapEventNameForOptimizer(name){
   if(lower==='special activity'||lower==='special') return {type:'slot',event:'Special Activity'};
   if(['swim','lunch','snacks','dismissal'].includes(lower)) return {type:'pinned',event:name};
   return {type:'pinned',event:name};
+}
+
+// =================================================================
+// NEW: Field Selection Helper for Reserved Fields
+// =================================================================
+function promptForReservedFields(eventName) {
+  const globalSettings = window.loadGlobalSettings?.() || {};
+  const app1 = globalSettings.app1 || {};
+  
+  const allFields = (app1.fields || []).map(f => f.name);
+  const specialActivities = (app1.specialActivities || []).map(s => s.name);
+  
+  // Combine fields and special activities as potential "locations"
+  const allLocations = [...new Set([...allFields, ...specialActivities])].sort();
+  
+  if (allLocations.length === 0) {
+    return []; // No fields configured
+  }
+  
+  const fieldInput = prompt(
+    `Which field(s) will "${eventName}" use?\n\n` +
+    `This reserves the field so the scheduler won't assign it to other bunks.\n\n` +
+    `Available fields:\n${allLocations.join(', ')}\n\n` +
+    `Enter field names separated by commas (or leave blank if none):`,
+    ''
+  );
+  
+  if (!fieldInput || !fieldInput.trim()) {
+    return [];
+  }
+  
+  // Parse and validate field names
+  const requested = fieldInput.split(',').map(f => f.trim()).filter(Boolean);
+  const validated = [];
+  const invalid = [];
+  
+  requested.forEach(name => {
+    // Try to match (case-insensitive)
+    const match = allLocations.find(loc => loc.toLowerCase() === name.toLowerCase());
+    if (match) {
+      validated.push(match);
+    } else {
+      invalid.push(name);
+    }
+  });
+  
+  if (invalid.length > 0) {
+    alert(`Warning: These fields were not found and will be ignored:\n${invalid.join(', ')}`);
+  }
+  
+  return validated;
 }
 
 // --- Init ---
@@ -284,13 +333,19 @@ function renderGrid(){
   addRemoveListeners('.grid-event');
 }
 
-// --- Render Tile ---
+// --- Render Tile (UPDATED to show reserved fields) ---
 function renderEventTile(ev, top, height){
     let tile = TILES.find(t=>t.name===ev.event);
     if(!tile && ev.type) tile = TILES.find(t=>t.type===ev.type);
     const style = tile ? tile.style : 'background:#eee;border:1px solid #666;';
     
     let label = `<strong>${ev.event}</strong><br>${ev.startTime}-${ev.endTime}`;
+    
+    // NEW: Show reserved fields if any
+    if (ev.reservedFields && ev.reservedFields.length > 0) {
+        label += `<br><span style="font-size:0.7em;color:#c62828;">📍 ${ev.reservedFields.join(', ')}</span>`;
+    }
+    
     if(ev.type==='smart' && ev.smartData){
         label += `<br><span style="font-size:0.75em">F: ${ev.smartData.fallbackActivity} (if ${ev.smartData.fallbackFor.substring(0,4)} busy)</span>`;
     }
@@ -315,8 +370,6 @@ function addDropListeners(selector){
             
             // Calc time
             const rect=cell.getBoundingClientRect();
-            // Relative to grid container logic:
-            // The grid-cell position is relative.
             const offsetY = e.clientY - rect.top;
             
             // Snap to 15 mins
@@ -373,7 +426,44 @@ function addDropListeners(selector){
                     subEvents: [{event:a1}, {event:a2}]
                 };
             }
-            // 3. Standard & League Types - FIXED FOR CORRECT TYPE
+            // 3. PINNED TILES WITH FIELD RESERVATION
+            else if (['lunch','snacks','custom','dismissal','swim'].includes(tileData.type)) {
+                let name = tileData.name;
+                let reservedFields = [];
+                
+                if (tileData.type === 'custom') {
+                    name = prompt("Event Name (e.g., 'Special with R. Rosenfeld'):", "Regroup");
+                    if (!name) return;
+                    
+                    // NEW: Ask for reserved fields
+                    reservedFields = promptForReservedFields(name);
+                }
+                else if (tileData.type === 'swim') {
+                    // Auto-reserve swim/pool if it exists
+                    const globalSettings = window.loadGlobalSettings?.() || {};
+                    const fields = globalSettings.app1?.fields || [];
+                    const swimField = fields.find(f => 
+                        f.name.toLowerCase().includes('swim') || f.name.toLowerCase().includes('pool')
+                    );
+                    if (swimField) {
+                        reservedFields = [swimField.name];
+                    }
+                }
+                
+                let st = prompt(`${name} Start:`, startStr); if(!st) return;
+                let et = prompt(`${name} End:`, endStr); if(!et) return;
+                
+                newEvent = {
+                    id: Date.now().toString(),
+                    type: 'pinned',
+                    event: name,
+                    division: divName,
+                    startTime: st,
+                    endTime: et,
+                    reservedFields: reservedFields  // NEW: Store reserved fields
+                };
+            }
+            // 4. Standard & League Types
             else {
                 let name = tileData.name;
                 let finalType = tileData.type;
@@ -382,14 +472,10 @@ function addDropListeners(selector){
                 if (tileData.type === 'activity') { name = "General Activity Slot"; finalType = 'slot'; }
                 else if (tileData.type === 'sports') { name = "Sports Slot"; finalType = 'slot'; }
                 else if (tileData.type === 'special') { name = "Special Activity"; finalType = 'slot'; }
-                
-                else if(tileData.type==='custom') { name = prompt("Event Name:", "Regroup"); finalType = 'pinned'; }
                 else if(tileData.type==='league') {
                     name = "League Game";
                     finalType = 'league';
                 }
-                
-                // FIX #2: Correctly spelled specialty_league
                 else if(tileData.type === 'specialty_league') { 
                     name = "Specialty League"; 
                     finalType = 'specialty_league'; 
@@ -397,7 +483,7 @@ function addDropListeners(selector){
                 
                 if(!name) return;
 
-                // FIX #3: Safety Auto-fix for League
+                // Safety Auto-fix for League
                 if (/league/i.test(name) && finalType === 'slot') {
                     finalType = 'league';
                 }
@@ -407,7 +493,7 @@ function addDropListeners(selector){
                 
                 newEvent = {
                     id: Date.now().toString(),
-                    type: finalType, // CORRECTED to 'slot' for schedulable items
+                    type: finalType,
                     event: name,
                     division: divName,
                     startTime: st,
