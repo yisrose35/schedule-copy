@@ -267,7 +267,9 @@
     container.appendChild(wrapper);
 
     availableDivisions.forEach((div) => {
-      const bunks = (divisions[div]?.bunks || []).slice().sort();
+      const bunks = (divisions[div]?.bunks || []).slice().sort((a, b) => 
+    String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' })
+);
       if (bunks.length === 0) return;
 
       const table = document.createElement("table");
