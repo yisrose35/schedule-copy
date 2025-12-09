@@ -475,38 +475,50 @@
                     return;
                 }
 
-                const requiredFieldCount = matchups.length;
-                const leagueSports = league.sports || ["General Sport"];
+                // ✅ NEW: Get ALL available fields first (with division restrictions and occupation filtering)
+                const allAvailableFieldsAtTime = new Set();
+                const sportToFieldsMap = {};  // Track which sports have fields
                 
-                // Get available fields (with division restrictions and occupation filtering)
-                const allAvailableFields = new Set();
                 leagueSports.forEach(sport => {
                     const fields = getFieldsForSport(sport, context, leagueDivisions, timeKey);
-                    fields.forEach(f => allAvailableFields.add(f));
+                    if (fields.length > 0) {
+                        sportToFieldsMap[sport] = fields;
+                        fields.forEach(f => allAvailableFieldsAtTime.add(f));
+                    }
                 });
 
-                const availableFieldsArray = Array.from(allAvailableFields);
+                const availableFieldsArray = Array.from(allAvailableFieldsAtTime);
+                const playableSports = Object.keys(sportToFieldsMap);  // Only sports with fields
                 
                 console.log(`   Required fields: ${requiredFieldCount}`);
                 console.log(`   Available fields: ${availableFieldsArray.length} [${availableFieldsArray.join(", ")}]`);
+                console.log(`   Playable sports: [${playableSports.join(", ")}]`);
                 console.log(`   Teams: ${leagueTeams.length}, Matchups: ${matchups.length}`);
 
-                if (availableFieldsArray.length === 0) {
-                    console.log(`   🚨 No fields available!`);
+                if (availableFieldsArray.length === 0 || playableSports.length === 0) {
+                    console.log(`   🚨 No fields/sports available!`);
                     return;
                 }
 
-                // ✅ NEW: Intelligent matchup assignment with sport and field rotation
+                // ✅ NEW: Intelligent matchup assignment with AVAILABLE sports only
+                // IMPORTANT: This is a REGULAR league, NOT specialty league
+                // Different teams can play different sports in the same league block
                 const matchupAssignments = [];
                 const gameNumber = getCurrentRoundIndex(league.name, context) + 1;
 
                 matchups.forEach((matchup, idx) => {
                     const [team1, team2] = matchup;
                     
-                    // ✅ SMART SPORT SELECTION: Choose sport based on BOTH teams' history
-                    const selectedSport = selectSportForMatchup(team1, team2, league.name, leagueSports);
+                    // ✅ CRITICAL: Only select from sports that HAVE fields available
+                    const selectedSport = selectSportForMatchup(team1, team2, league.name, playableSports);
                     
-                    const fieldsForSport = getFieldsForSport(selectedSport, context, leagueDivisions, timeKey);
+                    // Get fields that support this sport
+                    const fieldsForSport = sportToFieldsMap[selectedSport] || [];
+                    
+                    if (fieldsForSport.length === 0) {
+                        console.log(`   ❌ No fields for ${selectedSport} (should not happen)`);
+                        return;
+                    }
 
                     // ✅ SMART FIELD SELECTION: Variety for teams
                     let assignedField = null;
@@ -539,8 +551,7 @@
                         const hist1 = window.leagueSportHistory[`${league.name}|${team1}`] || [];
                         const hist2 = window.leagueSportHistory[`${league.name}|${team2}`] || [];
                         console.log(`   ✅ ${team1} vs ${team2} @ ${assignedField} (${selectedSport})`);
-                        console.log(`      ${team1} history: [${hist1.join(", ")}]`);
-                        console.log(`      ${team2} history: [${hist2.join(", ")}]`);
+                        console.log(`      ${team1} history: [${hist1.join(", ")}] | ${team2} history: [${hist2.join(", ")}]`);
 
                         if (rotationHistory && rotationHistory.leagues) {
                             const key = [team1, team2].sort().join("|");
@@ -555,7 +566,7 @@
                             });
                         }
                     } else {
-                        console.log(`   ❌ Could not assign field for ${team1} vs ${team2}`);
+                        console.log(`   ❌ Could not assign field for ${team1} vs ${team2} (${selectedSport})`);
                     }
                 });
 
