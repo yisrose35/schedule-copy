@@ -1,12 +1,33 @@
 // ============================================================================
-// SmartLogicAdapter V36 (UPDATED: GLOBAL MAX USAGE PRE-SCREEN)
-// - Checks if a bunk is "Fully Maxed Out" on ALL special activities.
-// - If maxed out, they are disqualified from the Special slot immediately.
-// - Forces maxed-out bunks to Open/Fallback activities to prevent wasted slots.
+// SmartLogicAdapter V38 (UPDATED: PRIORITY DEBT SYSTEM & DYNAMIC CAPACITY)
+// - Calculates "Special" capacity dynamically for Block A and Block B separately.
+// - Tracks bunks pushed to "Fallback" due to Block B capacity squeeze.
+// - Saves them to a Priority Queue for the next day.
+// - Gives Priority Queue bunks first dibs in the lottery.
 // ============================================================================
 
 (function() {
     "use strict";
+
+    const PRIORITY_KEY = "smartTilePriority_v1";
+
+    function loadPriorityQueue() {
+        try {
+            const raw = localStorage.getItem(PRIORITY_KEY);
+            return raw ? JSON.parse(raw) : {};
+        } catch (e) {
+            console.error("Failed to load Smart Priority:", e);
+            return {};
+        }
+    }
+
+    function savePriorityQueue(queue) {
+        try {
+            localStorage.setItem(PRIORITY_KEY, JSON.stringify(queue));
+        } catch (e) {
+            console.error("Failed to save Smart Priority:", e);
+        }
+    }
 
     window.SmartLogicAdapter = {
 
@@ -79,7 +100,7 @@
         },
 
         // ---------------------------------------------------------
-        // GENERATE ASSIGNMENTS (With Global Eligibility Check)
+        // GENERATE ASSIGNMENTS (With Priority Debt & Dynamic Capacity)
         // ---------------------------------------------------------
         generateAssignments(bunks, job, historical = {}, specialNames = [], activityProps = {}, masterFields = [], dailyFieldAvailability = {}, yesterdayHistory = {}) {
 
@@ -103,31 +124,84 @@
                 openAct = main2;
             }
 
+            const allSpecials = window.getGlobalSpecialActivities ? window.getGlobalSpecialActivities() : [];
+
+            // ---------------------------------------------------------
+            // HELPER: Dynamic Capacity Calculation ("The Roll Call")
+            // ---------------------------------------------------------
+            function getDynamicCapacity(startMin, endMin) {
+                // Fallback if core utils aren't ready
+                if (!window.SchedulerCoreUtils) return 2;
+
+                const slots = window.SchedulerCoreUtils.findSlotsForRange(startMin, endMin);
+                if (slots.length === 0) return 0;
+
+                // Check if specialAct is a SPECIFIC defined special (e.g. "Art Room")
+                const specificSpecial = allSpecials.find(s => isSame(s.name, specialAct));
+
+                if (specificSpecial) {
+                    // It IS specific. Check ONLY its availability.
+                    const props = activityProps[specificSpecial.name] || specificSpecial;
+                    
+                    // Check if open for ALL slots in the range
+                    const isOpen = slots.every(slotIdx => 
+                        window.SchedulerCoreUtils.isTimeAvailable(slotIdx, props)
+                    );
+
+                    if (!isOpen) return 0; // Closed for this time block
+
+                    // Return its specific capacity
+                    const cap = props.sharableWith?.capacity 
+                        || (props.sharableWith?.type === 'all' ? 2 : 1);
+                    return parseInt(cap) || 1;
+                }
+
+                // It is GENERIC (e.g. "Special Activity"). Run the Roll Call.
+                let totalCapacity = 0;
+
+                allSpecials.forEach(s => {
+                    const props = activityProps[s.name] || s;
+
+                    // 1. Is it globally enabled?
+                    if (props.available === false) return;
+
+                    // 2. Is it open for this SPECIFIC time block?
+                    const isOpen = slots.every(slotIdx => 
+                        window.SchedulerCoreUtils.isTimeAvailable(slotIdx, props)
+                    );
+
+                    if (isOpen) {
+                        // 3. Add its capacity
+                        let sCap = 1;
+                        if (props.sharableWith?.capacity) {
+                            sCap = parseInt(props.sharableWith.capacity);
+                        } else if (props.sharableWith?.type === 'all' || props.sharable) {
+                            sCap = 2;
+                        }
+                        totalCapacity += sCap;
+                    }
+                });
+
+                return totalCapacity;
+            }
+
             // ---------------------------------------------------------
             // 1. ELIGIBILITY PRE-SCREEN (Global Max Usage)
             // ---------------------------------------------------------
-            // We must check if the bunk has ANY valid special activity options left.
-            // If they are maxed out on EVERYTHING, do not give them a Special slot.
-
-            const allSpecials = window.getGlobalSpecialActivities ? window.getGlobalSpecialActivities() : [];
             const eligibleBunks = [];
             const forcedFallbackBunks = [];
 
             bunks.forEach(b => {
                 let hasAtLeastOneOption = false;
-
                 if (allSpecials.length === 0) {
-                    // No specials defined? Assume unlimited/valid to prevent blocking.
                     hasAtLeastOneOption = true;
                 } else {
-                    // Check every special activity
                     for (const s of allSpecials) {
-                        const limit = s.maxUsage || 0; // 0 = unlimited
+                        const limit = s.maxUsage || 0; 
                         const count = historical[b]?.[s.name] || 0;
-
                         if (limit === 0 || count < limit) {
                             hasAtLeastOneOption = true;
-                            break; // Found one valid option, they are eligible for the slot
+                            break; 
                         }
                     }
                 }
@@ -135,89 +209,67 @@
                 if (hasAtLeastOneOption) {
                     eligibleBunks.push(b);
                 } else {
-                    // Bunk is maxed out on ALL specials.
                     forcedFallbackBunks.push(b);
                 }
             });
 
             // ---------------------------------------------------------
-            // Helpers
+            // 2. SORTING with PRIORITY DEBT
             // ---------------------------------------------------------
+            // Load Priority Queue
+            const priorityQueue = loadPriorityQueue();
+            const divPriority = priorityQueue[job.division] || [];
+
+            function getCategoryHistory(bunk, actName) {
+                if (!historical[bunk]) return 0;
+                let sum = 0;
+                const lower = actName.toLowerCase();
+                const spec = allSpecials.some(s => s.name.toLowerCase() === lower);
+                if (spec) {
+                    allSpecials.forEach(s => {
+                        if (historical[bunk][s.name]) sum += historical[bunk][s.name];
+                    });
+                }
+                return sum;
+            }
+
             function playedYesterday(bunk) {
                 const sched = yesterdayHistory.schedule?.[bunk] || [];
-                // CRITICAL FIX: Ensure sched is an Array before calling .some()
                 if (!Array.isArray(sched)) return 0;
-                
                 return sched.some(e => {
                     const act = (e?._activity || "").toLowerCase();
                     return allSpecials.some(s => s.name.toLowerCase() === act);
                 }) ? 1 : 0;
             }
 
-            function getCategoryHistory(bunk, actName) {
-                if (!historical[bunk]) return 0;
-                let sum = 0;
-                const lower = actName.toLowerCase();
-                // Count ONLY true special names if actName is generic
-                const spec = allSpecials.some(s => s.name.toLowerCase() === lower);
-
-                if (spec) {
-                    allSpecials.forEach(s => {
-                        if (historical[bunk][s.name]) {
-                            sum += historical[bunk][s.name];
-                        }
-                    });
-                }
-                return sum;
-            }
-
-            function getTotalHistory(bunk) {
-                if (!historical[bunk]) return 0;
-                return Object.values(historical[bunk]).reduce((a, b) => a + b, 0);
-            }
-
-            // ---------------------------------------------------------
-            // Sort ONLY ELIGIBLE bunks by fairness
-            // ---------------------------------------------------------
             const sorted = [...eligibleBunks].sort((a, b) => {
+                // 1. Priority Debt (Previous Unlucky Bunks go first)
+                const pA = divPriority.includes(a) ? 1 : 0;
+                const pB = divPriority.includes(b) ? 1 : 0;
+                if (pA !== pB) return pB - pA; // Higher priority first
+
+                // 2. Least Played This Week
                 const A = getCategoryHistory(a, specialAct);
                 const B = getCategoryHistory(b, specialAct);
                 if (A !== B) return A - B;
 
+                // 3. Did not play yesterday
                 const YA = playedYesterday(a);
                 const YB = playedYesterday(b);
                 if (YA !== YB) return YA - YB;
-
-                const TA = getTotalHistory(a);
-                const TB = getTotalHistory(b);
-                if (TA !== TB) return TA - TB;
 
                 return Math.random() - 0.5;
             });
 
             // ---------------------------------------------------------
-            // Determine Capacity
+            // 3. ASSIGNMENT (Block A)
             // ---------------------------------------------------------
-            function calcCap(startMin, endMin) {
-                const sp = allSpecials.find(s => isSame(s.name, specialAct));
-                if (!sp) return 2;
-                // Capacity Logic
-                if (sp.sharableWith?.capacity) return parseInt(sp.sharableWith.capacity);
-                if (sp.sharableWith?.type === 'not_sharable') return 1;
-                if (sp.sharableWith?.type === 'all') return 2;
-                if (sp.sharable) return 2;
-                return 1;
-            }
-
-            // ---------------------------------------------------------
-            // Block A Assignment
-            // ---------------------------------------------------------
-            const capA = calcCap(job.blockA.startMin, job.blockA.endMin);
+            // Calculate capacity dynamically for the FIRST time block
+            const capA = getDynamicCapacity(job.blockA.startMin, job.blockA.endMin);
             let countA = 0;
             const block1 = {};
             const winnersA = new Set();
 
-            // 1. Assign Eligible Bunks (Lottery)
             sorted.forEach(bunk => {
                 if (countA < capA) {
                     block1[bunk] = specialAct;
@@ -228,47 +280,68 @@
                 }
             });
 
-            // 2. Assign Forced Fallback Bunks (Maxed Out -> Open Act)
             forcedFallbackBunks.forEach(bunk => {
                 block1[bunk] = openAct;
             });
 
             // ---------------------------------------------------------
-            // Block B Assignment
+            // 4. ASSIGNMENT (Block B) + DEBT TRACKING
             // ---------------------------------------------------------
             const block2 = {};
+            // Start fresh list for next day's priority.
+            // Remove bunks who "Won" in Block A (they are satisfied for today).
+            let nextDayPriority = divPriority.filter(b => !winnersA.has(b)); 
+
             if (job.blockB) {
-                const capB = calcCap(job.blockB.startMin, job.blockB.endMin);
+                // Re-calculate capacity dynamically for the SECOND time block (e.g. Canteen closed?)
+                const capB = getDynamicCapacity(job.blockB.startMin, job.blockB.endMin);
                 let countB = 0;
 
                 const candidates = sorted.filter(b => !winnersA.has(b));
-                const forcedOpen = [...winnersA]; // Winners of A must do Open in B
+                const forcedOpen = [...winnersA]; 
 
-                // Winners of A -> Forced to Open in B
+                // Winners of A -> Forced to Open in B (Swap)
                 forcedOpen.forEach(b => block2[b] = openAct);
 
-                // Losers of A (Eligible) -> Try for Special in B
+                // Candidates (Losers of A) -> Try for Special in B
                 candidates.forEach(b => {
                     if (countB < capB) {
                         block2[b] = specialAct;
                         countB++;
+                        
+                        // If they were priority, they got their spot. Remove from debt.
+                        nextDayPriority = nextDayPriority.filter(p => p !== b);
                     } else {
-                        block2[b] = fbAct; // Eligible but no room -> Fallback
+                        // NO ROOM! Forced to Fallback.
+                        block2[b] = fbAct;
+                        
+                        // ** CRITICAL: ADD TO PRIORITY DEBT **
+                        // They were eligible but capacity squeezed them out.
+                        if (!nextDayPriority.includes(b)) {
+                            nextDayPriority.push(b);
+                        }
                     }
                 });
 
-                // Forced Fallback Bunks (Maxed Out) -> Must go to Fallback
-                // (They cannot take Special spots, and they just did Open in A)
                 forcedFallbackBunks.forEach(bunk => {
                     block2[bunk] = fbAct;
                 });
+            } else {
+                // If no Block B, logic is simpler. Priority bunks who got in A are cleared above.
+                // Those who missed A (and there is no B) remain in queue if they were already there.
+                // We typically don't add new debt for single blocks unless explicit "Special Only" logic exists.
             }
 
             // ---------------------------------------------------------
-            // Create Locked Events
+            // 5. SAVE UPDATED PRIORITY
+            // ---------------------------------------------------------
+            priorityQueue[job.division] = nextDayPriority;
+            savePriorityQueue(priorityQueue);
+
+            // ---------------------------------------------------------
+            // 6. CREATE EVENTS
             // ---------------------------------------------------------
             const locked = [];
-
             function lockBlock(assignments, blockInfo) {
                 Object.entries(assignments).forEach(([bunk, act]) => {
                     locked.push({
