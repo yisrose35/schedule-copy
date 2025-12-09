@@ -1,11 +1,10 @@
 // ============================================================================
-// scheduler_logic_fillers.js — FINAL GCM VERSION
-// Fully aligned with:
-// - Updated Loader (masterActivities, fieldsBySport, activityProperties)
-// - Updated Utils (new canBlockFit signature, transition logic)
-// - Hybrid Sports Model (Option C)
-// - Sports Slot = Fairness-Based Selection
-// - Specials = Virtual Fields
+// scheduler_logic_fillers.js (FIXED v2)
+// 
+// CRITICAL FIXES:
+// 1. Same-activity requirement when sharing fields
+// 2. Adjacent bunk preference scoring
+// 3. Proper capacity checks before assignment
 // ============================================================================
 
 (function () {
@@ -21,6 +20,12 @@
         return (f && f.name) ? f.name : f;
     }
 
+    function getBunkNumber(bunkName) {
+        if (!bunkName) return Infinity;
+        const match = String(bunkName).match(/(\d+)/);
+        return match ? parseInt(match[1], 10) : Infinity;
+    }
+
     // ---------------------------------------------------------
     // Preference Score
     // ---------------------------------------------------------
@@ -30,8 +35,120 @@
         const list = fieldProps.preferences.list || [];
         const idx = list.indexOf(divName);
 
-        if (idx === -1) return -50;        // Not preferred
-        return 1000 - idx * 100;           // Higher priority gets higher score
+        if (idx === -1) return -50;
+        return 1000 - idx * 100;
+    }
+
+    // ---------------------------------------------------------
+    // Get current field usage (for sharing checks)
+    // ---------------------------------------------------------
+    function getFieldCurrentState(fieldName, block) {
+        const slots = block.slots || [];
+        const schedules = window.scheduleAssignments || {};
+        
+        const state = {
+            count: 0,
+            bunks: [],
+            activities: new Set(),
+            minBunkNum: Infinity,
+            maxBunkNum: -Infinity
+        };
+        
+        for (const slotIdx of slots) {
+            for (const [bunk, bunkSlots] of Object.entries(schedules)) {
+                if (bunk === block.bunk) continue;
+                const entry = bunkSlots?.[slotIdx];
+                if (!entry) continue;
+                
+                const entryField = fieldLabel(entry.field) || entry._activity;
+                if (!entryField) continue;
+                
+                if (entryField.toLowerCase().trim() === fieldName.toLowerCase().trim()) {
+                    if (!state.bunks.includes(bunk)) {
+                        state.bunks.push(bunk);
+                        state.count++;
+                        
+                        const num = getBunkNumber(bunk);
+                        if (num < state.minBunkNum) state.minBunkNum = num;
+                        if (num > state.maxBunkNum) state.maxBunkNum = num;
+                    }
+                    
+                    const actName = entry._activity || entry.sport;
+                    if (actName) {
+                        state.activities.add(actName.toLowerCase().trim());
+                    }
+                }
+            }
+        }
+        
+        return state;
+    }
+
+    // ---------------------------------------------------------
+    // Check if activity matches existing on field (for sharing)
+    // ---------------------------------------------------------
+    function canShareWithActivity(fieldName, block, activityName, activityProperties) {
+        const state = getFieldCurrentState(fieldName, block);
+        
+        // Empty field - can use
+        if (state.count === 0) return true;
+        
+        // Check capacity
+        const props = activityProperties[fieldName] || {};
+        let maxCapacity = 1;
+        if (props.sharableWith?.capacity) {
+            maxCapacity = parseInt(props.sharableWith.capacity) || 1;
+        } else if (props.sharable || props.sharableWith?.type === "all" || props.sharableWith?.type === "custom") {
+            maxCapacity = 2;
+        }
+        
+        // At capacity - can't share
+        if (state.count >= maxCapacity) {
+            return false;
+        }
+        
+        // Check activity match
+        if (state.activities.size > 0 && activityName) {
+            const myActivity = activityName.toLowerCase().trim();
+            if (!state.activities.has(myActivity)) {
+                // Different activity - can't share
+                return false;
+            }
+        }
+        
+        return true;
+    }
+
+    // ---------------------------------------------------------
+    // Calculate sharing bonus (adjacent bunks score higher)
+    // ---------------------------------------------------------
+    function calculateSharingBonus(fieldName, block, activityProperties) {
+        const state = getFieldCurrentState(fieldName, block);
+        
+        // Empty field - neutral
+        if (state.count === 0) return 0;
+        
+        const myNum = getBunkNumber(block.bunk);
+        if (myNum === Infinity) return 0;
+        
+        // Calculate average distance to existing bunks
+        let totalDistance = 0;
+        for (const existingBunk of state.bunks) {
+            const existingNum = getBunkNumber(existingBunk);
+            if (existingNum !== Infinity) {
+                totalDistance += Math.abs(myNum - existingNum);
+            }
+        }
+        
+        const avgDistance = state.bunks.length > 0 ? totalDistance / state.bunks.length : 0;
+        
+        // Distance 1 = +100 bonus
+        // Distance 2 = +80 bonus
+        // Distance 5 = +20 bonus
+        // Distance 10+ = 0 or negative
+        const bonus = Math.max(0, 120 - avgDistance * 20);
+        
+        return bonus;
     }
 
     // ---------------------------------------------------------
@@ -60,21 +177,29 @@
     }
 
     // ---------------------------------------------------------
-    // Freshness Sorting for Specials / General
+    // Freshness Sorting (ENHANCED with sharing logic)
     // ---------------------------------------------------------
-    function sortPicksByFreshness(picks, bunkHist = {}, divName, activityProperties) {
+    function sortPicksByFreshness(picks, bunkHist, divName, activityProperties, block) {
         return picks.sort((a, b) => {
-            const propsA = activityProperties[fieldLabel(a.field)] || {};
-            const propsB = activityProperties[fieldLabel(b.field)] || {};
+            const fieldA = fieldLabel(a.field);
+            const fieldB = fieldLabel(b.field);
+            
+            const propsA = activityProperties[fieldA] || {};
+            const propsB = activityProperties[fieldB] || {};
 
+            // 1. Preference score (division priority)
             const prefA = calculatePreferenceScore(propsA, divName);
             const prefB = calculatePreferenceScore(propsB, divName);
-
             if (prefA !== prefB) return prefB - prefA;
 
+            // 2. Sharing bonus (adjacent bunks)
+            const shareA = calculateSharingBonus(fieldA, block, activityProperties);
+            const shareB = calculateSharingBonus(fieldB, block, activityProperties);
+            if (shareA !== shareB) return shareB - shareA;
+
+            // 3. Freshness (least recently used)
             const lastA = bunkHist[a._activity] || 0;
             const lastB = bunkHist[b._activity] || 0;
-
             if (lastA !== lastB) return lastA - lastB;
 
             return Math.random() - 0.5;
@@ -115,7 +240,7 @@
     }
 
     // ========================================================================
-    // SPECIAL ACTIVITY SELECTOR
+    // SPECIAL ACTIVITY SELECTOR (ENHANCED)
     // ========================================================================
     window.findBestSpecial = function (
         block,
@@ -140,11 +265,17 @@
 
         const available = specials.filter(pick => {
             const actName = pick._activity;
+            const fieldName = fieldLabel(pick.field);
 
-            // canBlockFit
+            // Check if can share (same activity requirement)
+            if (!canShareWithActivity(fieldName, block, actName, activityProperties)) {
+                return false;
+            }
+
+            // canBlockFit with activity name
             if (!window.SchedulerCoreUtils.canBlockFit(
                 block,
-                fieldLabel(pick.field),
+                fieldName,
                 activityProperties,
                 fieldUsageBySlot,
                 actName,
@@ -161,12 +292,12 @@
             return true;
         });
 
-        const sorted = sortPicksByFreshness(available, bunkHist, block.divName, activityProperties);
+        const sorted = sortPicksByFreshness(available, bunkHist, block.divName, activityProperties, block);
         return sorted[0] || null;
     };
 
     // ========================================================================
-    // SPORTS ACTIVITY SELECTOR (for named sports)
+    // SPORTS ACTIVITY SELECTOR (ENHANCED)
     // ========================================================================
     window.findBestSportActivity = function (
         block,
@@ -198,6 +329,11 @@
             const actName = pick._activity;
             const fieldName = fieldLabel(pick.field);
 
+            // Check if can share (same activity requirement)
+            if (!canShareWithActivity(fieldName, block, actName, activityProperties)) {
+                return false;
+            }
+
             if (!activityProperties[fieldName]) return false;
 
             if (!window.SchedulerCoreUtils.canBlockFit(
@@ -214,12 +350,12 @@
             return true;
         });
 
-        const sorted = sortPicksByFreshness(available, bunkHist, block.divName, activityProperties);
+        const sorted = sortPicksByFreshness(available, bunkHist, block.divName, activityProperties, block);
         return sorted[0] || null;
     };
 
     // ========================================================================
-    // SPORTS SLOT — FAIRNESS-BASED SELECTOR
+    // SPORTS SLOT — FAIRNESS-BASED SELECTOR (ENHANCED)
     // ========================================================================
     function findBestSportsSlot(block, allActivities, fieldUsageBySlot, yesterdayHistory,
                                 activityProperties, rotationHistory, historicalCounts) {
@@ -249,13 +385,18 @@
             });
         });
 
-        // Score with fairness
+        // Score with fairness AND sharing logic
         const scored = picks
             .map(pick => {
                 const actName = pick._activity;
                 const fieldName = pick.field;
 
                 if (!activityProperties[fieldName]) return null;
+
+                // Check sharing compatibility FIRST
+                if (!canShareWithActivity(fieldName, block, actName, activityProperties)) {
+                    return null;
+                }
 
                 if (!window.SchedulerCoreUtils.canBlockFit(
                     block,
@@ -266,15 +407,22 @@
                     false
                 )) return null;
 
-                const fairnessScore = calculateFairnessScore(
+                // Calculate score
+                let score = 0;
+                
+                // Fairness score
+                score += calculateFairnessScore(
                     actName,
                     block.bunk,
                     rotationHistory,
                     yesterdayHistory,
                     doneToday
                 );
+                
+                // Sharing bonus (adjacent bunks)
+                score += calculateSharingBonus(fieldName, block, activityProperties);
 
-                return { ...pick, _score: fairnessScore };
+                return { ...pick, _score: score };
             })
             .filter(Boolean);
 
@@ -313,7 +461,7 @@
 
         if (specialPick) return specialPick;
 
-        // 2) Try SPORTS SLOT (fairness-based)
+        // 2) Try SPORTS SLOT (fairness-based with sharing logic)
         const sportSlotPick = findBestSportsSlot(
             block,
             allActivities,
