@@ -132,40 +132,48 @@
     }
 
     // =========================================================================
-    // SMART SPORT SELECTION (NEW)
+    // SMART SPORT SELECTION (FIXED)
     // =========================================================================
     
-    function selectSportForTeam(team, leagueName, availableSports, preferredSport = null) {
-        const historyKey = `${leagueName}|${team}`;
-        const history = window.leagueSportHistory[historyKey] || [];
+    function selectSportForMatchup(team1, team2, leagueName, availableSports) {
+        const history1Key = `${leagueName}|${team1}`;
+        const history2Key = `${leagueName}|${team2}`;
+        const history1 = window.leagueSportHistory[history1Key] || [];
+        const history2 = window.leagueSportHistory[history2Key] || [];
         
-        // If a sport is preferred (e.g., from matchup algorithm), try it first
-        if (preferredSport && !history.includes(preferredSport)) {
-            return preferredSport;
+        // Find sports NEITHER team has played
+        const unplayedByBoth = availableSports.filter(sport => 
+            !history1.includes(sport) && !history2.includes(sport)
+        );
+        
+        if (unplayedByBoth.length > 0) {
+            return unplayedByBoth[0];  // Best option - fresh for both
         }
         
-        // Find sports this team hasn't played yet
-        const unplayedSports = availableSports.filter(sport => !history.includes(sport));
+        // Find sports one team hasn't played
+        const unplayedByOne = availableSports.filter(sport => 
+            !history1.includes(sport) || !history2.includes(sport)
+        );
         
-        if (unplayedSports.length > 0) {
-            // Prefer unplayed sports
-            return unplayedSports[0];
+        if (unplayedByOne.length > 0) {
+            return unplayedByOne[0];  // Good option - fresh for at least one
         }
         
-        // All sports played - find least recently used
-        const sportCounts = {};
+        // Both teams have played all sports - find least used by BOTH
+        const combinedCounts = {};
         availableSports.forEach(sport => {
-            sportCounts[sport] = history.filter(s => s === sport).length;
+            const count1 = history1.filter(s => s === sport).length;
+            const count2 = history2.filter(s => s === sport).length;
+            combinedCounts[sport] = count1 + count2;
         });
         
-        // Return sport with lowest count
+        // Return sport with lowest combined count
         let minSport = availableSports[0];
-        let minCount = sportCounts[minSport] || 0;
+        let minCount = combinedCounts[minSport];
         
         availableSports.forEach(sport => {
-            const count = sportCounts[sport] || 0;
-            if (count < minCount) {
-                minCount = count;
+            if (combinedCounts[sport] < minCount) {
+                minCount = combinedCounts[sport];
                 minSport = sport;
             }
         });
@@ -179,7 +187,6 @@
             window.leagueSportHistory[historyKey] = [];
         }
         window.leagueSportHistory[historyKey].push(sport);
-        console.log(`   📊 ${team} sport history: [${window.leagueSportHistory[historyKey].join(", ")}]`);
     }
 
     // =========================================================================
@@ -316,20 +323,28 @@
             const matchups = getMatchupsForLeague(league, context);
             if (matchups.length === 0) continue;
 
-            const leagueSport = league.sport || (league.sports && league.sports[0]) || "General";
+            const leagueSports = league.sports || [league.sport || "General"];
             const timeKey = startTime;
-            
-            const availableFields = getFieldsForSport(leagueSport, context, [divName], timeKey);
 
-            if (availableFields.length === 0) {
-                console.log(`   ⚠️ No fields available`);
-                continue;
-            }
+            console.log(`   Sport options: [${leagueSports.join(", ")}]`);
+            console.log(`   Matchups: ${matchups.length}`);
 
             const matchupAssignments = [];
 
             matchups.forEach((matchup) => {
                 const [team1, team2] = matchup;
+                
+                // ✅ SMART SPORT SELECTION
+                const selectedSport = leagueSports.length > 1 
+                    ? selectSportForMatchup(team1, team2, league.name, leagueSports)
+                    : leagueSports[0];
+                
+                const availableFields = getFieldsForSport(selectedSport, context, [divName], timeKey);
+                
+                if (availableFields.length === 0) {
+                    console.log(`   ⚠️ No fields available for ${selectedSport}`);
+                    return;
+                }
                 
                 const field = selectFieldForTeam(team1, league.name, availableFields, blocks[0], context);
                 
@@ -337,24 +352,24 @@
                     matchupAssignments.push({
                         matchup: `${team1} vs ${team2}`,
                         field: field,
-                        sport: leagueSport
+                        sport: selectedSport
                     });
                     
                     // Block field and record usage
                     blockFieldForTime(field, timeKey);
                     recordFieldUsage(team1, league.name, field);
                     recordFieldUsage(team2, league.name, field);
-                    recordSportUsage(team1, league.name, leagueSport);
-                    recordSportUsage(team2, league.name, leagueSport);
+                    recordSportUsage(team1, league.name, selectedSport);
+                    recordSportUsage(team2, league.name, selectedSport);
                     
-                    console.log(`   ✅ ${team1} vs ${team2} @ ${field}`);
+                    console.log(`   ✅ ${team1} vs ${team2} @ ${field} (${selectedSport})`);
                 }
             });
 
             blocks.forEach(block => {
                 const pick = {
                     field: `Specialty League: ${league.name}`,
-                    sport: leagueSport,
+                    sport: matchupAssignments.length > 0 ? matchupAssignments[0].sport : "League",
                     _activity: `Specialty League: ${league.name}`,
                     _h2h: true,
                     _fixed: true,
@@ -488,14 +503,8 @@
                 matchups.forEach((matchup, idx) => {
                     const [team1, team2] = matchup;
                     
-                    // ✅ SMART SPORT SELECTION: Avoid back-to-back same sport
-                    const preferredSport = leagueSports[idx % leagueSports.length];
-                    const sport1 = selectSportForTeam(team1, league.name, leagueSports, preferredSport);
-                    const sport2 = selectSportForTeam(team2, league.name, leagueSports, preferredSport);
-                    
-                    // Use the sport that both teams need most
-                    const selectedSport = sport1 === sport2 ? sport1 : 
-                                        (sport1 === preferredSport ? sport1 : sport2);
+                    // ✅ SMART SPORT SELECTION: Choose sport based on BOTH teams' history
+                    const selectedSport = selectSportForMatchup(team1, team2, league.name, leagueSports);
                     
                     const fieldsForSport = getFieldsForSport(selectedSport, context, leagueDivisions, timeKey);
 
@@ -527,7 +536,11 @@
                         recordSportUsage(team1, league.name, selectedSport);
                         recordSportUsage(team2, league.name, selectedSport);
                         
+                        const hist1 = window.leagueSportHistory[`${league.name}|${team1}`] || [];
+                        const hist2 = window.leagueSportHistory[`${league.name}|${team2}`] || [];
                         console.log(`   ✅ ${team1} vs ${team2} @ ${assignedField} (${selectedSport})`);
+                        console.log(`      ${team1} history: [${hist1.join(", ")}]`);
+                        console.log(`      ${team2} history: [${hist2.join(", ")}]`);
 
                         if (rotationHistory && rotationHistory.leagues) {
                             const key = [team1, team2].sort().join("|");
