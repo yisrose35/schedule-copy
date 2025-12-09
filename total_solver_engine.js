@@ -464,6 +464,18 @@
     function debugRejection(block, fieldName, actName) {
         const props = activityProperties[fieldName];
         
+        // Check block validity first
+        if (!block.startTime && !block.slots?.length) {
+            return `Block has no startTime or slots`;
+        }
+        
+        // Check if slots can be found
+        const slots = block.slots?.length ? block.slots : 
+            window.SchedulerCoreUtils?.findSlotsForRange(block.startTime, block.endTime);
+        if (!slots || slots.length === 0) {
+            return `No slots found for time ${block.startTime}-${block.endTime}`;
+        }
+        
         if (!props) {
             return `No activityProperties for "${fieldName}"`;
         }
@@ -516,7 +528,30 @@
             }
         }
         
-        return `Unknown (canBlockFit returned false)`;
+        // Check capacity
+        const schedules = window.scheduleAssignments || {};
+        for (const slotIdx of slots) {
+            let count = 0;
+            for (const [otherBunk, otherSlots] of Object.entries(schedules)) {
+                if (otherBunk === block.bunk) continue;
+                const entry = otherSlots?.[slotIdx];
+                if (!entry) continue;
+                const entryField = window.SchedulerCoreUtils?.fieldLabel(entry.field) || entry._activity;
+                if (entryField?.toLowerCase().trim() === fieldName.toLowerCase().trim()) {
+                    count++;
+                }
+            }
+            
+            let maxCap = 1;
+            if (props.sharableWith?.capacity) maxCap = parseInt(props.sharableWith.capacity) || 1;
+            else if (props.sharable) maxCap = 2;
+            
+            if (count >= maxCap) {
+                return `Field at capacity (${count}/${maxCap}) at slot ${slotIdx}`;
+            }
+        }
+        
+        return `Unknown (canBlockFit returned false) - check console for [FIT] messages`;
     }
 
     Solver.getValidActivityPicks = function (block) {
@@ -554,12 +589,23 @@
         
         // DEBUG: Log rejections for blocks with few picks
         if (picks.length < 3 && DEBUG_MODE) {
-            debugLog(`\n⚠️ Block ${block.bunk} at time ${block.startTime} (${Math.floor(block.startTime/60)}:${String(block.startTime%60).padStart(2,'0')}) has only ${picks.length} valid picks`);
-            debugLog(`  Division: ${block.divName}`);
-            debugLog(`  Valid picks: ${picks.map(p => `${p.pick.field}:${p.pick._activity}`).join(', ') || 'NONE'}`);
-            debugLog(`  Sample rejections:`);
-            Object.entries(rejectionReasons).slice(0, 10).forEach(([key, reason]) => {
-                debugLog(`    - ${key}: ${reason}`);
+            const timeHr = Math.floor(block.startTime/60);
+            const timeMin = block.startTime % 60;
+            const ampm = timeHr >= 12 ? 'PM' : 'AM';
+            const hr12 = timeHr % 12 || 12;
+            const timeStr = `${hr12}:${String(timeMin).padStart(2,'0')} ${ampm}`;
+            
+            console.log(`\n⚠️ BLOCK WITH FEW OPTIONS:`);
+            console.log(`   Bunk: ${block.bunk}`);
+            console.log(`   Division: ${block.divName}`);
+            console.log(`   Time: ${timeStr} (${block.startTime} mins)`);
+            console.log(`   Valid picks (${picks.length}): ${picks.map(p => `${p.pick.field}:${p.pick._activity}`).join(', ') || 'NONE'}`);
+            console.log(`   Sample rejections:`);
+            
+            // Show first 10 rejections with full reasons
+            const rejectionList = Object.entries(rejectionReasons).slice(0, 10);
+            rejectionList.forEach(([key, reason]) => {
+                console.log(`     ❌ ${key}: ${reason}`);
             });
         }
         
