@@ -375,30 +375,38 @@
             return false;
         }
 
-        // LimitUsage check
-        // FIX: "No rule for division" should mean "no restriction" = ALLOW
-        // Only reject if there IS a rule and the bunk is NOT in the allowed list
+        // LimitUsage check - restricts which bunks from each division can use this field
+        // If enabled and division is NOT in the rules, that division CANNOT use this field
+        // If enabled and division IS in the rules:
+        //   - Empty array [] = ALL bunks from this division are allowed
+        //   - Array with bunks = only those specific bunks are allowed
+        //   - true/truthy = ALL bunks from this division are allowed
         if (effectiveProps.limitUsage?.enabled) {
-            const rule = effectiveProps.limitUsage.divisions?.[block.divName];
+            const divisionRules = effectiveProps.limitUsage.divisions || {};
             
-            // If no rule exists for this division, that means NO RESTRICTION - allow it
-            if (!rule) {
-                if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: limitUsage has no rule for div ${block.divName} - ALLOWING (no restriction)`);
-                // Continue - don't reject
+            // Check if this division exists in the rules at all
+            if (!(block.divName in divisionRules)) {
+                if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - limitUsage: division ${block.divName} not in allowed list`);
+                return false;
             }
-            // If rule exists and is an array, check if bunk is in the list
-            else if (Array.isArray(rule)) {
-                // Convert bunk to string for comparison (handles "1" vs 1 mismatches)
+            
+            const rule = divisionRules[block.divName];
+            
+            // If rule is an array with items, check if bunk is in the allowed list
+            if (Array.isArray(rule) && rule.length > 0) {
+                // Convert bunk to string/number for comparison
                 const bunkStr = String(block.bunk);
                 const bunkNum = parseInt(block.bunk);
                 const inList = rule.some(b => String(b) === bunkStr || parseInt(b) === bunkNum);
                 
                 if (!inList) {
-                    if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - limitUsage bunk not in list [${rule.slice(0,5).join(',')}...]`);
+                    if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - limitUsage: bunk not in allowed list [${rule.slice(0,5).join(',')}...]`);
                     return false;
                 }
             }
-            // If rule is true/false or other format, treat as "all allowed" for this division
+            // If rule is empty array [], true, or any other truthy/falsy value:
+            // Division is in the rules = ALL bunks from this division are allowed
+            if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: limitUsage PASSED - division ${block.divName} allowed`);
         }
 
         // Get slots to check - USE BLOCK'S SLOTS IF AVAILABLE
