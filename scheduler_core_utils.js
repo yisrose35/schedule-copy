@@ -1,11 +1,12 @@
 // ============================================================================
-// scheduler_core_utils.js (FIXED v2)
+// scheduler_core_utils.js (FIXED v3 - WITH DEBUGGING)
 // PART 1 of 3: THE FOUNDATION
 //
 // CRITICAL FIXES:
 // 1. STRICT capacity enforcement (no exceeding max bunks)
 // 2. SAME ACTIVITY requirement when sharing fields
 // 3. Adjacent bunk preference scoring helper
+// 4. DEBUGGING to see why fields are rejected
 // ============================================================================
 
 (function () {
@@ -17,6 +18,9 @@
 
     const TRANSITION_TYPE = "Transition/Buffer";
     window.TRANSITION_TYPE = TRANSITION_TYPE;
+    
+    // DEBUG MODE
+    const DEBUG_FITS = false; // Set to true to see why canBlockFit fails
 
     const Utils = {};
 
@@ -303,7 +307,10 @@
      */
     Utils.canBlockFit = function (block, fieldName, activityProperties, fieldUsageBySlot, actName, forceLeague = false) {
         if (!fieldUsageBySlot) fieldUsageBySlot = window.fieldUsageBySlot || {};
-        if (!fieldName) return false;
+        if (!fieldName) {
+            if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - no field name`);
+            return false;
+        }
 
         const baseProps = {
             available: true,
@@ -313,7 +320,19 @@
             transition: { preMin: 0, postMin: 0, zone: "default", occupiesField: false }
         };
 
-        const props = activityProperties?.[fieldName] || baseProps;
+        const props = activityProperties?.[fieldName];
+        
+        // =================================================================
+        // FIX: If field is not in activityProperties, check if it should be allowed
+        // =================================================================
+        if (!props) {
+            // Field not configured - allow it as a fallback with base props
+            // This helps when fields exist in masterFields but not in activityProperties
+            if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: Using base props (not in activityProperties)`);
+            // Continue with baseProps instead of rejecting
+        }
+        
+        const effectiveProps = props || baseProps;
 
         // Get transition rules
         const rules = Utils.getTransitionRules(fieldName, activityProperties);
@@ -323,31 +342,50 @@
             activityDuration
         } = Utils.getEffectiveTimeRange(block, rules);
 
-        if (activityDuration <= 0 || activityDuration < (rules.minDurationMin || 0))
+        if (activityDuration <= 0 || activityDuration < (rules.minDurationMin || 0)) {
+            if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - duration ${activityDuration}`);
             return false;
+        }
 
         // =================================================================
         // CAPACITY CALCULATION (STRICT)
         // =================================================================
         let maxCapacity = 1;
         
-        if (props.sharableWith?.capacity) {
-            maxCapacity = parseInt(props.sharableWith.capacity) || 1;
-        } else if (props.sharable || props.sharableWith?.type === "all" || props.sharableWith?.type === "custom") {
+        if (effectiveProps.sharableWith?.capacity) {
+            maxCapacity = parseInt(effectiveProps.sharableWith.capacity) || 1;
+        } else if (effectiveProps.sharable || effectiveProps.sharableWith?.type === "all" || effectiveProps.sharableWith?.type === "custom") {
             maxCapacity = 2;
         }
 
         // Basic availability checks
-        if (!props.available) return false;
-        if (props.allowedDivisions?.length && !props.allowedDivisions.includes(block.divName)) return false;
-        if (props.preferences?.enabled && props.preferences.exclusive &&
-            !props.preferences.list.includes(block.divName)) return false;
+        if (effectiveProps.available === false) {
+            if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - not available`);
+            return false;
+        }
+        
+        if (effectiveProps.allowedDivisions?.length && !effectiveProps.allowedDivisions.includes(block.divName)) {
+            if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - division not allowed`);
+            return false;
+        }
+        
+        if (effectiveProps.preferences?.enabled && effectiveProps.preferences.exclusive &&
+            !effectiveProps.preferences.list.includes(block.divName)) {
+            if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - exclusive preference`);
+            return false;
+        }
 
         // LimitUsage check
-        if (props.limitUsage?.enabled) {
-            const rule = props.limitUsage.divisions[block.divName];
-            if (!rule) return false;
-            if (Array.isArray(rule) && !rule.includes(block.bunk)) return false;
+        if (effectiveProps.limitUsage?.enabled) {
+            const rule = effectiveProps.limitUsage.divisions[block.divName];
+            if (!rule) {
+                if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - limitUsage no rule for division`);
+                return false;
+            }
+            if (Array.isArray(rule) && !rule.includes(block.bunk)) {
+                if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - limitUsage bunk not in list`);
+                return false;
+            }
         }
 
         // Get slots to check
@@ -356,6 +394,11 @@
             : Utils.findSlotsForRange(effectiveStart, effectiveEnd);
 
         const uniqueSlots = [...new Set(slots)].sort((a, b) => a - b);
+        
+        if (uniqueSlots.length === 0) {
+            if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - no slots found`);
+            return false;
+        }
 
         // =================================================================
         // CHECK EACH SLOT
@@ -378,7 +421,7 @@
             // FIX #1: STRICT CAPACITY CHECK
             // =================================================================
             if (currentCount >= maxCapacity) {
-                // Field is FULL - reject
+                if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - at capacity (${currentCount}/${maxCapacity})`);
                 return false;
             }
 
@@ -394,14 +437,17 @@
                     
                     if (!activitiesMatch) {
                         // Different activity - reject sharing
-                        console.log(`[SHARING BLOCKED] ${block.bunk} wants ${actName} on ${fieldName}, but existing bunks have: [${[...allActivities].join(', ')}]`);
+                        if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - different activity (${actName} vs [${[...allActivities].join(', ')}])`);
                         return false;
                     }
                 }
             }
 
             // Time availability check
-            if (!Utils.isTimeAvailable(idx, props)) return false;
+            if (!Utils.isTimeAvailable(idx, effectiveProps)) {
+                if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - time not available at slot ${idx}`);
+                return false;
+            }
 
             // Headcount check (sport max capacity)
             const bunkMeta = window.bunkMetaData || Utils._bunkMetaData || {};
@@ -417,11 +463,13 @@
                 const mySize = bunkMeta[block.bunk]?.size || 0;
                 
                 if (currentHeadcount + mySize > maxHeadcount) {
+                    if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - headcount exceeded`);
                     return false;
                 }
             }
         }
 
+        if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: ALLOWED`);
         return true;
     };
 
@@ -544,6 +592,21 @@
             return {};
         }
         return window.loadAndFilterData();
+    };
+    
+    // =================================================================
+    // DEBUG UTILITIES
+    // =================================================================
+    
+    Utils.debugFieldConfig = function(fieldName) {
+        const props = window.activityProperties?.[fieldName];
+        console.log(`=== DEBUG: ${fieldName} ===`);
+        console.log('Properties:', props);
+        console.log('Available:', props?.available);
+        console.log('Sharable:', props?.sharable);
+        console.log('SharableWith:', props?.sharableWith);
+        console.log('TimeRules:', props?.timeRules);
+        console.log('Preferences:', props?.preferences);
     };
 
     window.SchedulerCoreUtils = Utils;
