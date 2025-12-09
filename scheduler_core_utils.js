@@ -19,8 +19,8 @@
     const TRANSITION_TYPE = "Transition/Buffer";
     window.TRANSITION_TYPE = TRANSITION_TYPE;
     
-    // DEBUG MODE
-    const DEBUG_FITS = false; // Set to true to see why canBlockFit fails
+    // DEBUG MODE - Set to true to see why canBlockFit fails
+    const DEBUG_FITS = true; // ENABLED FOR DEBUGGING
 
     const Utils = {};
 
@@ -388,15 +388,39 @@
             }
         }
 
-        // Get slots to check
-        const slots = rules.occupiesField
-            ? Utils.findSlotsForRange(blockStartMin, blockEndMin)
-            : Utils.findSlotsForRange(effectiveStart, effectiveEnd);
-
-        const uniqueSlots = [...new Set(slots)].sort((a, b) => a - b);
+        // Get slots to check - USE BLOCK'S SLOTS IF AVAILABLE
+        let uniqueSlots = [];
+        
+        if (block.slots && block.slots.length > 0) {
+            // Block already has slots defined - use them
+            uniqueSlots = [...new Set(block.slots)].sort((a, b) => a - b);
+        } else {
+            // Calculate slots from time range
+            const slots = rules.occupiesField
+                ? Utils.findSlotsForRange(blockStartMin, blockEndMin)
+                : Utils.findSlotsForRange(effectiveStart, effectiveEnd);
+            uniqueSlots = [...new Set(slots)].sort((a, b) => a - b);
+        }
+        
+        // If still no slots, try a more lenient search
+        if (uniqueSlots.length === 0 && blockStartMin != null) {
+            // Try to find ANY slot that overlaps with our time range
+            if (window.unifiedTimes) {
+                for (let i = 0; i < window.unifiedTimes.length; i++) {
+                    const slot = window.unifiedTimes[i];
+                    const slotStart = new Date(slot.start).getHours() * 60 + new Date(slot.start).getMinutes();
+                    const slotEnd = new Date(slot.end).getHours() * 60 + new Date(slot.end).getMinutes();
+                    
+                    // Check for ANY overlap
+                    if (slotStart < blockEndMin && slotEnd > blockStartMin) {
+                        uniqueSlots.push(i);
+                    }
+                }
+            }
+        }
         
         if (uniqueSlots.length === 0) {
-            if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - no slots found`);
+            if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - no slots found for time ${blockStartMin}-${blockEndMin}`);
             return false;
         }
 
