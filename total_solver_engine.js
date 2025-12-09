@@ -1,12 +1,12 @@
 // ============================================================================
-// total_solver_engine.js (FIXED v3 - WITH DEBUGGING)
+// total_solver_engine.js (FIXED v4)
 // Backtracking Constraint Solver + League Engine
 // ----------------------------------------------------------------------------
-// CRITICAL FIXES:
-// 1. Adjacent bunk preference when sharing fields (10+11 > 10+15)
-// 2. Same activity requirement when sharing (enforced in scoring)
-// 3. Proper capacity respect
-// 4. EXTENSIVE DEBUGGING to find missing fields
+// FIXES:
+// 1. DON'T add sports as fields (Hockey:Hockey is wrong!)
+// 2. Better rejection reason logging
+// 3. Adjacent bunk preference
+// 4. Same activity requirement when sharing
 // ============================================================================
 
 (function () {
@@ -14,9 +14,6 @@
 
     const Solver = {};
     const MAX_MATCHUP_ITERATIONS = 2000;
-    
-    // STRICT MODE - Enforce all constraints
-    const FORCE_FIT_MODE = false; 
     
     // DEBUG MODE - Set to true to see why fields are rejected
     const DEBUG_MODE = true;
@@ -59,7 +56,7 @@
     }
 
     // ============================================================================
-    // PENALTY ENGINE (ENHANCED)
+    // PENALTY ENGINE
     // ============================================================================
 
     function calculatePenaltyCost(block, pick) {
@@ -68,9 +65,7 @@
         const act = pick._activity;
         const fieldName = pick.field;
 
-        // =================================================================
-        // FIX: Use new sharing score from Utils
-        // =================================================================
+        // Use sharing score from Utils
         const sharingScore = window.SchedulerCoreUtils?.calculateSharingScore?.(
             block, 
             fieldName, 
@@ -78,10 +73,9 @@
             act
         ) || 0;
         
-        // Invert: Higher sharing score = lower penalty
         penalty -= sharingScore;
 
-        // Check if field is already at capacity
+        // Check capacity and activity matching
         const schedules = window.scheduleAssignments || {};
         const slots = block.slots || [];
         
@@ -103,7 +97,6 @@
                 }
             }
             
-            // Get capacity
             const props = activityProperties[fieldName] || {};
             let maxCapacity = 1;
             if (props.sharableWith?.capacity) {
@@ -112,28 +105,19 @@
                 maxCapacity = 2;
             }
             
-            // =================================================================
-            // FIX #1: HARD REJECT if at capacity
-            // =================================================================
             if (fieldCount >= maxCapacity) {
-                return 999999; // Impossible placement
+                return 999999;
             }
             
-            // =================================================================
-            // FIX #2: HARD REJECT if different activity on shared field
-            // =================================================================
             if (fieldCount > 0 && existingActivities.size > 0) {
                 const myActivity = (act || '').toLowerCase().trim();
                 if (!existingActivities.has(myActivity)) {
-                    debugLog(`Rejecting ${bunk} ${act} on ${fieldName} - existing activities: [${[...existingActivities].join(', ')}]`);
-                    return 888888; // Different activity - reject
+                    return 888888;
                 }
             }
         }
 
-        // =================================================================
-        // FIX #3: ADJACENT BUNK BONUS
-        // =================================================================
+        // Adjacent bunk bonus
         const myNum = getBunkNumber(bunk);
         if (myNum !== null) {
             for (const slotIdx of slots) {
@@ -147,9 +131,6 @@
                         const otherNum = getBunkNumber(otherBunk);
                         if (otherNum !== null) {
                             const distance = Math.abs(myNum - otherNum);
-                            // Adjacent bunks get bonus, far bunks get penalty
-                            // Distance 1 = -50 penalty (good!)
-                            // Distance 5 = +150 penalty (bad!)
                             penalty += (distance - 1) * 50;
                         }
                     }
@@ -157,7 +138,7 @@
             }
         }
 
-        // NO DOUBLE ACTIVITY (same bunk, same day)
+        // No double activity
         const today = window.scheduleAssignments[bunk] || {};
         let todayCount = 0;
         for (const e of Object.values(today)) {
@@ -169,14 +150,14 @@
         }
         if (!pick._isLeague && todayCount >= 1) penalty += 15000;
 
-        // SPECIAL MAX USAGE
+        // Special max usage
         const specialRule = globalConfig.masterSpecials?.find(s => isSameActivity(s.name, act));
         if (specialRule && specialRule.maxUsage > 0) {
             const hist = globalConfig.historicalCounts?.[bunk]?.[act] || 0;
             if (hist + todayCount >= specialRule.maxUsage) penalty += 20000;
         }
 
-        // FIELD PREFERENCES
+        // Field preferences
         const props = activityProperties[fieldName];
         if (props?.preferences?.enabled) {
             const idx = (props.preferences.list || []).indexOf(block.divName);
@@ -358,22 +339,19 @@
     };
 
     // ============================================================================
-    // MAIN SOLVER (ENHANCED WITH DEBUGGING)
+    // MAIN SOLVER
     // ============================================================================
 
     Solver.sortBlocksByDifficulty = function (blocks, config) {
         const meta = config.bunkMetaData || {};
         return blocks.sort((a, b) => {
-            // Leagues first
             if (a._isLeague && !b._isLeague) return -1;
             if (!a._isLeague && b._isLeague) return 1;
             
-            // Then by bunk number (lower first for better pairing)
             const numA = getBunkNumber(a.bunk) || Infinity;
             const numB = getBunkNumber(b.bunk) || Infinity;
             if (numA !== numB) return numA - numB;
             
-            // Then by size
             const sa = meta[a.bunk]?.size || 0;
             const sb = meta[b.bunk]?.size || 0;
             if (sa !== sb) return sb - sa;
@@ -383,16 +361,35 @@
     };
 
     /**
+     * Known sport names - these should NOT be treated as fields
+     */
+    const KNOWN_SPORTS = new Set([
+        'hockey', 'soccer', 'football', 'baseball', 'kickball', 'basketball',
+        'lineup', 'running bases', 'newcomb', 'volleyball', 'dodgeball',
+        'general activity slot', 'sports slot', 'special activity',
+        'ga slot', 'sport slot', 'free', 'free play'
+    ]);
+
+    /**
+     * Check if something is a sport name (not a field)
+     */
+    function isSportName(name) {
+        if (!name) return false;
+        return KNOWN_SPORTS.has(name.toLowerCase().trim());
+    }
+
+    /**
      * Build all candidate options from multiple sources
+     * FIXED: Don't add sports as fields!
      */
     function buildAllCandidateOptions(config) {
         const options = [];
         const seenKeys = new Set();
         
-        // Source 1: masterFields with activities
         debugLog('=== BUILDING CANDIDATE OPTIONS ===');
         debugLog('masterFields:', config.masterFields?.length || 0);
         
+        // Source 1: masterFields with activities (PRIMARY SOURCE)
         config.masterFields?.forEach(f => {
             debugLog(`  Field: ${f.name}, activities:`, f.activities);
             (f.activities || []).forEach(sport => {
@@ -425,51 +422,19 @@
             }
         });
         
-        // Source 3: activityProperties (fallback - in case fields are defined there but not in masterFields)
-        debugLog('activityProperties keys:', Object.keys(activityProperties).length);
-        for (const [fieldName, props] of Object.entries(activityProperties)) {
-            if (!props.available) continue;
-            
-            // If this field has activities defined
-            if (props.activities && Array.isArray(props.activities)) {
-                props.activities.forEach(sport => {
-                    const key = `${fieldName}|${sport}`;
-                    if (!seenKeys.has(key)) {
-                        debugLog(`  Adding from activityProperties: ${fieldName} -> ${sport}`);
-                        seenKeys.add(key);
-                        options.push({ 
-                            field: fieldName, 
-                            sport, 
-                            activityName: sport, 
-                            type: "sport" 
-                        });
-                    }
-                });
-            }
-            
-            // Also try to add the field itself as an activity if it's not a pure container
-            // This catches fields like "Soccer Cage" that might host multiple sports
-            const key = `${fieldName}|${fieldName}`;
-            if (!seenKeys.has(key) && !fieldName.includes('Gym') && !fieldName.includes('Field')) {
-                // Only if it looks like an activity name
-                debugLog(`  Adding field as activity: ${fieldName}`);
-                seenKeys.add(key);
-                options.push({ 
-                    field: fieldName, 
-                    sport: fieldName, 
-                    activityName: fieldName, 
-                    type: "sport" 
-                });
-            }
-        }
-        
-        // Source 4: fieldsBySport from loadAndFilterData
+        // Source 3: fieldsBySport from loadAndFilterData
         const loadedData = window.SchedulerCoreUtils?.loadAndFilterData?.() || {};
         const fieldsBySport = loadedData.fieldsBySport || {};
         
         debugLog('fieldsBySport:', Object.keys(fieldsBySport));
         for (const [sport, fields] of Object.entries(fieldsBySport)) {
             (fields || []).forEach(fieldName => {
+                // Skip if this "field" is actually a sport name
+                if (isSportName(fieldName)) {
+                    debugLog(`  SKIPPING sport-as-field: ${fieldName}`);
+                    return;
+                }
+                
                 const key = `${fieldName}|${sport}`;
                 if (!seenKeys.has(key)) {
                     debugLog(`  Adding from fieldsBySport: ${fieldName} -> ${sport}`);
@@ -484,10 +449,74 @@
             });
         }
         
+        // DO NOT add activityProperties entries as fields - they're often sports not fields!
+        // The masterFields is the authoritative source for field->activity mappings
+        
         debugLog('=== TOTAL CANDIDATE OPTIONS:', options.length, '===');
         debugLog('Options:', options.map(o => `${o.field}:${o.activityName}`).join(', '));
         
         return options;
+    }
+
+    /**
+     * Debug why a specific field is rejected for a block
+     */
+    function debugRejection(block, fieldName, actName) {
+        const props = activityProperties[fieldName];
+        
+        if (!props) {
+            return `No activityProperties for "${fieldName}"`;
+        }
+        
+        if (props.available === false) {
+            return `Field marked unavailable`;
+        }
+        
+        // Check time rules
+        if (props.timeRules && props.timeRules.length > 0) {
+            const blockStart = block.startTime;
+            const blockEnd = block.endTime;
+            
+            // Check if any Available rule covers this time
+            const availableRules = props.timeRules.filter(r => r.type === "Available");
+            if (availableRules.length > 0) {
+                let covered = false;
+                for (const rule of availableRules) {
+                    const ruleStart = window.SchedulerCoreUtils?.parseTimeToMinutes(rule.start) || rule.startMin;
+                    const ruleEnd = window.SchedulerCoreUtils?.parseTimeToMinutes(rule.end) || rule.endMin;
+                    if (blockStart >= ruleStart && blockEnd <= ruleEnd) {
+                        covered = true;
+                        break;
+                    }
+                }
+                if (!covered) {
+                    return `Time ${blockStart}-${blockEnd} not in Available rules (${availableRules.map(r => `${r.start || r.startMin}-${r.end || r.endMin}`).join(', ')})`;
+                }
+            }
+            
+            // Check Unavailable rules
+            const unavailableRules = props.timeRules.filter(r => r.type === "Unavailable");
+            for (const rule of unavailableRules) {
+                const ruleStart = window.SchedulerCoreUtils?.parseTimeToMinutes(rule.start) || rule.startMin;
+                const ruleEnd = window.SchedulerCoreUtils?.parseTimeToMinutes(rule.end) || rule.endMin;
+                if (blockStart < ruleEnd && blockEnd > ruleStart) {
+                    return `Time ${blockStart}-${blockEnd} blocked by Unavailable rule ${ruleStart}-${ruleEnd}`;
+                }
+            }
+        }
+        
+        // Check division restrictions
+        if (props.allowedDivisions?.length && !props.allowedDivisions.includes(block.divName)) {
+            return `Division "${block.divName}" not in allowedDivisions: [${props.allowedDivisions.join(', ')}]`;
+        }
+        
+        if (props.preferences?.enabled && props.preferences.exclusive) {
+            if (!props.preferences.list.includes(block.divName)) {
+                return `Division "${block.divName}" not in exclusive preference list`;
+            }
+        }
+        
+        return `Unknown (canBlockFit returned false)`;
     }
 
     Solver.getValidActivityPicks = function (block) {
@@ -495,7 +524,6 @@
         const rejectionReasons = {};
         
         for (const cand of allCandidateOptions) {
-            // Use the new strict canBlockFit with activity name
             const fits = window.SchedulerCoreUtils.canBlockFit(
                 block, 
                 cand.field, 
@@ -513,22 +541,26 @@
                 };
                 const cost = calculatePenaltyCost(block, pick);
                 
-                // Skip impossible placements
                 if (cost < 500000) {
                     picks.push({ pick, cost });
                 } else {
                     rejectionReasons[`${cand.field}:${cand.activityName}`] = `High penalty: ${cost}`;
                 }
             } else {
-                rejectionReasons[`${cand.field}:${cand.activityName}`] = 'canBlockFit=false';
+                // Get detailed rejection reason
+                rejectionReasons[`${cand.field}:${cand.activityName}`] = debugRejection(block, cand.field, cand.activityName);
             }
         }
         
-        // DEBUG: Log rejections for this block if we have very few picks
+        // DEBUG: Log rejections for blocks with few picks
         if (picks.length < 3 && DEBUG_MODE) {
-            debugLog(`Block ${block.bunk} at ${block.startTime} has only ${picks.length} valid picks`);
-            debugLog(`  Valid picks: ${picks.map(p => `${p.pick.field}:${p.pick._activity}`).join(', ')}`);
-            debugLog(`  Sample rejections:`, Object.entries(rejectionReasons).slice(0, 5));
+            debugLog(`\n⚠️ Block ${block.bunk} at time ${block.startTime} (${Math.floor(block.startTime/60)}:${String(block.startTime%60).padStart(2,'0')}) has only ${picks.length} valid picks`);
+            debugLog(`  Division: ${block.divName}`);
+            debugLog(`  Valid picks: ${picks.map(p => `${p.pick.field}:${p.pick._activity}`).join(', ') || 'NONE'}`);
+            debugLog(`  Sample rejections:`);
+            Object.entries(rejectionReasons).slice(0, 10).forEach(([key, reason]) => {
+                debugLog(`    - ${key}: ${reason}`);
+            });
         }
         
         // Always have Free as fallback
@@ -556,7 +588,6 @@
             }
         }
         
-        // Also remove from fieldUsageBySlot
         if (window.fieldUsageBySlot && res.pick) {
             const fieldName = res.pick.field;
             for (const slotIdx of slots) {
@@ -580,21 +611,17 @@
         let iterations = 0;
         const SAFETY_LIMIT = 100000;
 
-        // Build candidate options from ALL sources
+        // Build candidate options (FIXED - no sports as fields)
         allCandidateOptions = buildAllCandidateOptions(config);
         
-        // If we still have no options, something is very wrong
         if (allCandidateOptions.length === 0) {
-            console.error('[SOLVER] NO CANDIDATE OPTIONS BUILT! Check masterFields and activityProperties.');
-            console.error('  config.masterFields:', config.masterFields);
-            console.error('  activityProperties keys:', Object.keys(activityProperties));
+            console.error('[SOLVER] NO CANDIDATE OPTIONS BUILT!');
         }
 
         if (!window.leagueRoundState) window.leagueRoundState = {};
         if (!globalConfig.rotationHistory) globalConfig.rotationHistory = {};
         if (!globalConfig.rotationHistory.leagues) globalConfig.rotationHistory.leagues = {};
 
-        // Sort blocks - IMPORTANT: Process by bunk number for better pairing
         const sorted = Solver.sortBlocksByDifficulty(allBlocks, config);
         const leagueBlocks = sorted.filter(b => b._isLeague);
         const activityBlocks = sorted.filter(b => !b._isLeague);
@@ -620,10 +647,9 @@
 
             const block = activityBlocks[idx];
             
-            // Get valid picks and sort by cost (lower is better)
             const picks = Solver.getValidActivityPicks(block)
                 .sort((a, b) => a.cost - b.cost)
-                .slice(0, 10); // Try top 10 options
+                .slice(0, 10);
 
             for (const p of picks) {
                 const res = Solver.applyTentativePick(block, p);
@@ -650,7 +676,6 @@
             const solvedBlocksSet = new Set(bestSchedule.map(s => s.block));
             const missingBlocks = activityBlocks.filter(b => !solvedBlocksSet.has(b));
             
-            // Fill missing with Free
             const fallback = [
                 ...bestSchedule,
                 ...missingBlocks.map(b => ({ 
@@ -670,35 +695,33 @@
     };
     
     // ============================================================================
-    // DEBUG UTILITIES - Call from console to diagnose issues
+    // DEBUG UTILITIES
     // ============================================================================
     
-    Solver.debugFieldAvailability = function() {
-        console.log('=== FIELD AVAILABILITY DEBUG ===');
-        console.log('activityProperties:', activityProperties);
-        console.log('allCandidateOptions:', allCandidateOptions);
+    Solver.debugTimeRules = function(fieldName) {
+        const props = activityProperties[fieldName];
+        console.log(`=== TIME RULES FOR: ${fieldName} ===`);
+        console.log('Props:', props);
+        console.log('TimeRules:', props?.timeRules);
         
-        // Test a sample block
-        const testBlock = {
-            bunk: 'Test',
-            divName: 'Test Division',
-            startTime: 660, // 11:00 AM
-            endTime: 720,   // 12:00 PM
-            slots: [0, 1]
-        };
-        
-        console.log('Testing field availability for sample block:', testBlock);
-        
-        for (const cand of allCandidateOptions) {
-            const fits = window.SchedulerCoreUtils?.canBlockFit?.(
-                testBlock, 
-                cand.field, 
-                activityProperties, 
-                window.fieldUsageBySlot || {},
-                cand.activityName,
-                false
-            );
-            console.log(`  ${cand.field} (${cand.activityName}): ${fits ? 'AVAILABLE' : 'BLOCKED'}`);
+        if (props?.timeRules) {
+            props.timeRules.forEach((rule, i) => {
+                const startMin = window.SchedulerCoreUtils?.parseTimeToMinutes(rule.start) || rule.startMin;
+                const endMin = window.SchedulerCoreUtils?.parseTimeToMinutes(rule.end) || rule.endMin;
+                console.log(`  Rule ${i}: ${rule.type} ${startMin}-${endMin} (${rule.start}-${rule.end})`);
+            });
+        }
+    };
+    
+    Solver.debugAllTimeRules = function() {
+        console.log('=== ALL FIELD TIME RULES ===');
+        for (const [fieldName, props] of Object.entries(activityProperties)) {
+            if (props.timeRules && props.timeRules.length > 0) {
+                console.log(`${fieldName}:`);
+                props.timeRules.forEach((rule, i) => {
+                    console.log(`  ${rule.type}: ${rule.start || rule.startMin} - ${rule.end || rule.endMin}`);
+                });
+            }
         }
     };
 
