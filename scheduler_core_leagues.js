@@ -1,11 +1,12 @@
 // ============================================================================
-// scheduler_core_leagues.js (COMPLETE - With Strict Field Restrictions)
+// scheduler_core_leagues.js (COMPLETE - With Concurrency Fix)
 // 
 // FIXES APPLIED:
 // 1. League teams independent of bunks ✅
 // 2. Multi-division leagues work correctly ✅
-// 3. Field restrictions respected (STRICT MODE ADDED) ✅
-//    - Now verifies individual matchups against field constraints
+// 3. Field restrictions respected (Strict Mode) ✅
+// 4. FIX: Prevents "Double Booking" inside the same loop (New) ✅
+//    - Tracks fields assigned within the current calculation cycle
 // ============================================================================
 
 (function () {
@@ -20,7 +21,6 @@
     function getDivisionForTeam(teamName, context) {
         if (!context.divisions) return null;
         for (const [divName, data] of Object.entries(context.divisions)) {
-            // Check if team is in the explicit team list of the division
             if (data.teams && data.teams.includes(teamName)) {
                 return divName;
             }
@@ -29,12 +29,10 @@
     }
 
     // =========================================================================
-    // FIELD RESOLUTION (UPDATED)
+    // FIELD RESOLUTION
     // =========================================================================
     
-    // Updated to accept a 'requireAll' flag for strict checking
     function getFieldsForSport(sportName, context, divisionNames = [], requireAll = false) {
-        // Get base fields for this sport
         let candidateFields = [];
         
         if (context.fieldsBySport && context.fieldsBySport[sportName]) {
@@ -61,59 +59,29 @@
         return candidateFields;
     }
 
-    // ✅ NEW: Check if field is allowed for specific divisions
-    // requireAll: If true, ALL divisions in divisionNames must be allowed on the field.
-    //             If false, only ONE of the divisions needs to be allowed.
     function isFieldAllowedForDivisions(fieldName, divisionNames, context, requireAll = false) {
         const allFields = context.fields || [];
         const field = allFields.find(f => f.name === fieldName);
         
-        if (!field) {
-            console.warn(`⚠️ Field "${fieldName}" not found in context`);
-            return false;
-        }
+        if (!field) return false;
+        if (field.available === false) return false;
 
-        // Check if field is available at all
-        if (field.available === false) {
-            return false;
-        }
-
-        // Check field restrictions (limitUsage)
         const limitUsage = field.limitUsage || { enabled: false };
-        
-        // If no restrictions, field is available to all
-        if (!limitUsage.enabled) {
-            return true;
-        }
+        if (!limitUsage.enabled) return true;
 
-        // If restrictions enabled, check against allowed divisions
         const allowedDivisions = Object.keys(limitUsage.divisions || {});
         
         if (requireAll) {
-            // STRICT MODE: Every division passed must be allowed
-            const allAllowed = divisionNames.every(divName => 
-                allowedDivisions.includes(divName)
-            );
-            if (!allAllowed) {
-                // console.log(`   🚫 Field "${fieldName}" rejected (Strict Mode). Needs: [${divisionNames}], Allowed: [${allowedDivisions}]`);
-                return false;
-            }
-            return true;
+            // STRICT: Must be allowed for ALL listed divisions
+            return divisionNames.every(divName => allowedDivisions.includes(divName));
         } else {
-            // LOOSE MODE: At least one division must be allowed
-            const hasAllowedDivision = divisionNames.some(divName => 
-                allowedDivisions.includes(divName)
-            );
-            if (!hasAllowedDivision) {
-                return false;
-            }
-            return true;
+            // LOOSE: Must be allowed for AT LEAST ONE division
+            return divisionNames.some(divName => allowedDivisions.includes(divName));
         }
     }
 
     function canFieldHostLeague(fieldName, block, context) {
         const { activityProperties, fieldUsageBySlot } = context;
-        
         return window.SchedulerCoreUtils.canLeagueGameFit(
             block,
             fieldName,
@@ -138,22 +106,17 @@
 
         for (let round = 0; round < rounds; round++) {
             const roundMatches = [];
-            
             for (let i = 0; i < workingTeams.length / 2; i++) {
                 const home = workingTeams[i];
                 const away = workingTeams[workingTeams.length - 1 - i];
-                
                 if (home !== 'BYE' && away !== 'BYE') {
                     roundMatches.push([home, away]);
                 }
             }
-            
             schedule.push(roundMatches);
-            
             const last = workingTeams.pop();
             workingTeams.splice(1, 0, last);
         }
-
         return schedule;
     }
 
@@ -166,44 +129,31 @@
     function getMatchupsForLeague(league, context) {
         const teams = league.teams || [];
         if (teams.length < 2) return [];
-
         const fullSchedule = generateRoundRobinSchedule(teams);
         const roundIndex = getCurrentRoundIndex(league.name, context);
-        
         return fullSchedule[roundIndex % fullSchedule.length] || [];
     }
 
     // =========================================================================
-    // SPECIALTY LEAGUES (UPDATED)
+    // SPECIALTY LEAGUES
     // =========================================================================
 
     Leagues.processSpecialtyLeagues = function (context) {
         console.log("=== SPECIALTY LEAGUE ENGINE START ===");
         
         const { 
-            schedulableSlotBlocks, 
-            masterSpecialtyLeagues, 
-            disabledSpecialtyLeagues,
-            activityProperties,
-            fieldUsageBySlot,
-            fillBlock,
-            divisions
+            schedulableSlotBlocks, masterSpecialtyLeagues, disabledSpecialtyLeagues,
+            activityProperties, fieldUsageBySlot, fillBlock
         } = context;
 
-        if (!masterSpecialtyLeagues || Object.keys(masterSpecialtyLeagues).length === 0) {
-            console.log("No specialty leagues configured.");
-            return;
-        }
+        if (!masterSpecialtyLeagues) return;
 
         const blocksByDivisionTime = {};
-        
         schedulableSlotBlocks
             .filter(b => b.type === 'specialty_league')
             .forEach(block => {
                 const key = `${block.divName}_${block.startTime}`;
-                if (!blocksByDivisionTime[key]) {
-                    blocksByDivisionTime[key] = [];
-                }
+                if (!blocksByDivisionTime[key]) blocksByDivisionTime[key] = [];
                 blocksByDivisionTime[key].push(block);
             });
 
@@ -216,47 +166,28 @@
                 return true;
             });
 
-            if (!league) {
-                console.log(`⚠️ No specialty league for ${divName} at ${startTime}`);
-                continue;
-            }
-
-            console.log(`\n📋 Specialty League: "${league.name}" (${divName})`);
+            if (!league) continue;
 
             const matchups = getMatchupsForLeague(league, context);
-            if (matchups.length === 0) {
-                console.log(`   No matchups for ${league.name}`);
-                continue;
-            }
-
             const leagueSport = league.sport || (league.sports && league.sports[0]) || "General";
-            
-            // ✅ FIXED: Pass requireAll = true for strict checking
             const availableFields = getFieldsForSport(leagueSport, context, [divName], true);
 
-            console.log(`   Sport: ${leagueSport}`);
-            console.log(`   Available fields: [${availableFields.join(", ")}]`);
-            console.log(`   Matchups: ${matchups.length}, Blocks: ${blocks.length}`);
-
-            if (availableFields.length === 0) {
-                console.log(`   ⚠️ No fields available for ${leagueSport} in division ${divName}`);
-                continue;
-            }
-
             const matchupAssignments = [];
+            const reservedFieldsThisSlot = new Set(); // ✅ Prevent double booking
             let fieldIdx = 0;
 
-            matchups.forEach((matchup, idx) => {
+            matchups.forEach((matchup) => {
                 const [team1, team2] = matchup;
-                
                 let assignedField = null;
                 const testBlock = blocks[0];
                 
                 for (let i = 0; i < availableFields.length; i++) {
                     const testField = availableFields[(fieldIdx + i) % availableFields.length];
                     
-                    if (canFieldHostLeague(testField, testBlock, context)) {
+                    // Check global usage AND local usage
+                    if (!reservedFieldsThisSlot.has(testField) && canFieldHostLeague(testField, testBlock, context)) {
                         assignedField = testField;
+                        reservedFieldsThisSlot.add(testField); // ✅ Mark as used immediately
                         fieldIdx = (fieldIdx + i + 1) % availableFields.length;
                         break;
                     }
@@ -268,9 +199,6 @@
                         field: assignedField,
                         sport: leagueSport
                     });
-                    console.log(`   ✅ ${team1} vs ${team2} @ ${assignedField}`);
-                } else {
-                    console.log(`   ❌ Could not assign field for ${team1} vs ${team2}`);
                 }
             });
 
@@ -281,57 +209,36 @@
                     _activity: `Specialty League: ${league.name}`,
                     _h2h: true,
                     _fixed: true,
-                    _allMatchups: matchupAssignments.map(m => 
-                        `${m.matchup} @ ${m.field} (${m.sport})`
-                    ),
+                    _allMatchups: matchupAssignments.map(m => `${m.matchup} @ ${m.field} (${m.sport})`),
                     _gameLabel: `Specialty League`
                 };
-
                 fillBlock(block, pick, fieldUsageBySlot, {}, true, activityProperties);
                 block.processed = true;
             });
         }
-
-        console.log("=== SPECIALTY LEAGUE ENGINE COMPLETE ===");
     };
 
     // =========================================================================
-    // REGULAR LEAGUES (UPDATED WITH STRICT MATCHUP VALIDATION)
+    // REGULAR LEAGUES (UPDATED)
     // =========================================================================
 
     Leagues.processRegularLeagues = function (context) {
         console.log("=== UNIFIED LEAGUE ENGINE START ===");
         
         const { 
-            schedulableSlotBlocks, 
-            masterLeagues, 
-            disabledLeagues,
-            divisions,
-            fillBlock,
-            fieldUsageBySlot,
-            activityProperties,
-            rotationHistory
+            schedulableSlotBlocks, masterLeagues, disabledLeagues,
+            fillBlock, fieldUsageBySlot, activityProperties, rotationHistory
         } = context;
 
-        if (!masterLeagues || Object.keys(masterLeagues).length === 0) {
-            console.log("No regular leagues configured.");
-            return;
-        }
+        if (!masterLeagues) return;
 
         const blocksByTime = {};
-        
         schedulableSlotBlocks
             .filter(b => b.type === 'league' || /league/i.test(b.event))
             .forEach(block => {
                 const key = block.startTime;
-                if (!blocksByTime[key]) {
-                    blocksByTime[key] = { byDivision: {}, allBlocks: [] };
-                }
-                
-                if (!blocksByTime[key].byDivision[block.divName]) {
-                    blocksByTime[key].byDivision[block.divName] = [];
-                }
-                
+                if (!blocksByTime[key]) blocksByTime[key] = { byDivision: {}, allBlocks: [] };
+                if (!blocksByTime[key].byDivision[block.divName]) blocksByTime[key].byDivision[block.divName] = [];
                 blocksByTime[key].byDivision[block.divName].push(block);
                 blocksByTime[key].allBlocks.push(block);
             });
@@ -346,46 +253,17 @@
                 return divisionNames.some(div => l.divisions.includes(div));
             });
 
-            if (!league) {
-                console.log(`⚠️ No league for divisions [${divisionNames.join(", ")}] at ${timeKey}`);
-                continue;
-            }
-
-            console.log(`\n📋 League: "${league.name}" (${divisionNames.join(", ")})`);
-
-            const leagueTeams = league.teams || [];
-            if (leagueTeams.length < 2) {
-                console.log(`   ⚠️ Not enough teams in league`);
-                continue;
-            }
+            if (!league) continue;
 
             const matchups = getMatchupsForLeague(league, context);
-            if (matchups.length === 0) {
-                console.log(`   No matchups available`);
-                continue;
-            }
+            if (matchups.length === 0) continue;
 
             const leagueSports = league.sports || ["General Sport"];
-            
-            // 1. GATHER POOL (LOOSE): Get all fields valid for ANY division involved.
-            // We use requireAll=false here so we don't accidentally return empty if 
-            // Div A has Field A and Div B has Field B.
-            const allAvailableFields = new Set();
-            leagueSports.forEach(sport => {
-                const fields = getFieldsForSport(sport, context, divisionNames, false);
-                fields.forEach(f => allAvailableFields.add(f));
-            });
-
-            const availableFieldsArray = Array.from(allAvailableFields);
-            
-            console.log(`   Total Pool Fields: ${availableFieldsArray.length} [${availableFieldsArray.join(", ")}]`);
-
-            if (availableFieldsArray.length === 0) {
-                console.log(`   🚨 No fields available for divisions [${divisionNames.join(", ")}]!`);
-                continue;
-            }
-
             const matchupAssignments = [];
+            
+            // ✅ KEY FIX: Local Reservation Set for this time slot
+            const reservedFieldsThisSlot = new Set(); 
+            
             let globalFieldIdx = 0;
             const gameNumber = getCurrentRoundIndex(league.name, context) + 1;
 
@@ -393,7 +271,7 @@
                 const [team1, team2] = matchup;
                 const selectedSport = leagueSports[idx % leagueSports.length];
                 
-                // ✅ CRITICAL: Determine divisions for these specific teams
+                // Determine divisions for these specific teams
                 const div1 = getDivisionForTeam(team1, context);
                 const div2 = getDivisionForTeam(team2, context);
                 
@@ -404,20 +282,19 @@
                 // If lookup fails, fallback to general league divisions
                 const divsToCheck = gameDivisions.length > 0 ? gameDivisions : divisionNames;
 
-                // ✅ CRITICAL: Get fields for this sport, strictly for THESE divisions
-                // We pass requireAll=true to ensure the field supports both teams (if cross-div) or the specific team's div
+                // Get fields strictly for THESE divisions
                 const validFieldsForGame = getFieldsForSport(selectedSport, context, divsToCheck, true);
 
                 let assignedField = null;
-                const testBlock = timeData.allBlocks[0]; // Use first block to check time slot availability
+                const testBlock = timeData.allBlocks[0]; 
                 
-                // Try to find a field from the valid, strict list
                 for (let i = 0; i < validFieldsForGame.length; i++) {
                     const testField = validFieldsForGame[(globalFieldIdx + i) % validFieldsForGame.length];
                     
-                    if (canFieldHostLeague(testField, testBlock, context)) {
+                    // ✅ CHECK RESERVED SET
+                    if (!reservedFieldsThisSlot.has(testField) && canFieldHostLeague(testField, testBlock, context)) {
                         assignedField = testField;
-                        // Increment global index based on pool position to rotate usage
+                        reservedFieldsThisSlot.add(testField); // ✅ RESERVE IMMEDIATELY
                         globalFieldIdx = (globalFieldIdx + 1); 
                         break;
                     }
@@ -430,7 +307,7 @@
                         sport: selectedSport
                     });
                     
-                    console.log(`   ✅ ${team1} (${div1||'?'}) vs ${team2} (${div2||'?'}) @ ${assignedField} (${selectedSport})`);
+                    console.log(`   ✅ ${team1} vs ${team2} @ ${assignedField} (${selectedSport})`);
 
                     if (rotationHistory && rotationHistory.leagues) {
                         const key = [team1, team2].sort().join("|");
@@ -445,14 +322,13 @@
                         });
                     }
                 } else {
-                    console.log(`   ❌ No valid field for ${team1} vs ${team2} (Restricted to: ${divsToCheck.join(", ")})`);
+                    console.log(`   ❌ No valid field for ${team1} vs ${team2}`);
                 }
             });
 
-            // Assign the computed matchups to the blocks
+            // Assign to blocks
             divisionNames.forEach(divName => {
                 const blocksForDiv = timeData.byDivision[divName];
-                
                 blocksForDiv.forEach(block => {
                     const pick = {
                         field: `League: ${league.name}`,
@@ -465,7 +341,6 @@
                         ),
                         _gameLabel: `Game ${gameNumber}`
                     };
-
                     fillBlock(block, pick, fieldUsageBySlot, {}, true, activityProperties);
                     block.processed = true;
                 });
@@ -477,42 +352,8 @@
             }
             window.leagueRoundState[league.name].currentRound++;
         }
-
+        
         console.log("=== UNIFIED LEAGUE ENGINE COMPLETE ===");
-    };
-
-    // =========================================================================
-    // DIAGNOSTIC TOOL
-    // =========================================================================
-    
-    window.checkFieldRestrictions = function() {
-        console.log("\n=== FIELD RESTRICTION DIAGNOSTIC ===");
-        
-        const fields = window.loadGlobalSettings?.().app1?.fields || [];
-        const divisions = window.divisions || {};
-        
-        fields.forEach(field => {
-            console.log(`\n🏟️  ${field.name}:`);
-            console.log(`   Available: ${field.available !== false}`);
-            console.log(`   Activities: [${(field.activities || []).join(", ")}]`);
-            
-            const limitUsage = field.limitUsage || { enabled: false };
-            
-            if (!limitUsage.enabled) {
-                console.log(`   ✅ No restrictions - available to ALL divisions`);
-            } else {
-                const allowedDivisions = Object.keys(limitUsage.divisions || {});
-                console.log(`   🚫 RESTRICTED to divisions: [${allowedDivisions.join(", ")}]`);
-                
-                const allDivisions = Object.keys(divisions);
-                const blockedDivisions = allDivisions.filter(d => !allowedDivisions.includes(d));
-                if (blockedDivisions.length > 0) {
-                    console.log(`   ❌ BLOCKED for: [${blockedDivisions.join(", ")}]`);
-                }
-            }
-        });
-        
-        console.log("\n=== END DIAGNOSTIC ===\n");
     };
 
     // Export
