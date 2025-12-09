@@ -475,6 +475,9 @@
                     return;
                 }
 
+                const requiredFieldCount = matchups.length;
+                const leagueSports = league.sports || ["General Sport"];
+
                 // ✅ NEW: Get ALL available fields first (with division restrictions and occupation filtering)
                 const allAvailableFieldsAtTime = new Set();
                 const sportToFieldsMap = {};  // Track which sports have fields
