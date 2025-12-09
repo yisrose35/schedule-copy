@@ -1,8 +1,8 @@
 // =================================================================
-// daily_adjustments.js  (UPDATED for CAPACITY FIX)
-// - Disabled "applySmartTileOverridesForToday" pre-processing.
-// - Smart Tiles are now passed to the Core Optimizer (scheduler_logic_core.js).
-// - This ensures Global Capacity (Max 2 per field) is respected across divisions.
+// daily_adjustments.js  (UPDATED - FIELD RESERVATION FEATURE)
+// - Added reservedFields property to pinned/custom tiles
+// - When placing a pinned tile, user is asked which fields it uses
+// - Scheduler will block reserved fields during those times
 // =================================================================
 
 (function() {
@@ -107,6 +107,54 @@ function mapEventNameForOptimizer(name) {
         return { type: 'pinned', event: name };
 
     return { type: 'pinned', event: name };
+}
+
+// =================================================================
+// NEW: Field Selection Helper for Reserved Fields
+// =================================================================
+function promptForReservedFields(eventName) {
+  const allFields = (masterSettings.app1.fields || []).map(f => f.name);
+  const specialActivities = (masterSettings.app1.specialActivities || []).map(s => s.name);
+  
+  // Combine fields and special activities as potential "locations"
+  const allLocations = [...new Set([...allFields, ...specialActivities])].sort();
+  
+  if (allLocations.length === 0) {
+    return []; // No fields configured
+  }
+  
+  const fieldInput = prompt(
+    `Which field(s) will "${eventName}" use?\n\n` +
+    `This reserves the field so the scheduler won't assign it to other bunks.\n\n` +
+    `Available fields:\n${allLocations.join(', ')}\n\n` +
+    `Enter field names separated by commas (or leave blank if none):`,
+    ''
+  );
+  
+  if (!fieldInput || !fieldInput.trim()) {
+    return [];
+  }
+  
+  // Parse and validate field names
+  const requested = fieldInput.split(',').map(f => f.trim()).filter(Boolean);
+  const validated = [];
+  const invalid = [];
+  
+  requested.forEach(name => {
+    // Try to match (case-insensitive)
+    const match = allLocations.find(loc => loc.toLowerCase() === name.toLowerCase());
+    if (match) {
+      validated.push(match);
+    } else {
+      invalid.push(name);
+    }
+  });
+  
+  if (invalid.length > 0) {
+    alert(`Warning: These fields were not found and will be ignored:\n${invalid.join(', ')}`);
+  }
+  
+  return validated;
 }
 
 
@@ -443,15 +491,59 @@ function addDropListeners(gridContainer) {
           endTime
         };
 
-      // --- Pinned tiles ---
+      // --- Pinned tiles (WITH FIELD RESERVATION) ---
       } else if (['lunch','snacks','custom','dismissal','swim'].includes(tileData.type)) {
         eventType = 'pinned';
+        let reservedFields = [];
+        
         if (tileData.type === 'custom') {
-          eventName = prompt("Enter the name for this custom pinned event (e.g., 'Regroup' or 'Assembly'):");
+          eventName = prompt("Enter the name for this custom pinned event (e.g., 'Regroup' or 'Special with R. Rosenfeld'):");
           if (!eventName) return;
+          
+          // NEW: Ask for reserved fields for custom events
+          reservedFields = promptForReservedFields(eventName);
         } else {
           eventName = tileData.name;
+          
+          // For swim, we might want to reserve the pool
+          if (tileData.type === 'swim') {
+            // Optionally ask - or auto-reserve "Swim" if it exists
+            const swimField = (masterSettings.app1.fields || []).find(f => 
+              f.name.toLowerCase().includes('swim') || f.name.toLowerCase().includes('pool')
+            );
+            if (swimField) {
+              reservedFields = [swimField.name];
+            }
+          }
         }
+        
+        // Create the pinned event with reserved fields
+        let startTime, endTime, startMin, endMin;
+        while (true) {
+          startTime = prompt(`Add "${eventName}" for ${divName}?\nEnter Start Time:`, defaultStartTime);
+          if (!startTime) return;
+          startMin = validateTime(startTime, true);
+          if (startMin !== null) break;
+        }
+        while (true) {
+          endTime = prompt(`Enter End Time:`);
+          if (!endTime) return;
+          endMin = validateTime(endTime, false);
+          if (endMin !== null) {
+            if (endMin <= startMin) alert("End time must be after start time.");
+            else break;
+          }
+        }
+
+        newEvent = {
+          id: `evt_${Math.random().toString(36).slice(2, 9)}`,
+          type: eventType,
+          event: eventName,
+          division: divName,
+          startTime: startTime,
+          endTime: endTime,
+          reservedFields: reservedFields  // NEW: Store reserved fields
+        };
       }
 
       // Standard single-event fallback (Activity / Sports / Special / generic slot)
@@ -535,6 +627,12 @@ function renderEventTile(event, top, height) {
   }
 
   let innerHtml = `<strong>${event.event}</strong><br><div style="font-size:.85em;">${event.startTime} - ${event.endTime}</div>`;
+  
+  // NEW: Show reserved fields if any
+  if (event.reservedFields && event.reservedFields.length > 0) {
+    innerHtml += `<div style="font-size:0.7em;color:#c62828;margin-top:2px;">📍 ${event.reservedFields.join(', ')}</div>`;
+  }
+  
   if (event.type === 'smart' && event.smartData) {
     innerHtml += `<div style="font-size:0.75em;border-top:1px dotted #01579b;margin-top:2px;padding-top:1px;">F: ${event.smartData.fallbackActivity} (if ${event.smartData.fallbackFor.substring(0,4)}. busy)</div>`;
   }
