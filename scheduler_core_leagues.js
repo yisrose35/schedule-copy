@@ -1,39 +1,29 @@
 // ============================================================================
-// scheduler_core_leagues.js (FIXED - Field Visibility Bug)
-// PART 2 of 3: LEAGUE PROCESSOR
-//
-// CRITICAL FIX:
-// - Properly accesses fields from context.fields (not window.app1.fields)
-// - Uses fieldsBySport mapping for sport-to-field resolution
-// - Correctly filters available fields before league assignment
+// scheduler_core_leagues.js (COMPLETE REWRITE - Teams ≠ Bunks)
+// 
+// CRITICAL CHANGES:
+// 1. League teams are independent entities (not tied to bunk names)
+// 2. Multi-division leagues show same matchups to all divisions
+// 3. Schedule displays all matchups with field/sport information
 // ============================================================================
 
 (function () {
     'use strict';
 
     const Leagues = {};
-    const LEAGUE_WEIGHT = 2; // Leagues take 2x capacity (buyout mode)
+    const LEAGUE_WEIGHT = 2;
 
     // =========================================================================
-    // FIELD RESOLUTION - FIXED
+    // FIELD RESOLUTION
     // =========================================================================
     
-    /**
-     * Get available fields for a sport (FIXED VERSION)
-     * Previously: Accessed window.app1.fields directly (WRONG)
-     * Now: Uses context.fields and context.fieldsBySport (CORRECT)
-     */
     function getFieldsForSport(sportName, context) {
-        // Method 1: Use fieldsBySport mapping (preferred)
         if (context.fieldsBySport && context.fieldsBySport[sportName]) {
             const mappedFields = context.fieldsBySport[sportName];
-            
-            // Filter out disabled fields
             const disabledFields = context.disabledFields || [];
             return mappedFields.filter(f => !disabledFields.includes(f));
         }
 
-        // Method 2: Fallback - scan all fields for this sport
         const allFields = context.fields || [];
         const disabledFields = context.disabledFields || [];
         
@@ -43,21 +33,15 @@
             .map(f => f.name);
     }
 
-    /**
-     * Check if a field can accommodate a league game at a specific time
-     */
     function canFieldHostLeague(fieldName, block, context) {
         const { activityProperties, fieldUsageBySlot } = context;
         
-        // Check field availability using Utils
-        const canFit = window.SchedulerCoreUtils.canLeagueGameFit(
+        return window.SchedulerCoreUtils.canLeagueGameFit(
             block,
             fieldName,
             fieldUsageBySlot,
             activityProperties
         );
-
-        return canFit;
     }
 
     // =========================================================================
@@ -88,7 +72,6 @@
             
             schedule.push(roundMatches);
             
-            // Rotate (keep first team fixed)
             const last = workingTeams.pop();
             workingTeams.splice(1, 0, last);
         }
@@ -125,7 +108,8 @@
             disabledSpecialtyLeagues,
             activityProperties,
             fieldUsageBySlot,
-            fillBlock
+            fillBlock,
+            divisions
         } = context;
 
         if (!masterSpecialtyLeagues || Object.keys(masterSpecialtyLeagues).length === 0) {
@@ -133,7 +117,6 @@
             return;
         }
 
-        // Group blocks by division and time
         const blocksByDivisionTime = {};
         
         schedulableSlotBlocks
@@ -146,11 +129,9 @@
                 blocksByDivisionTime[key].push(block);
             });
 
-        // Process each time slot
         for (const [key, blocks] of Object.entries(blocksByDivisionTime)) {
             const [divName, startTime] = key.split('_');
             
-            // Find applicable league
             const league = Object.values(masterSpecialtyLeagues).find(l => {
                 if (disabledSpecialtyLeagues.includes(l.name)) return false;
                 if (!l.divisions || !l.divisions.includes(divName)) return false;
@@ -164,14 +145,12 @@
 
             console.log(`\n📋 Specialty League: "${league.name}" (${divName})`);
 
-            // Get matchups
             const matchups = getMatchupsForLeague(league, context);
             if (matchups.length === 0) {
                 console.log(`   No matchups for ${league.name}`);
                 continue;
             }
 
-            // Get available fields - FIXED
             const leagueSport = league.sport || (league.sports && league.sports[0]) || "General";
             const availableFields = getFieldsForSport(leagueSport, context);
 
@@ -184,23 +163,24 @@
                 continue;
             }
 
-            // Assign matchups to blocks
+            // ✅ NEW: Assign ALL matchups to ALL bunks in division
+            const divisionBunks = divisions[divName]?.bunks || [];
+            const allMatchupsText = matchups.map(m => `${m[0]} vs ${m[1]}`);
+            
             let fieldIdx = 0;
+            const matchupAssignments = [];
+
             matchups.forEach((matchup, idx) => {
                 const [team1, team2] = matchup;
                 
-                // Find blocks for these teams
-                const block1 = blocks.find(b => b.bunk === team1);
-                const block2 = blocks.find(b => b.bunk === team2);
-
-                if (!block1 || !block2) return;
-
                 // Try to find a field
                 let assignedField = null;
+                const testBlock = blocks[0]; // Use first block for field testing
+                
                 for (let i = 0; i < availableFields.length; i++) {
                     const testField = availableFields[(fieldIdx + i) % availableFields.length];
                     
-                    if (canFieldHostLeague(testField, block1, context)) {
+                    if (canFieldHostLeague(testField, testBlock, context)) {
                         assignedField = testField;
                         fieldIdx = (fieldIdx + i + 1) % availableFields.length;
                         break;
@@ -208,29 +188,33 @@
                 }
 
                 if (assignedField) {
-                    const pick = {
+                    matchupAssignments.push({
+                        matchup: `${team1} vs ${team2}`,
                         field: assignedField,
-                        sport: leagueSport,
-                        _activity: `vs ${team2} @ ${assignedField}`,
-                        _h2h: true,
-                        _fixed: true,
-                        _allMatchups: [`${team1} vs ${team2}`],
-                        _gameLabel: `Specialty Game ${idx + 1}`
-                    };
-
-                    fillBlock(block1, pick, fieldUsageBySlot, {}, true, activityProperties);
-                    
-                    // Team 2 sees opponent
-                    const pick2 = { ...pick, _activity: `vs ${team1} @ ${assignedField}` };
-                    fillBlock(block2, pick2, fieldUsageBySlot, {}, true, activityProperties);
-
-                    block1.processed = true;
-                    block2.processed = true;
-
+                        sport: leagueSport
+                    });
                     console.log(`   ✅ ${team1} vs ${team2} @ ${assignedField}`);
                 } else {
                     console.log(`   ❌ Could not assign field for ${team1} vs ${team2}`);
                 }
+            });
+
+            // ✅ CRITICAL: Assign to ALL bunks in the division
+            blocks.forEach(block => {
+                const pick = {
+                    field: `Specialty League: ${league.name}`,
+                    sport: leagueSport,
+                    _activity: `Specialty League: ${league.name}`,
+                    _h2h: true,
+                    _fixed: true,
+                    _allMatchups: matchupAssignments.map(m => 
+                        `${m.matchup} @ ${m.field} (${m.sport})`
+                    ),
+                    _gameLabel: `Specialty League`
+                };
+
+                fillBlock(block, pick, fieldUsageBySlot, {}, true, activityProperties);
+                block.processed = true;
             });
         }
 
@@ -238,7 +222,7 @@
     };
 
     // =========================================================================
-    // REGULAR LEAGUES
+    // REGULAR LEAGUES (COMPLETE REWRITE)
     // =========================================================================
 
     Leagues.processRegularLeagues = function (context) {
@@ -260,60 +244,69 @@
             return;
         }
 
-        // Group blocks by division and time
-        const blocksByDivisionTime = {};
+        // ✅ NEW: Group by TIME only (not by division)
+        // This allows multi-division leagues to share matchups
+        const blocksByTime = {};
         
         schedulableSlotBlocks
             .filter(b => b.type === 'league' || /league/i.test(b.event))
             .forEach(block => {
-                const key = `${block.divName}_${block.startTime}`;
-                if (!blocksByDivisionTime[key]) {
-                    blocksByDivisionTime[key] = [];
+                const key = block.startTime; // Just time, not division
+                if (!blocksByTime[key]) {
+                    blocksByTime[key] = { byDivision: {}, allBlocks: [] };
                 }
-                blocksByDivisionTime[key].push(block);
+                
+                if (!blocksByTime[key].byDivision[block.divName]) {
+                    blocksByTime[key].byDivision[block.divName] = [];
+                }
+                
+                blocksByTime[key].byDivision[block.divName].push(block);
+                blocksByTime[key].allBlocks.push(block);
             });
 
-        // Process each league slot
-        for (const [key, blocks] of Object.entries(blocksByDivisionTime)) {
-            const [divName, startTime] = key.split('_');
+        // Process each time slot
+        for (const [timeKey, timeData] of Object.entries(blocksByTime)) {
+            const divisionNames = Object.keys(timeData.byDivision);
             
-            // Find applicable league
+            // ✅ NEW: Find league that covers ANY of these divisions
             const league = Object.values(masterLeagues).find(l => {
                 if (!l.enabled) return false;
                 if (disabledLeagues.includes(l.name)) return false;
-                if (!l.divisions || !l.divisions.includes(divName)) return false;
-                return true;
+                if (!l.divisions || l.divisions.length === 0) return false;
+                
+                // Check if this league covers any of the divisions at this time
+                return divisionNames.some(div => l.divisions.includes(div));
             });
 
             if (!league) {
-                console.log(`⚠️ No league for ${divName} at ${startTime}`);
+                console.log(`⚠️ No league for divisions [${divisionNames.join(", ")}] at ${timeKey}`);
                 continue;
             }
 
-            console.log(`\n📋 League: "${league.name}" (${divName})`);
+            console.log(`\n📋 League: "${league.name}" (${divisionNames.join(", ")})`);
 
-            // Get teams from division bunks
-            const divisionBunks = divisions[divName]?.bunks || [];
-            const leagueTeams = league.teams.filter(t => divisionBunks.includes(t));
+            // ✅ CRITICAL: Use league teams directly (NOT bunk names)
+            const leagueTeams = league.teams || [];
 
             if (leagueTeams.length < 2) {
-                console.log(`   ⚠️ Not enough teams in ${divName} (need 2+, have ${leagueTeams.length})`);
+                console.log(`   ⚠️ Not enough teams in league (need 2+, have ${leagueTeams.length})`);
+                console.log(`   Teams: [${leagueTeams.join(", ")}]`);
                 continue;
             }
 
             // Generate matchups
-            const matchups = getMatchupsForLeague({ ...league, teams: leagueTeams }, context);
+            const matchups = getMatchupsForLeague(league, context);
             
             if (matchups.length === 0) {
                 console.log(`   No matchups available`);
                 continue;
             }
 
-            // Determine required fields - FIXED
+            // Determine required fields
             const requiredFieldCount = Math.ceil(matchups.length);
             const leagueSports = league.sports || ["General Sport"];
             
-            // Get all available fields for league sports - FIXED
+            // Get all available fields for league sports
             const allAvailableFields = new Set();
             leagueSports.forEach(sport => {
                 const fields = getFieldsForSport(sport, context);
@@ -324,37 +317,34 @@
             
             console.log(`   Required fields: ${requiredFieldCount}`);
             console.log(`   Available fields: ${availableFieldsArray.length} [${availableFieldsArray.join(", ")}]`);
+            console.log(`   Teams in league: ${leagueTeams.length}`);
+            console.log(`   Matchups: ${matchups.length}`);
 
             if (availableFieldsArray.length === 0) {
-                console.log(`   🚨 League "${league.name}": Need ${requiredFieldCount} fields, only ${availableFieldsArray.length} available!`);
+                console.log(`   🚨 No fields available for league!`);
                 continue;
             }
 
-            // Assign matchups to fields
+            // ✅ NEW: Assign matchups to fields (independent of bunks)
+            const matchupAssignments = [];
             let fieldIdx = 0;
             const gameNumber = getCurrentRoundIndex(league.name, context) + 1;
 
             matchups.forEach((matchup, idx) => {
                 const [team1, team2] = matchup;
                 
-                const block1 = blocks.find(b => b.bunk === team1);
-                const block2 = blocks.find(b => b.bunk === team2);
-
-                if (!block1 || !block2) {
-                    console.log(`   ⚠️ Missing blocks for ${team1} vs ${team2}`);
-                    return;
-                }
-
                 // Select sport (rotate through league sports)
                 const selectedSport = leagueSports[idx % leagueSports.length];
                 const fieldsForSport = getFieldsForSport(selectedSport, context);
 
                 // Try to assign a field
                 let assignedField = null;
+                const testBlock = timeData.allBlocks[0]; // Use first block for testing
+                
                 for (let i = 0; i < fieldsForSport.length; i++) {
                     const testField = fieldsForSport[(fieldIdx + i) % fieldsForSport.length];
                     
-                    if (canFieldHostLeague(testField, block1, context)) {
+                    if (canFieldHostLeague(testField, testBlock, context)) {
                         assignedField = testField;
                         fieldIdx = (fieldIdx + i + 1) % fieldsForSport.length;
                         break;
@@ -362,33 +352,18 @@
                 }
 
                 if (!assignedField && availableFieldsArray.length > 0) {
-                    // Fallback: try any available field
                     assignedField = availableFieldsArray[fieldIdx % availableFieldsArray.length];
                     fieldIdx = (fieldIdx + 1) % availableFieldsArray.length;
                 }
 
                 if (assignedField) {
-                    const matchupText = `${team1} vs ${team2}`;
-                    
-                    const pick1 = {
+                    matchupAssignments.push({
+                        matchup: `${team1} vs ${team2}`,
                         field: assignedField,
-                        sport: selectedSport,
-                        _activity: `League: ${matchupText}`,
-                        _h2h: true,
-                        _fixed: true,
-                        _allMatchups: [matchupText],
-                        _gameLabel: `Game ${gameNumber}`
-                    };
-
-                    fillBlock(block1, pick1, fieldUsageBySlot, {}, true, activityProperties);
+                        sport: selectedSport
+                    });
                     
-                    const pick2 = { ...pick1 };
-                    fillBlock(block2, pick2, fieldUsageBySlot, {}, true, activityProperties);
-
-                    block1.processed = true;
-                    block2.processed = true;
-
-                    console.log(`   ✅ ${matchupText} @ ${assignedField} (${selectedSport})`);
+                    console.log(`   ✅ ${team1} vs ${team2} @ ${assignedField} (${selectedSport})`);
 
                     // Update rotation history
                     if (rotationHistory && rotationHistory.leagues) {
@@ -406,6 +381,28 @@
                 } else {
                     console.log(`   ❌ Could not assign field for ${team1} vs ${team2}`);
                 }
+            });
+
+            // ✅ CRITICAL: Assign to ALL bunks in ALL divisions in this league
+            divisionNames.forEach(divName => {
+                const blocksForDiv = timeData.byDivision[divName];
+                
+                blocksForDiv.forEach(block => {
+                    const pick = {
+                        field: `League: ${league.name}`,
+                        sport: `Game ${gameNumber}`,
+                        _activity: `League: ${league.name}`,
+                        _h2h: true,
+                        _fixed: true,
+                        _allMatchups: matchupAssignments.map(m => 
+                            `${m.matchup} @ ${m.field} (${m.sport})`
+                        ),
+                        _gameLabel: `Game ${gameNumber}`
+                    };
+
+                    fillBlock(block, pick, fieldUsageBySlot, {}, true, activityProperties);
+                    block.processed = true;
+                });
             });
 
             // Increment league round counter
