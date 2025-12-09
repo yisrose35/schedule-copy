@@ -50,33 +50,37 @@
     }
 
     function loadLeaguesData() {
-        const global = window.loadGlobalSettings?.() || {};
-        const loadedData = global.leaguesByName || {};
+    const global = window.loadGlobalSettings?.() || {};
+    const loadedData = global.leaguesByName || {};
 
-        // GCM FIX: Don't replace the object. Clear and refill it.
-        // 1. Remove old keys
-        Object.keys(leaguesByName).forEach(k => delete leaguesByName[k]);
+    // GCM FIX: Don't replace the object. Clear and refill it.
+    // 1. Remove old keys
+    Object.keys(leaguesByName).forEach(k => delete leaguesByName[k]);
+    
+    // 2. Add new keys
+    Object.assign(leaguesByName, loadedData);
+
+    // 3. Ensure defaults
+    Object.keys(leaguesByName).forEach(leagueName => {  // ← CHANGED: Use keys instead of values
+        const l = leaguesByName[leagueName];             // ← ADDED: Get league by key
         
-        // 2. Add new keys
-        Object.assign(leaguesByName, loadedData);
+        // ✅ FIX: Add name property
+        if (!l.name) l.name = leagueName;                // ← ADDED: This line!
+        
+        l.divisions = l.divisions || [];
+        l.sports = l.sports || [];
+        l.teams = l.teams || [];
+        l.enabled = l.enabled !== false;
+        l.standings = l.standings || {};
+        l.games = l.games || [];
 
-        // 3. Ensure defaults
-        Object.values(leaguesByName).forEach((l) => {
-            l.divisions = l.divisions || [];
-            l.sports = l.sports || [];
-            l.teams = l.teams || [];
-            l.enabled = l.enabled !== false;
-            l.standings = l.standings || {};
-            l.games = l.games || [];
-
-            (l.teams || []).forEach((team) => {
-                l.standings[team] = l.standings[team] || { w: 0, l: 0, t: 0 };
-            });
+        (l.teams || []).forEach((team) => {
+            l.standings[team] = l.standings[team] || { w: 0, l: 0, t: 0 };
         });
-        
-        // No need to re-bind window.masterLeagues because the reference is const
-        console.log("Leagues Loaded via Mutation:", Object.keys(leaguesByName));
-    }
+    });
+    
+    console.log("Leagues Loaded via Mutation:", Object.keys(leaguesByName));
+}
 
     // -------------------------------------------------------------
     // INLINE EDIT HELPER
