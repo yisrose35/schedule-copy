@@ -327,26 +327,27 @@
         const addBtn = document.getElementById('add-league-btn');
 
         const addLeague = () => {
-            const name = addInput.value.trim();
-            if (!name) return;
-            if (leaguesByName[name]) {
-                alert('League exists!');
-                return;
-            }
-            leaguesByName[name] = {
-                teams: [],
-                sports: [],
-                divisions: [],
-                standings: {},
-                games: [],
-                enabled: true
-            };
-            saveLeaguesData();
-            addInput.value = '';
-            selectedLeagueName = name;
-            renderMasterList();
-            renderDetailPane();
-        };
+    const name = addInput.value.trim();
+    if (!name) return;
+    if (leaguesByName[name]) {
+        alert('League exists!');
+        return;
+    }
+    leaguesByName[name] = {
+        name: name,  // ✅ ADDED: This line!
+        teams: [],
+        sports: [],
+        divisions: [],
+        standings: {},
+        games: [],
+        enabled: true
+    };
+    saveLeaguesData();
+    addInput.value = '';
+    selectedLeagueName = name;
+    renderMasterList();
+    renderDetailPane();
+};
 
         addBtn.onclick = addLeague;
         addInput.onkeyup = e => { if (e.key === 'Enter') addLeague(); };
