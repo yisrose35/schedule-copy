@@ -1,10 +1,12 @@
 // ============================================================================
-// scheduler_core_main.js (UPDATED V4: ROTATING SPLIT TILES)
+// scheduler_core_main.js (UPDATED V4: ROTATING SPLIT TILES + RESERVATIONS)
 //
 // UPDATES:
 // 1. Intercepts 'split' tiles in the optimizer.
 // 2. Rotates bunks: Group A does Act 1 while Group B does Act 2, then switch.
-// 3. intelligently routes "Pinned" (Swim) vs "Generated" (Sports) sub-activities.
+// 3. Intelligently routes "Pinned" (Swim) vs "Generated" (Sports) sub-activities.
+// 4. Scans skeleton for Field Reservations early.
+// 5. Skips slots that overlap with Pinned events (priority filtering).
 // ============================================================================
 
 (function () {
@@ -160,6 +162,10 @@
 
         if (!manualSkeleton || manualSkeleton.length === 0) return false;
 
+        // ===== SCAN SKELETON FOR FIELD RESERVATIONS =====
+        window.fieldReservations = Utils.getFieldReservationsFromSkeleton(manualSkeleton);
+        console.log("[RESERVATION] Scanned skeleton, found reservations:", window.fieldReservations);
+
         // 1. Build Time Grid
         const timePoints = new Set([540, 960]); // 9am, 4pm defaults
         manualSkeleton.forEach(item => {
@@ -211,6 +217,22 @@
             const sMin = Utils.parseTimeToMinutes(item.startTime);
             const eMin = Utils.parseTimeToMinutes(item.endTime);
             
+            // ===== SKIP SLOTS THAT OVERLAP WITH PINNED EVENTS IN THE SAME DIVISION =====
+            // This prevents "General Activity Slot" from showing when there's a pinned event
+            if (item.type === 'slot' || GENERATOR_TYPES.includes(item.type)) {
+                const hasPinnedOverlap = manualSkeleton.some(other => 
+                    other.division === divName &&
+                    other.type === 'pinned' &&
+                    Utils.parseTimeToMinutes(other.startTime) < eMin &&
+                    Utils.parseTimeToMinutes(other.endTime) > sMin
+                );
+                
+                if (hasPinnedOverlap) {
+                    console.log(`[SKELETON] Skipping ${item.event} for ${divName} - overlaps with pinned event`);
+                    return; // Skip this slot, the pinned event takes priority
+                }
+            }
+
             // --- SPLIT TILE LOGIC ---
             if (item.type === 'split') {
                 const midMin = Math.floor(sMin + (eMin - sMin) / 2);
