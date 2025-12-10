@@ -1,8 +1,9 @@
 // =================================================================
-// daily_adjustments.js  (UPDATED - FIELD RESERVATION FEATURE)
+// daily_adjustments.js  (UPDATED - FIELD RESERVATION FEATURE & OVERLAP FIX)
 // - Added reservedFields property to pinned/custom tiles
 // - When placing a pinned tile, user is asked which fields it uses
 // - Scheduler will block reserved fields during those times
+// - FIX: Auto-removes overlapping events when dropping new tiles
 // =================================================================
 
 (function() {
@@ -585,9 +586,37 @@ function addDropListeners(gridContainer) {
         };
       }
 
-      dailyOverrideSkeleton.push(newEvent);
-      saveDailySkeleton();
-      renderGrid(gridContainer);
+      // ===== NEW LOGIC: REMOVE OVERLAPPING EVENTS FIRST =====
+      if (newEvent) {
+        const newStartMin = parseTimeToMinutes(newEvent.startTime);
+        const newEndMin = parseTimeToMinutes(newEvent.endTime);
+        
+        dailyOverrideSkeleton = dailyOverrideSkeleton.filter(item => {
+          // Keep events from other divisions
+          if (item.division !== divName) return true;
+          
+          // Check for time overlap
+          const itemStartMin = parseTimeToMinutes(item.startTime);
+          const itemEndMin = parseTimeToMinutes(item.endTime);
+          
+          if (itemStartMin == null || itemEndMin == null) return true;
+          
+          // Overlap condition: Item starts before new ends AND item ends after new starts
+          const overlaps = (itemStartMin < newEndMin) && (itemEndMin > newStartMin);
+          
+          if (overlaps) {
+            console.log(`[SKELETON] Removing overlapping event: ${item.event} (${item.startTime}-${item.endTime})`);
+            return false; // Remove this overlapping event
+          }
+          
+          return true; // Keep non-overlapping events
+        });
+
+        // Now add the new event
+        dailyOverrideSkeleton.push(newEvent);
+        saveDailySkeleton();
+        renderGrid(gridContainer);
+      }
     };
   });
 }
@@ -637,10 +666,10 @@ function renderEventTile(event, top, height) {
     innerHtml += `<div style="font-size:0.75em;border-top:1px dotted #01579b;margin-top:2px;padding-top:1px;">F: ${event.smartData.fallbackActivity} (if ${event.smartData.fallbackFor.substring(0,4)}. busy)</div>`;
   }
   if (event.type === "smart" && event.smartData) {
-  innerHtml += `<br>
-    <div style="font-size:0.75em;border-top:1px dotted #01579b;margin-top:2px;padding-top:1px;"><br>
+  innerHtml += `<br><br>
+    <div style="font-size:0.75em;border-top:1px dotted #01579b;margin-top:2px;padding-top:1px;"><br><br>
       Fallback: ${event.smartData.fallbackActivity}
-      <br><br><br>
+      <br><br><br><br>
       For: ${event.smartData.fallbackFor}
     </div>
   `;
