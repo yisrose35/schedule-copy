@@ -1,10 +1,10 @@
 // =================================================================
-// master_schedule_builder.js (UPDATED - FIELD RESERVATION FEATURE)
+// master_schedule_builder.js (UPDATED - DELETE & EDIT FEATURES)
 //
 // Updates:
-// 1. Added reservedFields property to pinned/custom tiles
-// 2. When placing a custom pinned event, user is asked which fields it uses
-// 3. Scheduler will block reserved fields during those times
+// 1. Added "Update [Template Name]" button to save changes to current file.
+// 2. Wired up "Delete Selected Template" button.
+// 3. Tracks 'currentLoadedTemplate' to distinguish between new drafts and existing files.
 // =================================================================
 
 (function(){
@@ -12,6 +12,7 @@
 
 let container=null, palette=null, grid=null;
 let dailySkeleton=[];
+let currentLoadedTemplate = null; // Tracks which template is currently being edited
 
 // --- Constants ---
 const SKELETON_DRAFT_KEY = 'master-schedule-draft';
@@ -24,8 +25,13 @@ function saveDraftToLocalStorage() {
   try {
     if (dailySkeleton && dailySkeleton.length > 0) {
       localStorage.setItem(SKELETON_DRAFT_KEY, JSON.stringify(dailySkeleton));
+      // Persist the loaded name if available so refresh keeps context
+      if(currentLoadedTemplate) {
+          localStorage.setItem(SKELETON_DRAFT_NAME_KEY, currentLoadedTemplate);
+      }
     } else {
       localStorage.removeItem(SKELETON_DRAFT_KEY);
+      localStorage.removeItem(SKELETON_DRAFT_NAME_KEY);
     }
   } catch (e) { console.error(e); }
 }
@@ -120,9 +126,12 @@ function init(){
   loadDailySkeleton();
 
   const savedDraft = localStorage.getItem(SKELETON_DRAFT_KEY);
+  const savedDraftName = localStorage.getItem(SKELETON_DRAFT_NAME_KEY);
+
   if (savedDraft) {
     if (confirm("Load unsaved master schedule draft?")) {
       dailySkeleton = JSON.parse(savedDraft);
+      if(savedDraftName) currentLoadedTemplate = savedDraftName;
     } else {
       clearDraftFromLocalStorage();
     }
@@ -159,28 +168,47 @@ function renderTemplateUI(){
   const assignments=window.getSkeletonAssignments?.()||{};
   let loadOptions=names.map(n=>`<option value="${n}">${n}</option>`).join('');
 
+  // Determine button state for "Update"
+  const updateBtnStyle = currentLoadedTemplate ? '' : 'display:none;';
+  const currentNameLabel = currentLoadedTemplate ? `Editing: <b>${currentLoadedTemplate}</b>` : 'New Schedule';
+
   ui.innerHTML=`
+    <div style="margin-bottom:10px;color:#555;">${currentNameLabel}</div>
     <div class="template-toolbar" style="display:flex;flex-wrap:wrap;gap:20px;align-items:flex-end;">
-      <div class="template-group"><label>Load Template</label>
+      <div class="template-group"><label>Load Template</label><br>
         <select id="template-load-select" style="padding:6px;"><option value="">-- Select --</option>${loadOptions}</select>
       </div>
-      <div class="template-group"><label>Save As</label><input type="text" id="template-save-name" placeholder="Name..."></div>
-      <div class="template-group">
-        <label>&nbsp;</label>
-        <button id="template-save-btn" style="background:#007bff;color:#fff;">Save</button>
-        <button id="template-clear-btn" style="background:#ff9800;color:#fff;margin-left:8px;">New</button>
+      
+      <!-- UPDATE BUTTON (Only shows if editing existing) -->
+      <div class="template-group" style="${updateBtnStyle}">
+         <label>&nbsp;</label><br>
+         <button id="template-update-btn" style="background:#17a2b8;color:#fff;font-weight:bold;">Update "${currentLoadedTemplate}"</button>
+      </div>
+
+      <div class="template-group"><label>Save As New</label><br>
+        <input type="text" id="template-save-name" placeholder="New Name...">
+        <button id="template-save-btn" style="background:#007bff;color:#fff;">Save As</button>
+      </div>
+      
+      <div class="template-group"><label>&nbsp;</label><br>
+        <button id="template-clear-btn" style="background:#ff9800;color:#fff;">New/Clear</button>
       </div>
     </div>
+
     <details style="margin-top:10px;">
       <summary style="cursor:pointer;color:#007bff;">Assignments & Delete</summary>
       <div style="margin-top:10px;padding:10px;border:1px solid #eee;">
         <div style="display:flex;flex-wrap:wrap;gap:10px;">
-          ${["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Default"].map(day=>`
+          ${["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Default"].map(day=>`<br>
           <div><label>${day}</label><br><select data-day="${day}" style="width:100px;">${loadOptions}</select></div>`).join('')}
         </div>
         <button id="template-assign-save-btn" style="margin-top:10px;background:#28a745;color:white;">Save Assignments</button>
         <hr>
-        <button id="template-delete-btn" style="background:#c0392b;color:white;">Delete Selected Template</button>
+        <div style="display:flex; align-items:center; gap:10px; margin-top:10px;">
+            <label style="color:#c0392b;">Delete Template:</label>
+            <select id="template-delete-select" style="padding:4px;"><option value="">-- Select to Delete --</option>${loadOptions}</select>
+            <button id="template-delete-btn" style="background:#c0392b;color:white;">Delete Permanently</button>
+        </div>
       </div>
     </details>
   `;
@@ -193,29 +221,50 @@ function renderTemplateUI(){
     const name=loadSel.value;
     if(name && saved[name] && confirm(`Load "${name}"?`)){
       loadSkeletonToBuilder(name);
-      saveName.value=name;
+      // Pre-fill save as name just in case, but rely on update button for edits
+      saveName.value=name; 
     }
   };
 
+  // 1. UPDATE EXISTING
+  const updateBtn = document.getElementById("template-update-btn");
+  if(updateBtn) {
+      updateBtn.onclick = () => {
+          if(currentLoadedTemplate && confirm(`Overwrite existing template "${currentLoadedTemplate}" with current grid?`)){
+              window.saveSkeleton?.(currentLoadedTemplate, dailySkeleton);
+              clearDraftFromLocalStorage();
+              alert("Updated successfully.");
+              renderTemplateUI();
+          }
+      };
+  }
+
+  // 2. SAVE AS NEW
   document.getElementById("template-save-btn").onclick=()=>{
     const name=saveName.value.trim();
-    if(name && confirm(`Save as "${name}"?`)){
-      window.saveSkeleton?.(name, dailySkeleton);
-      clearDraftFromLocalStorage();
-      alert("Saved.");
-      renderTemplateUI();
-    }
+    if(!name) { alert("Please enter a name."); return; }
+    
+    if(saved[name] && !confirm(`"${name}" already exists. Overwrite?`)) return;
+
+    window.saveSkeleton?.(name, dailySkeleton);
+    currentLoadedTemplate = name; // Switch context to this new save
+    clearDraftFromLocalStorage();
+    alert("Saved.");
+    renderTemplateUI();
   };
 
+  // 3. CLEAR / NEW
   document.getElementById("template-clear-btn").onclick=()=>{
     if(confirm("Clear grid and start new?")) {
         dailySkeleton=[];
+        currentLoadedTemplate = null; // Reset context
         clearDraftFromLocalStorage();
         renderGrid();
+        renderTemplateUI();
     }
   };
 
-  // Assignment Selects
+  // 4. ASSIGNMENTS
   ui.querySelectorAll('select[data-day]').forEach(sel=>{
       const day=sel.dataset.day;
       const opt=document.createElement('option');
@@ -229,6 +278,36 @@ function renderTemplateUI(){
       ui.querySelectorAll('select[data-day]').forEach(s=>{ if(s.value) map[s.dataset.day]=s.value; });
       window.saveSkeletonAssignments?.(map);
       alert("Assignments Saved.");
+  };
+
+  // 5. DELETE
+  document.getElementById("template-delete-btn").onclick=()=>{
+      const delSel = document.getElementById("template-delete-select");
+      const nameToDelete = delSel.value;
+      
+      if(!nameToDelete) {
+          alert("Please select a template from the dropdown next to the Delete button.");
+          return;
+      }
+
+      if(confirm(`Are you sure you want to PERMANENTLY DELETE "${nameToDelete}"?`)){
+          if(window.deleteSkeleton) {
+              window.deleteSkeleton(nameToDelete);
+              
+              // If we deleted the one we are looking at, reset context
+              if(currentLoadedTemplate === nameToDelete){
+                  currentLoadedTemplate = null;
+                  dailySkeleton = []; // Optional: Clear grid or keep as unsaved? Let's clear to be safe.
+                  clearDraftFromLocalStorage();
+                  renderGrid();
+              }
+              
+              alert("Deleted.");
+              renderTemplateUI();
+          } else {
+              alert("Error: 'window.deleteSkeleton' function is not defined in your global setup. Please add it to your setup script.");
+          }
+      }
   };
 }
 
@@ -539,8 +618,12 @@ function loadDailySkeleton(){
 
 function loadSkeletonToBuilder(name){
   const all=window.getSavedSkeletons?.()||{};
-  if(all[name]) dailySkeleton=JSON.parse(JSON.stringify(all[name]));
+  if(all[name]) {
+      dailySkeleton=JSON.parse(JSON.stringify(all[name]));
+      currentLoadedTemplate = name; // Track that we are editing this template
+  }
   renderGrid();
+  renderTemplateUI(); // Re-render UI to show Update button
   saveDraftToLocalStorage();
 }
 
