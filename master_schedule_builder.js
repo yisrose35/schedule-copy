@@ -580,7 +580,31 @@ function addDropListeners(selector){
                 };
             }
 
-            if(newEvent){
+            if (newEvent) {
+                // 1. Calculate the New Event's Minute Range
+                const newStartVal = parseTimeToMinutes(newEvent.startTime);
+                const newEndVal = parseTimeToMinutes(newEvent.endTime);
+
+                // 2. FILTER: Remove any existing event in this division that overlaps
+                dailySkeleton = dailySkeleton.filter(existing => {
+                    // Keep events in other columns
+                    if (existing.division !== divName) return true;
+
+                    const exStart = parseTimeToMinutes(existing.startTime);
+                    const exEnd = parseTimeToMinutes(existing.endTime);
+
+                    // Skip invalid data
+                    if (exStart === null || exEnd === null) return true;
+
+                    // OVERLAP CHECK:
+                    // An overlap occurs if (ExistingStart < NewEnd) AND (ExistingEnd > NewStart)
+                    const overlaps = (exStart < newEndVal) && (exEnd > newStartVal);
+
+                    // If it overlaps, return FALSE to remove it (erase the bottom tile)
+                    return !overlaps; 
+                });
+
+                // 3. Add the New Event
                 dailySkeleton.push(newEvent);
                 saveDraftToLocalStorage();
                 renderGrid();
