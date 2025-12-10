@@ -325,62 +325,257 @@
             }
         });
 
-        // 4. Smart Tiles
-        const smartJobs = window.SmartLogicAdapter?.preprocessSmartTiles?.(manualSkeleton, externalOverrides, masterSpecials) || [];
-        smartJobs.forEach(job => {
-            const divName = job.division;
-            const bunkList = divisions[divName]?.bunks || [];
-            if (bunkList.length === 0) return;
+        // ============================================================================
+// 4. SMART TILES (UPDATED INTEGRATION)
+// ============================================================================
 
-            const result = window.SmartLogicAdapter.generateAssignments(
-                bunkList, job, historicalCounts, specialActivityNames,
-                activityProperties, null, dailyFieldAvailability, yesterdayHistory
+function processSmartTiles(manualSkeleton, externalOverrides, config) {
+    const Utils = window.SchedulerCoreUtils;
+    const {
+        divisions,
+        activityProperties,
+        masterSpecials,
+        dailyFieldAvailability,
+        historicalCounts,
+        specialActivityNames,
+        yesterdayHistory,
+        fieldUsageBySlot
+    } = config;
+
+    const schedulableSlotBlocks = [];
+    const TRANSITION_TYPE = window.TRANSITION_TYPE || "Transition/Buffer";
+
+    // Get smart tile jobs from adapter
+    const smartJobs = window.SmartLogicAdapter?.preprocessSmartTiles?.(
+        manualSkeleton, 
+        externalOverrides, 
+        masterSpecials
+    ) || [];
+
+    console.log(`[SmartTile] Processing ${smartJobs.length} smart tile jobs`);
+
+    smartJobs.forEach((job, jobIdx) => {
+        console.log(`\n[SmartTile] Job ${jobIdx + 1}: ${job.division}`);
+        
+        const divName = job.division;
+        const bunkList = divisions[divName]?.bunks || [];
+        
+        if (bunkList.length === 0) {
+            console.warn(`[SmartTile] No bunks in division ${divName}`);
+            return;
+        }
+
+        // Generate assignments using the adapter
+        const result = window.SmartLogicAdapter.generateAssignments(
+            bunkList,
+            job,
+            historicalCounts,
+            specialActivityNames,
+            activityProperties,
+            null,
+            dailyFieldAvailability,
+            yesterdayHistory
+        );
+
+        if (!result) {
+            console.error(`[SmartTile] Failed to generate assignments for ${divName}`);
+            return;
+        }
+
+        const { block1Assignments, block2Assignments } = result;
+
+        // Helper: Route activity to generator or fill directly
+        function routeActivity(bunk, activityLabel, blockInfo) {
+            const startMin = blockInfo.startMin;
+            const endMin = blockInfo.endMin;
+            const slots = Utils.findSlotsForRange(startMin, endMin);
+            
+            if (slots.length === 0) {
+                console.warn(`[SmartTile] No slots for ${bunk} at ${startMin}-${endMin}`);
+                return;
+            }
+
+            const lower = activityLabel.toLowerCase();
+
+            // Check if this is a "generated" slot type
+            const isGenerated = (
+                lower.includes("sport") ||
+                lower.includes("general") ||
+                lower.includes("activity") ||
+                lower.includes("special activity")
             );
 
-            const { block1Assignments, block2Assignments } = result || {};
+            if (isGenerated) {
+                // Route to the solver/generator
+                let slotType = "General Activity Slot";
+                if (lower.includes("sport")) slotType = "Sports Slot";
+                else if (lower.includes("special")) slotType = "Special Activity";
 
-            function pushGen(bunk, ev, st, en) {
-                const slots = Utils.findSlotsForRange(st, en);
+                console.log(`[SmartTile] ${bunk} -> GENERATE: ${slotType}`);
+                
                 schedulableSlotBlocks.push({
                     divName,
                     bunk,
-                    event: ev,
-                    startTime: st,
-                    endTime: en,
+                    event: slotType,
+                    startTime: startMin,
+                    endTime: endMin,
                     slots,
                     fromSmartTile: true
                 });
-            }
-
-            const sA = Utils.findSlotsForRange(job.blockA.startMin, job.blockA.endMin);
-            Object.entries(block1Assignments || {}).forEach(([b, act]) => {
-                const L = act.toLowerCase();
-                if (L.includes("sport")) pushGen(b, "Sports Slot", job.blockA.startMin, job.blockA.endMin);
-                else if (L.includes("special")) pushGen(b, "Special Activity", job.blockA.startMin, job.blockA.endMin);
-                else if (L.includes("general")) pushGen(b, "General Activity Slot", job.blockA.startMin, job.blockA.endMin);
-                else fillBlock(
-                    { divName, bunk: b, startTime: job.blockA.startMin, endTime: job.blockA.endMin, slots: sA },
-                    { field: act, sport: null, _fixed: true, _activity: act },
-                    fieldUsageBySlot, yesterdayHistory, false, activityProperties
+            } else {
+                // Direct fill (pinned activity like "Swim", "Canteen", etc.)
+                console.log(`[SmartTile] ${bunk} -> PINNED: ${activityLabel}`);
+                
+                window.fillBlock(
+                    { divName, bunk, startTime: startMin, endTime: endMin, slots },
+                    { field: activityLabel, sport: null, _fixed: true, _activity: activityLabel },
+                    fieldUsageBySlot,
+                    yesterdayHistory,
+                    false,
+                    activityProperties
                 );
-            });
-
-            if (job.blockB) {
-                const sB = Utils.findSlotsForRange(job.blockB.startMin, job.blockB.endMin);
-                Object.entries(block2Assignments || {}).forEach(([b, act]) => {
-                    const L = act.toLowerCase();
-                    if (L.includes("sport")) pushGen(b, "Sports Slot", job.blockB.startMin, job.blockB.endMin);
-                    else if (L.includes("special")) pushGen(b, "Special Activity", job.blockB.startMin, job.blockB.endMin);
-                    else if (L.includes("general")) pushGen(b, "General Activity Slot", job.blockB.startMin, job.blockB.endMin);
-                    else fillBlock(
-                        { divName, bunk: b, startTime: job.blockB.startMin, endTime: job.blockB.endMin, slots: sB },
-                        { field: act, sport: null, _fixed: true, _activity: act },
-                        fieldUsageBySlot, yesterdayHistory, false, activityProperties
-                    );
-                });
             }
+        }
+
+        // Process Block A assignments
+        console.log(`[SmartTile] Block A (${job.blockA.startMin}-${job.blockA.endMin}):`);
+        Object.entries(block1Assignments || {}).forEach(([bunk, act]) => {
+            routeActivity(bunk, act, job.blockA);
         });
 
+        // Process Block B assignments (if exists)
+        if (job.blockB && block2Assignments) {
+            console.log(`[SmartTile] Block B (${job.blockB.startMin}-${job.blockB.endMin}):`);
+            Object.entries(block2Assignments).forEach(([bunk, act]) => {
+                routeActivity(bunk, act, job.blockB);
+            });
+        }
+    });
+
+    return schedulableSlotBlocks;
+}
+
+
+// ============================================================================
+// EXAMPLE: How to update window.runSkeletonOptimizer
+// ============================================================================
+
+/*
+In scheduler_core_main.js, around line 117, replace:
+
+    // 4. Smart Tiles
+    const smartJobs = window.SmartLogicAdapter?.preprocessSmartTiles?.(manualSkeleton, externalOverrides, masterSpecials) || [];
+    smartJobs.forEach(job => {
+        ...existing code...
+    });
+
+WITH:
+
+    // 4. Smart Tiles (NEW INTEGRATION)
+    const smartTileBlocks = processSmartTiles(manualSkeleton, externalOverrides, config);
+    schedulableSlotBlocks.push(...smartTileBlocks);
+
+*/
+
+
+// ============================================================================
+// DEBUG UTILITIES
+// ============================================================================
+
+/**
+ * Call this after running the optimizer to see Smart Tile results
+ */
+window.debugSmartTiles = function() {
+    const data = window.__smartTileToday;
+    if (!data) {
+        console.log("No smart tile data available. Run the optimizer first.");
+        return;
+    }
+
+    console.log("\n" + "=".repeat(70));
+    console.log("SMART TILE DEBUG REPORT");
+    console.log("=".repeat(70));
+
+    Object.entries(data).forEach(([division, info]) => {
+        console.log(`\n📋 DIVISION: ${division}`);
+        console.log(`   Special Activity: ${info.specialAct}`);
+        console.log(`   Open Activity: ${info.openAct}`);
+        console.log(`   Fallback: ${info.fallbackAct}`);
+        console.log(`   Capacity A: ${info.capacityA}, Capacity B: ${info.capacityB}`);
+        
+        console.log(`\n   Block A Assignments:`);
+        Object.entries(info.block1 || {}).forEach(([bunk, act]) => {
+            const marker = info.specialWinnersA.includes(bunk) ? "⭐" : "  ";
+            console.log(`   ${marker} ${bunk}: ${act}`);
+        });
+
+        if (info.block2) {
+            console.log(`\n   Block B Assignments:`);
+            Object.entries(info.block2 || {}).forEach(([bunk, act]) => {
+                const isFallback = act === info.fallbackAct;
+                const marker = isFallback ? "⚠️" : "  ";
+                console.log(`   ${marker} ${bunk}: ${act}`);
+            });
+        }
+
+        if (info.ineligibleBunks.length > 0) {
+            console.log(`\n   ❌ Ineligible (maxed out): ${info.ineligibleBunks.join(', ')}`);
+        }
+
+        if (info.nextDayPriority.length > 0) {
+            console.log(`\n   🔜 Priority for tomorrow: ${info.nextDayPriority.join(', ')}`);
+        }
+    });
+
+    console.log("\n" + "=".repeat(70));
+};
+
+
+/**
+ * Check what specials are available at a specific time
+ */
+window.debugSpecialAvailability = function(startMin, endMin) {
+    const activityProps = window.activityProperties || {};
+    const dailyData = window.loadCurrentDailyData?.() || {};
+    const dailyFieldAvailability = dailyData.dailyFieldAvailability || {};
+    
+    const allSpecials = window.getGlobalSpecialActivities?.() || [];
+    
+    console.log(`\nChecking special availability for ${startMin}-${endMin}:`);
+    
+    const slots = window.SchedulerCoreUtils?.findSlotsForRange(startMin, endMin) || [];
+    console.log(`Slots: ${slots.join(', ')}`);
+    
+    allSpecials.forEach(special => {
+        const props = activityProps[special.name] || special;
+        console.log(`\n${special.name}:`);
+        console.log(`  - Available: ${props.available !== false}`);
+        console.log(`  - Time Rules: ${JSON.stringify(props.timeRules || [])}`);
+        console.log(`  - Capacity: ${props.sharableWith?.capacity || 1}`);
+        console.log(`  - Max Usage: ${props.maxUsage || 'unlimited'}`);
+    });
+};
+
+
+/**
+ * Check a specific bunk's special usage history
+ */
+window.debugBunkHistory = function(bunkName) {
+    const config = window.SchedulerCoreUtils?.loadAndFilterData?.() || {};
+    const historical = config.historicalCounts || {};
+    const bunkHist = historical[bunkName] || {};
+    
+    console.log(`\nHistory for ${bunkName}:`);
+    
+    if (Object.keys(bunkHist).length === 0) {
+        console.log("  (no history)");
+        return;
+    }
+    
+    Object.entries(bunkHist).forEach(([activity, count]) => {
+        console.log(`  ${activity}: ${count}`);
+    });
+};
         // 5. Leagues
         const leagueContext = {
             schedulableSlotBlocks, 
