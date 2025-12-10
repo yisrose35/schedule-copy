@@ -783,10 +783,14 @@ function parseTimeToMinutes(str) {
     if (hh === 12) hh = mer === "am" ? 0 : 12;
     else if (mer === "pm") hh += 12;
   } else {
-    return null;
-  }
-  return hh * 60 + mm;
+    // ===== FIX: INFER PM FOR 12–7 WHEN AM/PM MISSING =====
+// If no AM/PM specified, assume PM for 12,1,2,3,4,5,6,7
+if (hh >= 12 || hh <= 7) {
+  console.warn(`[TIME PARSE] "${str}" has no AM/PM - assuming PM`);
+  if (hh !== 12) hh += 12;  // convert 1–7 PM
+  // 12 stays as 12 (no change needed)
 }
+
 
 function uid() {
   return `id_${Math.random().toString(36).slice(2, 9)}`;
