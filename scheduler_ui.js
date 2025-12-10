@@ -1,3 +1,4 @@
+
 // ============================================================================
 // scheduler_ui.js (GCM FINAL: LEAGUE SOURCE OF TRUTH)
 //
@@ -403,10 +404,6 @@
           } else if (!isGeneratedSlot) {
             td.style.background = "#fff7cc";
             label = block.event;
-            // ===== APPEND RESERVED FIELDS TO LABEL =====
-            if (block.reservedFields && block.reservedFields.length > 0) {
-                label += ` — ${block.reservedFields.join(', ')}`;
-            }
           } else {
             const entry = getEntry(bunk, slotIdx);
             label = formatEntry(entry);
