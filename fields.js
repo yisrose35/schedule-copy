@@ -1,8 +1,10 @@
 // =================================================================
 // fields.js
 //
-// UPDATED: Refactored Detail Pane into a Tabbed Interface for better UX.
-// logic and theme preserved exactly.
+// UPDATED: "Pro" Apple-Style UI.
+// - Clean, minimalist aesthetic (No icons).
+// - Logic fully preserved (Priority sorting, Min Duration, Labels included).
+// - Simplified UX with Segmented Controls and Toggles.
 // =================================================================
 
 (function() {
@@ -11,6 +13,7 @@
 let fields = [];
 let selectedItemId = null; // e.g., "field-Court 1"
 let activeTab = 'activities'; // Default tab state
+let searchTerm = ""; 
 
 let fieldsListEl = null;
 let detailPaneEl = null;
@@ -31,42 +34,40 @@ function initFieldsTab() {
                 <div class="setup-card-header">
                     <span class="setup-step-pill">Fields</span>
                     <div class="setup-card-text">
-                        <h3>Manage Fields &amp; Activities</h3>
+                        <h3>Fields &amp; Facilities</h3>
                         <p>
-                            Add your courts, fields, and facilities. Then choose
-                            which <strong>sports</strong> they host, who can use them,
-                            and any <strong>time rules</strong> they follow.
+                            Configure your sports facilities, manage availability, and set logistics.
                         </p>
                     </div>
                 </div>
 
-                <div style="display:flex; flex-wrap:wrap; gap:20px; margin-top:8px;">
-                    <!-- LEFT: Fields list + add -->
-                    <div style="flex:1; min-width:260px;">
-                        <div class="setup-subtitle">All Fields</div>
-                        <p style="font-size:0.8rem; color:#6b7280; margin-top:4px;">
-                            Click a field to open its settings. Toggle availability or rename
-                            directly from this list. Everything saves automatically.
-                        </p>
-
-                        <div class="setup-field-row" style="margin-top:10px;">
-                            <input id="new-field-input"
-                                   placeholder="New Field (e.g., Court 1)">
-                            <button id="add-field-btn">Add Field</button>
+                <div style="display:flex; flex-wrap:wrap; gap:24px; margin-top:16px;">
+                    <!-- LEFT: Sidebar -->
+                    <div style="flex:1; min-width:260px; display:flex; flex-direction:column; border-right:1px solid #F3F4F6; padding-right:20px;">
+                        
+                        <div style="margin-bottom:12px;">
+                             <input id="field-search" 
+                                    placeholder="Search fields..." 
+                                    class="ios-input" 
+                                    style="width:100%;">
                         </div>
 
                         <div id="fields-master-list" class="master-list"
-                             style="margin-top:10px; max-height:440px; overflow:auto;"></div>
+                             style="flex:1; min-height:300px; max-height:550px; overflow-y:auto; overflow-x:hidden;"></div>
+
+                        <div class="setup-field-row" style="margin-top:12px; padding-top:12px; border-top:1px solid #F3F4F6;">
+                            <input id="new-field-input"
+                                   placeholder="Add New Field..."
+                                   class="ios-input" style="flex:1;">
+                            <button id="add-field-btn" class="ios-btn-primary">Add</button>
+                        </div>
                     </div>
 
                     <!-- RIGHT: Detail pane -->
-                    <div style="flex:1.4; min-width:340px;">
-                        <div class="setup-subtitle">Field Details</div>
+                    <div style="flex:2; min-width:380px;">
                         <div id="fields-detail-pane" class="detail-pane"
-                             style="margin-top:8px; min-height:400px;">
-                            <p class="muted">
-                                Select a field from the left to edit its details.
-                            </p>
+                             style="height:100%; min-height:450px;">
+                            <!-- Content injected here -->
                         </div>
                     </div>
                 </div>
@@ -74,147 +75,128 @@ function initFieldsTab() {
         </div>
         
         <style>
-            /* Master list container */
-            .master-list {
-                border-radius: 18px;
-                border: 1px solid #E5E7EB;
-                background: #F7F9FA;
-                padding: 8px 6px;
-                box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+            /* --- iOS / Apple Style Base --- */
+            .setup-card-wide { padding: 24px; }
+            
+            /* Inputs */
+            .ios-input {
+                border: 1px solid #E5E7EB; border-radius: 8px; padding: 8px 12px; font-size: 0.9rem;
+                background: #F9FAFB; transition: all 0.2s ease;
+                color: #111827; outline: none; width: 100%;
             }
+            .ios-input:focus { border-color: #3B82F6; background: #FFF; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); }
+            
+            /* Buttons */
+            .ios-btn-primary {
+                background: #111827; color: white; border: none; padding: 8px 16px;
+                border-radius: 8px; font-weight: 500; cursor: pointer; font-size: 0.85rem;
+                transition: opacity 0.2s;
+            }
+            .ios-btn-primary:hover { opacity: 0.9; }
 
+            .ios-btn-secondary {
+                background: #FFF; color: #374151; border: 1px solid #D1D5DB; padding: 6px 12px;
+                border-radius: 6px; font-weight: 500; cursor: pointer; font-size: 0.8rem;
+            }
+            .ios-btn-secondary:hover { background: #F9FAFB; }
+            
+            .ios-btn-danger { color: #EF4444; background: transparent; border: none; cursor: pointer; font-size: 0.9rem; }
+
+            /* Master List */
             .master-list .list-item {
-                padding: 10px 10px;
-                border-radius: 14px;
-                margin-bottom: 6px;
+                padding: 10px 12px;
+                border-radius: 8px;
+                margin-bottom: 2px;
                 cursor: pointer;
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                background: #FFFFFF;
-                border: 1px solid #E5E7EB;
-                box-shadow: 0 4px 10px rgba(15, 23, 42, 0.05);
-                transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.08s ease;
+                transition: background 0.1s;
+                color: #374151;
             }
-            .master-list .list-item:hover {
-                background: #F3F4F6;
-                box-shadow: 0 8px 18px rgba(15, 23, 42, 0.10);
-                transform: translateY(-1px);
-            }
-            .master-list .list-item.selected {
-                background: radial-gradient(circle at top left, #ECFDF5 0, #FFFFFF 70%);
-                border-color: #00C896;
-                box-shadow: 0 0 0 1px rgba(0, 200, 150, 0.55);
-                font-weight: 600;
-            }
-            .master-list .list-item-name {
-                flex-grow: 1;
-                font-size: 0.88rem;
-                font-weight: 500;
-                color: #111827;
-            }
-            .master-list .list-item-toggle { margin-left: 10px; }
-
-            /* Detail pane - Updated for Tabs */
-            .detail-pane {
-                border-radius: 18px;
-                border: 1px solid #E5E7EB;
-                padding: 0; /* Padding removed for full-width header/tabs */
-                background: #FFFFFF;
-                min-height: 400px;
-                box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
-                display: flex;
-                flex-direction: column;
-                overflow: hidden;
-            }
+            .master-list .list-item:hover { background: #F3F4F6; }
+            .master-list .list-item.selected { background: #EFF6FF; color: #1D4ED8; font-weight: 500; }
             
-            /* Inner Content Padding */
-            .detail-content {
-                padding: 20px;
-                background: linear-gradient(180deg, #F9FAFB 0%, #FFFFFF 100%);
-                flex-grow: 1;
+            /* Toggle Switch (iOS Style) */
+            .ios-toggle { position: relative; display: inline-block; width: 36px; height: 20px; flex-shrink: 0; }
+            .ios-toggle input { opacity: 0; width: 0; height: 0; }
+            .ios-slider {
+                position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+                background-color: #E5E7EB; transition: .3s; border-radius: 20px;
+            }
+            .ios-slider:before {
+                position: absolute; content: ""; height: 16px; width: 16px; left: 2px; bottom: 2px;
+                background-color: white; transition: .3s; border-radius: 50%; box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+            }
+            input:checked + .ios-slider { background-color: #10B981; }
+            input:checked + .ios-slider:before { transform: translateX(16px); }
+
+            /* Detail Pane Structure */
+            .detail-pane { display: flex; flex-direction: column; }
+            .detail-header { padding-bottom: 16px; border-bottom: 1px solid #F3F4F6; margin-bottom: 20px; }
+            .detail-title { font-size: 1.5rem; font-weight: 700; color: #111827; letter-spacing: -0.02em; border:none; background:transparent; width:100%; outline:none;}
+            .detail-title:focus { background:#F3F4F6; border-radius:4px;}
+
+            /* Tabs (Text Only, Clean) */
+            .tab-nav { display: flex; gap: 24px; border-bottom: 1px solid #E5E7EB; margin-bottom: 24px; }
+            .tab-btn {
+                padding: 10px 0; font-size: 0.9rem; font-weight: 500; color: #6B7280;
+                background: none; border: none; cursor: pointer; position: relative;
+            }
+            .tab-btn.active { color: #111827; }
+            .tab-btn.active::after {
+                content: ''; position: absolute; bottom: -1px; left: 0; width: 100%;
+                height: 2px; background: #111827;
             }
 
-            /* Tabs Styling */
-            .detail-tabs {
-                display: flex;
-                border-bottom: 1px solid #E5E7EB;
-                background: #FFFFFF;
-                padding: 0 10px;
-            }
-            .detail-tab-btn {
-                padding: 12px 16px;
-                font-size: 0.85rem;
-                font-weight: 600;
-                color: #6B7280;
-                background: transparent;
-                border: none;
-                border-bottom: 2px solid transparent;
-                cursor: pointer;
-                transition: all 0.2s;
-            }
-            .detail-tab-btn:hover { color: #111827; background: #F9FAFB; }
-            .detail-tab-btn.active {
-                color: #00C896;
-                border-bottom-color: #00C896;
-            }
+            /* Content Sections */
+            .section-row { margin-bottom: 24px; }
+            .section-label { font-size: 0.85rem; font-weight: 600; color: #111827; margin-bottom: 8px; display:block; }
+            .section-desc { font-size: 0.8rem; color: #6B7280; margin-bottom: 12px; }
 
-            /* Section Cards inside Tabs */
-            .field-section-card {
-                border-radius: 16px;
-                border: 1px solid #E5E7EB;
-                background: #FFFFFF;
-                padding: 16px;
-                margin-bottom: 16px;
-                box-shadow: 0 4px 12px rgba(15, 23, 42, 0.03);
+            /* Segmented Control */
+            .segmented-control {
+                display: flex; background: #F3F4F6; padding: 3px; border-radius: 8px; width: fit-content;
             }
-            .field-section-header {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                margin-bottom: 10px;
-                font-size: 0.8rem;
-                text-transform: uppercase;
-                letter-spacing: 0.05em;
-                color: #6B7280;
-                border-bottom: 1px solid #F3F4F6;
-                padding-bottom: 8px;
+            .segment-btn {
+                padding: 6px 16px; border-radius: 6px; border: none; background: transparent;
+                font-size: 0.85rem; font-weight: 500; color: #6B7280; cursor: pointer; transition: all 0.2s;
             }
-            .field-section-title { font-weight: 700; color: #374151; }
-            .field-section-tag {
-                font-size: 0.7rem; padding: 2px 8px; border-radius: 999px;
-                background: #ECFDF5; color: #047857; font-weight: 500;
-            }
-            
-            /* Inputs & Modern Controls */
-            .modern-input {
-                border: 1px solid #D1D5DB; border-radius: 8px; padding: 6px 10px; font-size: 0.85rem;
-                transition: border-color 0.2s;
-            }
-            .modern-input:focus { outline: none; border-color: #00C896; }
+            .segment-btn.active { background: #FFF; color: #111827; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
 
-            .muted { color: #6B7280; font-size: 0.86rem; }
-            
-            /* Activity Buttons */
-            .activity-button {
-                background: #FFFFFF; border: 1px solid #E5E7EB; padding: 6px 12px;
-                border-radius: 99px; font-size: 0.8rem; cursor: pointer;
-                transition: all 0.2s; color: #374151;
+            /* Tag/Chip */
+            .pro-chip {
+                display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 99px;
+                background: #FFF; border: 1px solid #E5E7EB; font-size: 0.85rem; color: #374151;
+                cursor: pointer; transition: all 0.1s; margin: 0 6px 6px 0;
             }
-            .activity-button:hover { border-color: #D1D5DB; background: #F9FAFB; }
-            .activity-button.active {
-                background: #ECFDF5; border-color: #00C896; color: #065F46;
-                font-weight: 600; box-shadow: 0 2px 5px rgba(0, 200, 150, 0.2);
+            .pro-chip:hover { border-color: #D1D5DB; background: #F9FAFB; }
+            .pro-chip.active { background: #111827; color: #FFF; border-color: #111827; }
+
+            /* Priority List Item */
+            .priority-item {
+                display: flex; justify-content: space-between; align-items: center;
+                background: #FFF; border-bottom: 1px solid #F3F4F6; padding: 10px 12px;
             }
+            .priority-item:last-child { border-bottom: none; }
+            .priority-btn { background: none; border: none; color: #6B7280; cursor: pointer; font-size: 1rem; padding: 0 4px; }
+            .priority-btn:hover { color: #111827; }
+
+            .empty-state { text-align: center; color: #9CA3AF; padding-top: 60px; }
         </style>
         `;
 
     fieldsListEl = document.getElementById("fields-master-list");
     detailPaneEl = document.getElementById("fields-detail-pane");
     addFieldInput = document.getElementById("new-field-input");
+    const searchInput = document.getElementById("field-search");
 
     document.getElementById("add-field-btn").onclick = addField;
     addFieldInput.onkeyup = (e) => { if (e.key === "Enter") addField(); };
+    searchInput.onkeyup = (e) => {
+        searchTerm = e.target.value.toLowerCase();
+        renderMasterLists();
+    };
 
     renderMasterLists();
     renderDetailPane();
@@ -249,21 +231,24 @@ function saveData() {
 function renderMasterLists() {
     fieldsListEl.innerHTML = "";
 
-    if (fields.length === 0) {
-        fieldsListEl.innerHTML = `<p class="muted" style="padding:10px;">No fields created yet.</p>`;
+    let filtered = fields;
+    if (searchTerm) {
+        filtered = fields.filter(f => f.name.toLowerCase().includes(searchTerm));
     }
-    fields.forEach(item => {
-        fieldsListEl.appendChild(createMasterListItem('field', item));
+
+    if (filtered.length === 0) {
+        fieldsListEl.innerHTML = `<div style="padding:20px; text-align:center; font-size:0.85rem; color:#9CA3AF;">No fields found.</div>`;
+    }
+    filtered.forEach(item => {
+        fieldsListEl.appendChild(createMasterListItem(item));
     });
 }
 
-function createMasterListItem(type, item) {
+function createMasterListItem(item) {
     const el = document.createElement('div');
     el.className = 'list-item';
-    const id = `${type}-${item.name}`;
-    if (id === selectedItemId) {
-        el.classList.add('selected');
-    }
+    const id = `field-${item.name}`;
+    if (id === selectedItemId) el.classList.add('selected');
     
     el.onclick = () => {
         selectedItemId = id;
@@ -271,64 +256,34 @@ function createMasterListItem(type, item) {
         renderDetailPane(); 
     };
 
-    const nameEl = document.createElement('span');
-    nameEl.className = 'list-item-name';
-    nameEl.textContent = item.name;
+    const nameSpan = document.createElement("span");
+    nameSpan.textContent = item.name;
     
-    // Tiny indicator if there is a zone or buffer
-    if (item.transition && (item.transition.preMin > 0 || item.transition.postMin > 0)) {
-        const dot = document.createElement('span');
-        dot.style.height="6px"; dot.style.width="6px"; dot.style.borderRadius="50%";
-        dot.style.background="#047857"; dot.style.display="inline-block";
-        dot.style.marginLeft="6px"; dot.style.verticalAlign="middle";
-        dot.title = "Has transition buffers";
-        nameEl.appendChild(dot);
+    if(!item.available) {
+         nameSpan.style.opacity = "0.5";
+         nameSpan.innerHTML += " (Off)";
     }
 
-    el.appendChild(nameEl);
-
-    const tog = document.createElement("label"); 
-    tog.className = "switch list-item-toggle";
-    tog.title = "Available (Master)";
-    tog.onclick = (e) => e.stopPropagation(); 
-    
-    const cb = document.createElement("input"); 
-    cb.type = "checkbox"; 
-    cb.checked = item.available;
-    cb.onchange = (e) => { 
-        e.stopPropagation();
-        item.available = cb.checked; 
-        saveData(); 
-        renderDetailPane(); 
-    };
-    
-    const sl = document.createElement("span"); 
-    sl.className = "slider";
-    
-    tog.appendChild(cb); 
-    tog.appendChild(sl);
-    el.appendChild(tog);
-
+    el.appendChild(nameSpan);
     return el;
 }
 
 // =================================================================
-// MAIN UI REFACTOR: TABBED DETAIL PANE
+// DETAIL PANE RENDERER
 // =================================================================
 
 function renderDetailPane() {
-    detailPaneEl.innerHTML = ""; // Clear existing
+    detailPaneEl.innerHTML = ""; 
 
     if (!selectedItemId) {
         detailPaneEl.innerHTML = `
-            <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; text-align:center; padding:20px; color:#9CA3AF;">
-                <div style="font-size:2rem; margin-bottom:10px;">🏟️</div>
-                <p>Select a field from the left to edit its details.</p>
+            <div class="empty-state">
+                <p>Select a field to configure.</p>
             </div>`;
         return;
     }
 
-    const [type, name] = selectedItemId.split(/-(.+)/); 
+    const [_, name] = selectedItemId.split(/-(.+)/); 
     const item = fields.find(f => f.name === name);
 
     if (!item) {
@@ -337,650 +292,446 @@ function renderDetailPane() {
         return;
     }
     
-    // --- 1. HEADER (Fixed at top) ---
+    // --- HEADER ---
     const header = document.createElement('div');
-    header.style.padding = '18px 20px 10px 20px';
-    header.style.background = '#fff';
+    header.className = 'detail-header';
     
-    const headerRow = document.createElement('div');
-    headerRow.style.display = 'flex';
-    headerRow.style.justifyContent = 'space-between';
-    headerRow.style.alignItems = 'center';
+    const topRow = document.createElement('div');
+    topRow.style.display = 'flex'; topRow.style.justifyContent = 'space-between'; topRow.style.alignItems = 'flex-start';
 
-    const title = document.createElement('h3');
-    title.style.margin = '0';
-    title.style.fontSize = '1.2rem';
-    title.style.fontWeight = '700';
-    title.style.color = '#111827';
-    title.textContent = item.name;
-    makeEditable(title, newName => {
-        if (!newName.trim()) return;
-        item.name = newName;
-        selectedItemId = `${type}-${newName}`; 
-        saveData();
-        renderMasterLists(); 
-    });
+    const titleInput = document.createElement('input');
+    titleInput.className = 'detail-title';
+    titleInput.value = item.name;
+    titleInput.onblur = (e) => {
+        const val = e.target.value.trim();
+        if(val && val !== item.name) {
+            item.name = val;
+            selectedItemId = `field-${val}`;
+            saveData(); renderMasterLists();
+        } else { e.target.value = item.name; }
+    };
+    titleInput.onkeyup = (e) => { if(e.key === "Enter") titleInput.blur(); };
+    
+    // Global Toggle
+    const toggleWrap = document.createElement("label");
+    toggleWrap.style.display="flex"; toggleWrap.style.alignItems="center"; toggleWrap.style.gap="8px"; toggleWrap.style.cursor="pointer";
+    const toggle = document.createElement("div"); toggle.className = "ios-toggle";
+    const check = document.createElement("input"); check.type = "checkbox"; check.checked = item.available;
+    const slider = document.createElement("span"); slider.className = "ios-slider";
+    check.onchange = (e) => { item.available = e.target.checked; saveData(); renderMasterLists(); };
+    toggle.appendChild(check); toggle.appendChild(slider);
+    
+    const toggleLabel = document.createElement("span");
+    toggleLabel.textContent = "Active"; toggleLabel.style.fontSize="0.85rem"; toggleLabel.style.fontWeight="500";
+    
+    toggleWrap.appendChild(toggleLabel);
+    toggleWrap.appendChild(toggle);
 
-    const deleteBtn = document.createElement('button');
-    deleteBtn.textContent = 'Delete';
-    deleteBtn.style.cssText = "background:#FFF; color:#EF4444; border:1px solid #FECACA; padding:4px 12px; border-radius:99px; font-weight:600; font-size:0.75rem; cursor:pointer;";
-    deleteBtn.onmouseenter = () => deleteBtn.style.background = '#FEF2F2';
-    deleteBtn.onmouseleave = () => deleteBtn.style.background = '#FFF';
-    deleteBtn.onclick = () => {
-        if (confirm(`Delete "${item.name}"?`)) {
+    // Delete Button (Subtle)
+    const delBtn = document.createElement("button");
+    delBtn.textContent = "Delete";
+    delBtn.className = "ios-btn-danger";
+    delBtn.style.marginLeft = "16px";
+    delBtn.onclick = () => {
+        if(confirm("Delete this field?")) {
             fields = fields.filter(f => f.name !== item.name);
-            selectedItemId = null;
+            selectedItemId = null; saveData(); renderMasterLists(); renderDetailPane();
+        }
+    };
+
+    const controls = document.createElement("div"); controls.style.display="flex"; controls.style.alignItems="center";
+    controls.appendChild(toggleWrap);
+    controls.appendChild(delBtn);
+
+    topRow.appendChild(titleInput);
+    topRow.appendChild(controls);
+    header.appendChild(topRow);
+    detailPaneEl.appendChild(header);
+
+    // --- TABS ---
+    const nav = document.createElement('nav');
+    nav.className = 'tab-nav';
+    ['activities', 'access', 'logistics'].forEach(tab => {
+        const btn = document.createElement('button');
+        btn.className = `tab-btn ${activeTab === tab ? 'active' : ''}`;
+        btn.textContent = tab.charAt(0).toUpperCase() + tab.slice(1);
+        btn.onclick = () => { activeTab = tab; renderDetailPane(); };
+        nav.appendChild(btn);
+    });
+    detailPaneEl.appendChild(nav);
+
+    // --- CONTENT ---
+    const content = document.createElement('div');
+    content.className = 'tab-content';
+    if (activeTab === 'activities') renderActivities(content, item);
+    else if (activeTab === 'access') renderAccess(content, item);
+    else if (activeTab === 'logistics') renderLogistics(content, item);
+    
+    detailPaneEl.appendChild(content);
+}
+
+// =================================================================
+// TAB 1: ACTIVITIES
+// =================================================================
+function renderActivities(container, item) {
+    const allSports = window.getAllGlobalSports?.() || [];
+    
+    const section = document.createElement("div");
+    section.className = "section-row";
+    section.innerHTML = `
+        <label class="section-label">Supported Sports</label>
+        <p class="section-desc">Select the activities that can be scheduled on this field.</p>
+    `;
+
+    const chips = document.createElement("div");
+    item.activities = item.activities || [];
+    
+    allSports.forEach(sport => {
+        const chip = document.createElement("button");
+        chip.className = `pro-chip ${item.activities.includes(sport) ? 'active' : ''}`;
+        chip.textContent = sport;
+        chip.onclick = () => {
+            if(item.activities.includes(sport)) item.activities = item.activities.filter(s => s !== sport);
+            else item.activities.push(sport);
             saveData();
-            renderMasterLists();
+            chip.classList.toggle('active');
+        };
+        chips.appendChild(chip);
+    });
+    
+    // Add New
+    const addWrap = document.createElement("div");
+    addWrap.style.marginTop = "12px";
+    addWrap.innerHTML = `<input class="ios-input" placeholder="Add custom sport..." style="width:200px;">`;
+    const input = addWrap.querySelector("input");
+    input.onkeyup = (e) => {
+        if(e.key === "Enter" && input.value.trim()) {
+            const val = input.value.trim();
+            window.addGlobalSport?.(val);
+            if(!item.activities.includes(val)) item.activities.push(val);
+            saveData();
             renderDetailPane();
         }
     };
-
-    headerRow.appendChild(title);
-    headerRow.appendChild(deleteBtn);
-    header.appendChild(headerRow);
-
-    // Availability Strip (Compact)
-    const availStrip = document.createElement('div');
-    availStrip.style.marginTop = "8px";
-    availStrip.style.fontSize = "0.8rem";
-    if (!item.available) {
-        availStrip.innerHTML = `<span style="background:#FEF2F2; color:#B91C1C; padding:3px 8px; border-radius:4px; font-weight:600; border:1px solid #FECACA;">⚠️ Unavailable</span> <span class="muted"> - This field is hidden from the scheduler.</span>`;
-    } else {
-        availStrip.innerHTML = `<span style="color:#059669; font-weight:600;">● Active</span> <span class="muted" style="font-size:0.75rem;">(Visible to scheduler)</span>`;
-    }
-    header.appendChild(availStrip);
-    detailPaneEl.appendChild(header);
-
-    // --- 2. TABS NAVIGATION ---
-    const tabsContainer = document.createElement('div');
-    tabsContainer.className = 'detail-tabs';
     
-    const tabs = [
-        { id: 'activities', label: 'Activities' },
-        { id: 'access', label: 'Access & Sharing' },
-        { id: 'logistics', label: 'Logistics & Time' }
-    ];
-
-    tabs.forEach(t => {
-        const btn = document.createElement('button');
-        btn.className = `detail-tab-btn ${activeTab === t.id ? 'active' : ''}`;
-        btn.textContent = t.label;
-        btn.onclick = () => {
-            activeTab = t.id;
-            renderDetailPane(); // Re-render to switch view
-        };
-        tabsContainer.appendChild(btn);
-    });
-    detailPaneEl.appendChild(tabsContainer);
-
-    // --- 3. TAB CONTENT AREA ---
-    const contentArea = document.createElement('div');
-    contentArea.className = 'detail-content';
-    detailPaneEl.appendChild(contentArea);
-
-    // Render specific tab content
-    if (activeTab === 'activities') renderTabActivities(contentArea, item);
-    else if (activeTab === 'access') renderTabAccess(contentArea, item);
-    else if (activeTab === 'logistics') renderTabLogistics(contentArea, item);
+    section.appendChild(chips);
+    section.appendChild(addWrap);
+    container.appendChild(section);
 }
 
 // =================================================================
-// TAB 1: ACTIVITIES (Cleaned Up)
+// TAB 2: ACCESS (Detailed)
 // =================================================================
-function renderTabActivities(container, item) {
-    const allSports = window.getAllGlobalSports?.() || [];
-
-    const card = document.createElement("div");
-    card.className = "field-section-card";
+function renderAccess(container, item) {
+    // Ensuring defaults
+    if (!item.limitUsage) item.limitUsage = { enabled: false, divisions: {} };
+    if (!item.preferences) item.preferences = { enabled: false, exclusive: false, list: [] };
+    if (!item.sharableWith) item.sharableWith = { type: 'not_sharable', capacity: 2 };
     
-    card.innerHTML = `
-        <div class="field-section-header">
-            <span class="field-section-title">Sports & Activities</span>
-            <span class="field-section-tag">What happens here?</span>
-        </div>
-        <p class="muted" style="margin-bottom:12px;">Click to toggle activities supported by this field.</p>
-    `;
-
-    const btnWrapper = document.createElement("div"); 
-    btnWrapper.style.display = 'flex';
-    btnWrapper.style.flexWrap = 'wrap';
-    btnWrapper.style.gap = '8px';
-    
-    item.activities = item.activities || [];
-    allSports.forEach(act => {
-        const b = document.createElement("button"); 
-        b.textContent = act; 
-        b.className = "activity-button";
-        if (item.activities.includes(act)) b.classList.add("active");
-        b.onclick = () => {
-            if (item.activities.includes(act)) {
-                item.activities = item.activities.filter(a => a !== act);
-            } else {
-                item.activities.push(act);
-            }
-            saveData(); 
-            // Only update buttons to avoid full re-render flickering
-            b.classList.toggle("active");
-        };
-        btnWrapper.appendChild(b);
-    });
-
-    const other = document.createElement("input");
-    other.className = "modern-input";
-    other.placeholder = "+ Add new sport (Type & Enter)";
-    other.style.marginTop = '12px';
-    other.style.width = '100%';
-    other.onkeyup = e => {
-        if (e.key === "Enter" && other.value.trim()) {
-            const newSport = other.value.trim();
-            window.addGlobalSport?.(newSport);
-            if (!item.activities.includes(newSport)) {
-                item.activities.push(newSport);
-                saveData();
-            }
-            other.value = "";
-            renderDetailPane(); // Full render to update list
-        }
-    };
-
-    card.appendChild(btnWrapper);
-    card.appendChild(other);
-    container.appendChild(card);
-}
-
-// =================================================================
-// TAB 2: ACCESS & SHARING (Merged & Simplified)
-// =================================================================
-function renderTabAccess(container, item) {
-    
-    // --- PART A: RESTRICTIONS ---
-    const restrictCard = document.createElement("div");
-    restrictCard.className = "field-section-card";
-    
-    const rHeader = document.createElement("div");
-    rHeader.className = "field-section-header";
-    rHeader.innerHTML = `<span class="field-section-title">Who Can Use This?</span>`;
-    restrictCard.appendChild(rHeader);
-
-    // Use helper to render the complex restrictions UI
-    const limitControls = renderAllowedBunksControls(item, saveData, renderDetailPane);
-    restrictCard.appendChild(limitControls);
-    container.appendChild(restrictCard);
-
-    // --- PART B: SHARING ---
-    const shareCard = document.createElement("div");
-    shareCard.className = "field-section-card";
-    
-    const sHeader = document.createElement("div");
-    sHeader.className = "field-section-header";
-    sHeader.innerHTML = `<span class="field-section-title">Sharing & Capacity</span>`;
-    shareCard.appendChild(sHeader);
-
-    const sharingControls = renderSharableControls(item, saveData, renderDetailPane);
-    shareCard.appendChild(sharingControls);
-    container.appendChild(shareCard);
-}
-
-// =================================================================
-// TAB 3: LOGISTICS (Time Rules & Transitions)
-// =================================================================
-function renderTabLogistics(container, item) {
-    
-    // --- PART A: TRANSITIONS ---
-    const transCard = document.createElement("div");
-    transCard.className = "field-section-card";
-    
-    transCard.innerHTML = `
-        <div class="field-section-header">
-            <span class="field-section-title">Buffer Zones & Travel</span>
-            <span class="field-section-tag">Logistics</span>
-        </div>
-        <p class="muted" style="margin-bottom:10px;">Setup buffers to block time before/after events.</p>
-    `;
-    
-    const tControls = renderTransitionControls(item.transition, saveData, () => {
-        renderDetailPane();
-        renderMasterLists(); // Update list dots
-    });
-    transCard.appendChild(tControls);
-    container.appendChild(transCard);
-
-    // --- PART B: OPENING HOURS ---
-    const timeCard = document.createElement("div");
-    timeCard.className = "field-section-card";
-    
-    timeCard.innerHTML = `
-        <div class="field-section-header">
-            <span class="field-section-title">Opening Hours</span>
-        </div>
-    `;
-
-    const timeRuleControls = renderTimeRulesUI(item, saveData, renderDetailPane);
-    timeCard.appendChild(timeRuleControls);
-    container.appendChild(timeCard);
-}
-
-// =================================================================
-// COMPONENT LOGIC (Preserved logic, slightly improved styling)
-// =================================================================
-
-function renderTransitionControls(transition, onSave, onRerender) {
-    const container = document.createElement("div");
-    
-    container.innerHTML = `
-        <div style="display:flex; align-items:flex-end; gap:15px; background:#F3F4F6; padding:10px; border-radius:10px;">
-            <div>
-                <label style="font-weight:600; font-size:0.75rem; color:#4B5563; display:block; margin-bottom:4px;">Pre (Min)</label>
-                <input type="number" id="pre-min-input" value="${transition.preMin}" min="0" step="5" class="modern-input" style="width:60px;">
-            </div>
-            <div>
-                <label style="font-weight:600; font-size:0.75rem; color:#4B5563; display:block; margin-bottom:4px;">Post (Min)</label>
-                <input type="number" id="post-min-input" value="${transition.postMin}" min="0" step="5" class="modern-input" style="width:60px;">
-            </div>
-             <div style="flex-grow:1;">
-                <label style="font-weight:600; font-size:0.75rem; color:#4B5563; display:block; margin-bottom:4px;">Label</label>
-                <input type="text" id="buffer-label-input" value="${transition.label}" class="modern-input" style="width:100%;">
-            </div>
-        </div>
-
-        <div style="margin-top:15px; display:grid; grid-template-columns: 1fr 1fr; gap:15px;">
-            <div>
-                <label style="font-weight:600; font-size:0.8rem;">Zone Location</label>
-                <select id="zone-select" class="modern-input" style="width:100%; margin-top:5px;"></select>
-                <p class="muted" style="font-size:0.7rem; margin-top:2px;">Needed for travel logic.</p>
-            </div>
-            <div>
-                 <label style="font-weight:600; font-size:0.8rem;">Min Duration</label>
-                 <div style="display:flex; align-items:center; gap:5px; margin-top:5px;">
-                    <input type="number" id="min-duration-input" value="${transition.minDurationMin}" min="0" step="5" class="modern-input" style="width:70px;">
-                    <span style="font-size:0.8rem;">min</span>
-                 </div>
-            </div>
-        </div>
-
-        <div style="margin-top:15px; padding-top:10px; border-top:1px dashed #E5E7EB;">
-             <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-                <input type="checkbox" id="occupies-field-check" ${transition.occupiesField ? 'checked' : ''} style="width:16px; height:16px;">
-                <span style="font-size:0.85rem; font-weight:600; color:#374151;">Buffer Occupies Field</span>
-            </label>
-            <p class="muted" style="font-size:0.75rem; margin-top:2px; padding-left:24px;">
-                If checked, field is busy during buffer (e.g., Setup). If unchecked, it's just travel time for the group.
-            </p>
-        </div>
-    `;
-    
-    const zones = window.getZones?.() || {};
-    const zoneSelect = container.querySelector('#zone-select');
-    Object.values(zones).forEach(z => {
-        const opt = document.createElement('option');
-        opt.value = z.name;
-        opt.textContent = z.name + (z.isDefault ? ' (Default)' : '');
-        if (z.name === transition.zone) opt.selected = true;
-        zoneSelect.appendChild(opt);
-    });
-
-    const updateTransition = () => {
-        transition.preMin = parseInt(container.querySelector('#pre-min-input').value) || 0;
-        transition.postMin = parseInt(container.querySelector('#post-min-input').value) || 0;
-        transition.label = container.querySelector('#buffer-label-input').value.trim() || "Transition";
-        transition.zone = container.querySelector('#zone-select').value;
-        transition.occupiesField = container.querySelector('#occupies-field-check').checked;
-        transition.minDurationMin = parseInt(container.querySelector('#min-duration-input').value) || 0;
-        onSave();
-        onRerender();
-    };
-
-    container.querySelectorAll('input, select').forEach(el => {
-        el.onchange = updateTransition;
-    });
-
-    return container;
-}
-
-function renderAllowedBunksControls(item, onSave, onRerender) {
-    const container = document.createElement("div");
-
-    if (!item.limitUsage) { item.limitUsage = { enabled: false, divisions: {} }; }
-    if (!item.preferences) { item.preferences = { enabled: false, exclusive: false, list: [] }; }
-
     const rules = item.limitUsage;
     const prefs = item.preferences;
-    prefs.enabled = !!rules.enabled;
-
-    // --- Mode Toggle ---
-    const modeWrapper = document.createElement("div");
-    modeWrapper.style.display = "flex";
-    modeWrapper.style.marginBottom = "12px";
-    modeWrapper.style.background = "#F3F4F6";
-    modeWrapper.style.padding = "4px";
-    modeWrapper.style.borderRadius = "8px";
+    const share = item.sharableWith;
     
-    const btnOpen = document.createElement("button");
-    btnOpen.textContent = "Open to All";
-    btnOpen.style.flex = "1";
-    btnOpen.style.padding = "6px";
-    btnOpen.style.borderRadius = "6px";
-    btnOpen.style.border = "none";
-    btnOpen.style.fontSize = "0.85rem";
-    btnOpen.style.cursor = "pointer";
-    btnOpen.style.fontWeight = !rules.enabled ? "600" : "400";
-    btnOpen.style.background = !rules.enabled ? "#FFFFFF" : "transparent";
-    btnOpen.style.boxShadow = !rules.enabled ? "0 2px 4px rgba(0,0,0,0.05)" : "none";
+    // --- 1. ACCESS CONTROL ---
+    const accessSection = document.createElement("div");
+    accessSection.className = "section-row";
+    accessSection.innerHTML = `<label class="section-label">Access Level</label>`;
     
-    const btnRestricted = document.createElement("button");
-    btnRestricted.textContent = "Restricted / Priority";
-    btnRestricted.style.flex = "1";
-    btnRestricted.style.padding = "6px";
-    btnRestricted.style.borderRadius = "6px";
-    btnRestricted.style.border = "none";
-    btnRestricted.style.fontSize = "0.85rem";
-    btnRestricted.style.cursor = "pointer";
-    btnRestricted.style.fontWeight = rules.enabled ? "600" : "400";
-    btnRestricted.style.background = rules.enabled ? "#FFFFFF" : "transparent";
-    btnRestricted.style.boxShadow = rules.enabled ? "0 2px 4px rgba(0,0,0,0.05)" : "none";
-
-    btnOpen.onclick = () => {
-        if(rules.enabled) { rules.enabled = false; prefs.enabled = false; onSave(); onRerender(); }
-    };
-    btnRestricted.onclick = () => {
-        if(!rules.enabled) { rules.enabled = true; prefs.enabled = true; onSave(); onRerender(); }
+    const segControl = document.createElement("div");
+    segControl.className = "segmented-control";
+    
+    const btnAll = document.createElement("button");
+    btnAll.className = `segment-btn ${!rules.enabled ? 'active' : ''}`;
+    btnAll.textContent = "Open to All";
+    btnAll.onclick = () => {
+        rules.enabled = false; prefs.enabled = false;
+        saveData(); renderDetailPane();
     };
 
-    modeWrapper.appendChild(btnOpen);
-    modeWrapper.appendChild(btnRestricted);
-    container.appendChild(modeWrapper);
+    const btnLimit = document.createElement("button");
+    btnLimit.className = `segment-btn ${rules.enabled ? 'active' : ''}`;
+    btnLimit.textContent = "Restricted";
+    btnLimit.onclick = () => {
+        rules.enabled = true; prefs.enabled = true;
+        saveData(); renderDetailPane();
+    };
 
-    if (rules.enabled) {
-        // --- RESTRICTED UI ---
-        
-        // 1. Exclusive Checkbox
-        const exclLabel = document.createElement("label");
-        exclLabel.style.display = "flex";
-        exclLabel.style.alignItems = "center";
-        exclLabel.style.fontSize = "0.85rem";
-        exclLabel.style.marginBottom = "10px";
-        exclLabel.style.cursor = "pointer";
-        exclLabel.innerHTML = `<input type="checkbox" ${!!prefs.exclusive ? 'checked' : ''} style="margin-right:8px;"> <strong>Strictly Exclusive</strong> (Others cannot use this even if free)`;
-        exclLabel.querySelector("input").onchange = (e) => {
-            prefs.exclusive = e.target.checked;
-            onSave();
-        };
-        container.appendChild(exclLabel);
+    segControl.appendChild(btnAll);
+    segControl.appendChild(btnLimit);
+    accessSection.appendChild(segControl);
+    
+    if(rules.enabled) {
+        const restrictPanel = document.createElement("div");
+        restrictPanel.style.marginTop = "16px"; restrictPanel.style.padding = "16px";
+        restrictPanel.style.background = "#F9FAFB"; restrictPanel.style.borderRadius = "8px";
+        restrictPanel.style.border = "1px solid #E5E7EB";
 
-        // 2. Priority List
-        const priorityBox = document.createElement("div");
-        priorityBox.style.border = "1px solid #E5E7EB";
-        priorityBox.style.borderRadius = "8px";
-        priorityBox.style.padding = "10px";
-        priorityBox.style.background = "#F9FAFB";
-        priorityBox.style.marginBottom = "15px";
+        // Exclusive Toggle
+        const exclWrap = document.createElement("label");
+        exclWrap.style.display="flex"; exclWrap.style.alignItems="center"; exclWrap.style.marginBottom="16px"; exclWrap.style.gap="8px";
+        const toggle = document.createElement("div"); toggle.className = "ios-toggle";
+        const check = document.createElement("input"); check.type = "checkbox"; check.checked = !!prefs.exclusive;
+        const slider = document.createElement("span"); slider.className = "ios-slider";
+        check.onchange = (e) => { prefs.exclusive = e.target.checked; saveData(); };
+        toggle.appendChild(check); toggle.appendChild(slider);
+        exclWrap.appendChild(toggle);
+        exclWrap.appendChild(document.createTextNode("Exclusive (Only selected groups can book)"));
+        restrictPanel.appendChild(exclWrap);
 
-        priorityBox.innerHTML = `<div style="font-size:0.75rem; font-weight:700; color:#6B7280; text-transform:uppercase; margin-bottom:5px;">Priority Order</div>`;
-
-        const ul = document.createElement("ul");
-        ul.style.listStyle = "none"; ul.style.padding = "0"; ul.style.margin = "0";
-        
-        prefs.list = (prefs.list || []).filter(divName => rules.divisions.hasOwnProperty(divName));
-        if(prefs.list.length === 0) {
-            ul.innerHTML = `<li class="muted" style="font-size:0.8rem; font-style:italic;">No priority set. Select divisions below to add them.</li>`;
-        }
-
-        prefs.list.forEach((divName, idx) => {
-            const li = document.createElement("li");
-            li.style.cssText = "display:flex; justify-content:space-between; align-items:center; background:#FFF; border:1px solid #E5E7EB; padding:6px 10px; margin-bottom:4px; border-radius:6px; font-size:0.85rem;";
-            li.innerHTML = `
-                <span style="font-weight:600;">${idx + 1}. ${divName}</span>
-                <div class="priority-controls" style="display:flex; gap:4px;">
-                     <button data-action="up" ${idx === 0 ? 'disabled' : ''}>↑</button>
-                     <button data-action="down" ${idx === prefs.list.length - 1 ? 'disabled' : ''}>↓</button>
-                </div>
-            `;
-             li.querySelector('[data-action="up"]').onclick = () => {
-                if (idx > 0) {
-                    [prefs.list[idx - 1], prefs.list[idx]] = [prefs.list[idx], prefs.list[idx - 1]];
-                    onSave(); onRerender();
-                }
-            };
-            li.querySelector('[data-action="down"]').onclick = () => {
-                if (idx < prefs.list.length - 1) {
-                    [prefs.list[idx + 1], prefs.list[idx]] = [prefs.list[idx], prefs.list[idx + 1]];
-                    onSave(); onRerender();
-                }
-            };
-            ul.appendChild(li);
-        });
-        priorityBox.appendChild(ul);
-        container.appendChild(priorityBox);
-
-        // 3. Division Picker
-        const pickerHeader = document.createElement("div");
-        pickerHeader.textContent = "Click to Allow Division / Bunk:";
-        pickerHeader.style.fontSize = "0.8rem";
-        pickerHeader.style.fontWeight = "600";
-        pickerHeader.style.marginBottom = "5px";
-        container.appendChild(pickerHeader);
+        // Division Chips (Selection)
+        const divLabel = document.createElement("div");
+        divLabel.textContent = "Select Allowed Divisions:";
+        divLabel.style.fontSize="0.8rem"; divLabel.style.fontWeight="600"; divLabel.style.marginBottom="8px";
+        restrictPanel.appendChild(divLabel);
 
         const availableDivisions = window.availableDivisions || [];
-        const chipContainer = document.createElement("div");
-        
         availableDivisions.forEach(divName => {
             const isAllowed = divName in rules.divisions;
-            const divChip = createLimitChip(divName, isAllowed, true);
-            divChip.style.marginRight = "5px"; divChip.style.marginBottom = "5px"; divChip.style.display="inline-block";
-            
-            divChip.onclick = () => {
-                if (isAllowed) {
-                    delete rules.divisions[divName];
+            const chip = document.createElement("button");
+            chip.className = `pro-chip ${isAllowed ? 'active' : ''}`;
+            chip.textContent = divName;
+            chip.onclick = () => {
+                if(isAllowed) { 
+                    delete rules.divisions[divName]; 
                     prefs.list = prefs.list.filter(d => d !== divName);
-                } else {
+                } 
+                else { 
                     rules.divisions[divName] = []; 
-                    if(!prefs.list.includes(divName)) prefs.list.push(divName);
+                    if (!prefs.list.includes(divName)) prefs.list.push(divName);
                 }
-                onSave(); onRerender();
+                saveData(); renderDetailPane();
             };
-            chipContainer.appendChild(divChip);
+            restrictPanel.appendChild(chip);
         });
-        container.appendChild(chipContainer);
-    }
 
-    return container;
-}
+        // Priority Sorting List (Re-implemented with better UI)
+        if (prefs.list && prefs.list.length > 0) {
+            const sortLabel = document.createElement("div");
+            sortLabel.textContent = "Priority Order (Highest First):";
+            sortLabel.style.fontSize="0.8rem"; sortLabel.style.fontWeight="600"; sortLabel.style.marginTop="16px"; sortLabel.style.marginBottom="8px";
+            restrictPanel.appendChild(sortLabel);
 
-function renderSharableControls(item, onSave, onRerender) {
-    const container = document.createElement("div");
-    
-    if (!item.sharableWith) { item.sharableWith = { type: 'not_sharable', capacity: 2 }; }
-    if (!item.sharableWith.capacity) { item.sharableWith.capacity = 2; }
-    
-    const rules = item.sharableWith;
-    const isSharable = rules.type !== 'not_sharable';
-
-    const topRow = document.createElement("div");
-    topRow.style.display = "flex"; topRow.style.alignItems = "center"; topRow.style.justifyContent = "space-between";
-
-    const tog = document.createElement("label");
-    tog.className = "switch";
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.checked = isSharable;
-    cb.onchange = () => {
-        rules.type = cb.checked ? 'all' : 'not_sharable';
-        rules.divisions = [];
-        onSave(); onRerender();
-    };
-    const sl = document.createElement("span"); sl.className = "slider";
-    tog.appendChild(cb); tog.appendChild(sl);
-    
-    const label = document.createElement("span");
-    label.textContent = "Allow Concurrent Groups";
-    label.style.fontWeight = "600"; label.style.fontSize = "0.85rem";
-
-    topRow.appendChild(label);
-    topRow.appendChild(tog);
-    container.appendChild(topRow);
-
-    if (isSharable) {
-        const detailBox = document.createElement("div");
-        detailBox.style.marginTop = "10px";
-        detailBox.style.padding = "10px";
-        detailBox.style.background = "#F0FDF4";
-        detailBox.style.border = "1px solid #BBF7D0";
-        detailBox.style.borderRadius = "8px";
-
-        detailBox.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px;">
-                <span style="font-size:0.85rem;">Max Groups:</span>
-                <input type="number" id="share-cap" value="${rules.capacity}" min="2" class="modern-input" style="width:60px;">
-            </div>
-        `;
-        detailBox.querySelector("#share-cap").onchange = (e) => {
-            const val = parseInt(e.target.value);
-            rules.capacity = val >= 2 ? val : 2;
-            onSave();
-        };
-
-        container.appendChild(detailBox);
-    }
-
-    return container;
-}
-
-function renderTimeRulesUI(item, onSave, onRerender) {
-    const container = document.createElement("div");
-
-    if (!item.timeRules) item.timeRules = [];
-
-    const ruleList = document.createElement("div");
-    if (item.timeRules.length === 0) {
-        ruleList.innerHTML = `<p class="muted" style="margin: 4px 0 10px;">Available all day (Default).</p>`;
-    } else {
-        item.timeRules.forEach((rule, index) => {
-            const ruleEl = document.createElement("div");
-            ruleEl.style.cssText = "margin-bottom:6px; padding:6px 10px; background:#F9FAFB; border-radius:6px; display:flex; justify-content:space-between; align-items:center; border:1px solid #E5E7EB; font-size:0.85rem;";
+            const sortList = document.createElement("div");
+            sortList.style.border = "1px solid #E5E7EB"; sortList.style.borderRadius = "8px"; sortList.style.overflow = "hidden";
             
-            ruleEl.innerHTML = `
-                <span>
-                    <strong style="color:${rule.type === 'Available' ? '#16A34A' : '#DC2626'}">${rule.type}</strong>
-                    ${rule.start} - ${rule.end}
-                </span>
-            `;
-            const del = document.createElement("button");
-            del.innerHTML = "&times;";
-            del.style.cssText = "border:none; background:none; font-size:1.1rem; color:#9CA3AF; cursor:pointer;";
-            del.onclick = () => {
-                item.timeRules.splice(index, 1);
-                onSave(); onRerender();
-            };
-            ruleEl.appendChild(del);
-            ruleList.appendChild(ruleEl);
-        });
+            // Sync prefs.list with allowed divisions
+            prefs.list = prefs.list.filter(d => rules.divisions.hasOwnProperty(d));
+            
+            prefs.list.forEach((divName, idx) => {
+                const row = document.createElement("div");
+                row.className = "priority-item";
+                row.innerHTML = `<span style="font-size:0.85rem; font-weight:500;">${idx+1}. ${divName}</span>`;
+                
+                const controls = document.createElement("div");
+                const upBtn = document.createElement("button"); upBtn.innerHTML = "↑"; upBtn.className = "priority-btn";
+                const downBtn = document.createElement("button"); downBtn.innerHTML = "↓"; downBtn.className = "priority-btn";
+                
+                upBtn.onclick = () => {
+                    if (idx > 0) {
+                        [prefs.list[idx-1], prefs.list[idx]] = [prefs.list[idx], prefs.list[idx-1]];
+                        saveData(); renderDetailPane();
+                    }
+                };
+                downBtn.onclick = () => {
+                    if (idx < prefs.list.length - 1) {
+                        [prefs.list[idx+1], prefs.list[idx]] = [prefs.list[idx], prefs.list[idx+1]];
+                        saveData(); renderDetailPane();
+                    }
+                };
+                
+                if (idx === 0) upBtn.disabled = true;
+                if (idx === prefs.list.length - 1) downBtn.disabled = true;
+                
+                controls.appendChild(upBtn);
+                controls.appendChild(downBtn);
+                row.appendChild(controls);
+                sortList.appendChild(row);
+            });
+            restrictPanel.appendChild(sortList);
+        }
+        
+        accessSection.appendChild(restrictPanel);
     }
-    container.appendChild(ruleList);
+    container.appendChild(accessSection);
 
-    // Add UI
-    const addBox = document.createElement("div");
-    addBox.style.display="flex"; addBox.style.gap="5px"; addBox.style.marginTop="5px";
+    // --- 2. SHARING ---
+    const shareSection = document.createElement("div");
+    shareSection.className = "section-row";
+    shareSection.style.borderTop = "1px solid #F3F4F6"; shareSection.style.paddingTop = "24px";
     
-    addBox.innerHTML = `
-        <select id="tr-type" class="modern-input" style="padding:4px;"><option value="Available">Available</option><option value="Unavailable">Unavailable</option></select>
-        <input id="tr-start" placeholder="9:00am" class="modern-input" style="width:70px; padding:4px;">
-        <span style="align-self:center;">-</span>
-        <input id="tr-end" placeholder="10:30am" class="modern-input" style="width:70px; padding:4px;">
-        <button id="tr-add" style="background:#00C896; color:#FFF; border:none; border-radius:6px; padding:0 10px; cursor:pointer;">+</button>
+    shareSection.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div>
+                <label class="section-label">Concurrent Events</label>
+                <div class="section-desc" style="margin:0;">Allow multiple groups to use this field at the same time?</div>
+            </div>
+            <label class="ios-toggle">
+                <input type="checkbox" id="share-toggle" ${share.type !== 'not_sharable' ? 'checked' : ''}>
+                <span class="ios-slider"></span>
+            </label>
+        </div>
     `;
     
-    addBox.querySelector("#tr-add").onclick = () => {
-        const type = addBox.querySelector("#tr-type").value;
-        const start = addBox.querySelector("#tr-start").value;
-        const end = addBox.querySelector("#tr-end").value;
-        if(start && end) {
-            item.timeRules.push({ type, start, end });
-            onSave(); onRerender();
-        }
+    const toggleInput = shareSection.querySelector("#share-toggle");
+    toggleInput.onchange = (e) => {
+        share.type = e.target.checked ? 'all' : 'not_sharable';
+        saveData(); renderDetailPane();
     };
 
-    container.appendChild(addBox);
-    return container;
+    if (share.type !== 'not_sharable') {
+        const capacityRow = document.createElement("div");
+        capacityRow.style.marginTop = "12px";
+        capacityRow.style.display = "flex"; capacityRow.style.alignItems = "center"; capacityRow.style.gap = "12px";
+        
+        capacityRow.innerHTML = `
+            <span style="font-size:0.9rem;">Max Concurrent Groups:</span>
+            <input type="number" value="${share.capacity}" min="2" class="ios-input" style="width:60px;">
+        `;
+        capacityRow.querySelector("input").onchange = (e) => {
+            share.capacity = parseInt(e.target.value) || 2; saveData();
+        };
+        shareSection.appendChild(capacityRow);
+    }
+    
+    container.appendChild(shareSection);
 }
 
-// --- Helpers ---
+// =================================================================
+// TAB 3: LOGISTICS (Clean Form with restored logic)
+// =================================================================
+function renderLogistics(container, item) {
+    const trans = item.transition;
+    
+    // --- BUFFERS ---
+    const bufSection = document.createElement("div");
+    bufSection.className = "section-row";
+    
+    bufSection.innerHTML = `<label class="section-label">Travel & Setup Buffers (Minutes)</label>`;
+    
+    const grid = document.createElement("div");
+    grid.style.display = "grid"; grid.style.gridTemplateColumns = "1fr 1fr"; grid.style.gap = "16px";
+    
+    // Pre/Post Inputs
+    grid.innerHTML = `
+        <div>
+            <span style="font-size:0.8rem; color:#6B7280; display:block; margin-bottom:4px;">Before Event (Travel To)</span>
+            <input type="number" id="pre-min" value="${trans.preMin}" min="0" step="5" class="ios-input" style="width:100%;">
+        </div>
+        <div>
+            <span style="font-size:0.8rem; color:#6B7280; display:block; margin-bottom:4px;">After Event (Travel From)</span>
+            <input type="number" id="post-min" value="${trans.postMin}" min="0" step="5" class="ios-input" style="width:100%;">
+        </div>
+    `;
+    
+    grid.querySelector("#pre-min").onchange = (e) => { trans.preMin = parseInt(e.target.value)||0; saveData(); };
+    grid.querySelector("#post-min").onchange = (e) => { trans.postMin = parseInt(e.target.value)||0; saveData(); };
+    bufSection.appendChild(grid);
 
-function parseTimeToMinutes(str) {
-    if (!str || typeof str !== "string") return null;
-    let s = str.trim().toLowerCase();
-    let mer = null;
-    if (s.endsWith("am") || s.endsWith("pm")) {
-        mer = s.endsWith("am") ? "am" : "pm";
-        s = s.replace(/am|pm/g, "").trim();
-    }
-    const m = s.match(/^(\d{1,2})\s*:\s*(\d{2})$/);
-    if (!m) return null;
-    let hh = parseInt(m[1], 10);
-    const mm = parseInt(m[2], 10);
-    if (Number.isNaN(hh) || Number.isNaN(mm) || mm < 0 || mm > 59) return null;
-    if (mer) {
-        if (hh === 12) hh = mer === "am" ? 0 : 12; 
-        else if (mer === "pm") hh += 12; 
-    }
-    return hh * 60 + mm;
-}
+    // Buffer Label (Restored)
+    const labelRow = document.createElement("div");
+    labelRow.style.marginTop = "12px";
+    labelRow.innerHTML = `
+        <span style="font-size:0.8rem; color:#6B7280; display:block; margin-bottom:4px;">Buffer Reason (Label)</span>
+        <input type="text" id="buf-label" value="${trans.label}" class="ios-input" style="width:100%;">
+    `;
+    labelRow.querySelector("#buf-label").onchange = (e) => { trans.label = e.target.value || "Travel"; saveData(); };
+    bufSection.appendChild(labelRow);
 
-function addField() {
-    const n = addFieldInput.value.trim();
-    if (!n) return;
-    if (fields.some(f => f.name.toLowerCase() === n.toLowerCase())) {
-        alert("Name exists."); return;
-    }
-    fields.push({
-        name: n, activities: [], available: true,
-        sharableWith: { type: 'not_sharable', divisions: [], capacity: 2 },
-        limitUsage: { enabled: false, divisions: {} },
-        preferences: { enabled: false, exclusive: false, list: [] },
-        transition: { preMin: 0, postMin: 0, label: "Travel", zone: window.DEFAULT_ZONE_NAME, occupiesField: false, minDurationMin: 0 }
+    // Occupy Toggle
+    const occRow = document.createElement("div");
+    occRow.style.marginTop = "12px"; occRow.style.display="flex"; occRow.style.alignItems="center"; occRow.style.gap="8px";
+    const toggle = document.createElement("div"); toggle.className = "ios-toggle";
+    const check = document.createElement("input"); check.type = "checkbox"; check.checked = trans.occupiesField;
+    const slider = document.createElement("span"); slider.className = "ios-slider";
+    check.onchange = (e) => { trans.occupiesField = e.target.checked; saveData(); };
+    toggle.appendChild(check); toggle.appendChild(slider);
+    
+    occRow.appendChild(toggle);
+    occRow.appendChild(document.createTextNode("Buffers block the field (e.g. Setup time)"));
+    occRow.style.fontSize = "0.85rem";
+    bufSection.appendChild(occRow);
+    
+    container.appendChild(bufSection);
+
+    // --- LOGISTICS (Zone & Min Duration) ---
+    const metaSection = document.createElement("div");
+    metaSection.className = "section-row";
+    metaSection.style.borderTop = "1px solid #F3F4F6"; metaSection.style.paddingTop = "24px";
+
+    const metaGrid = document.createElement("div");
+    metaGrid.style.display = "grid"; metaGrid.style.gridTemplateColumns = "1fr 1fr"; metaGrid.style.gap = "16px";
+
+    // Zone
+    const zoneWrapper = document.createElement("div");
+    zoneWrapper.innerHTML = `<label class="section-label">Location Zone</label>`;
+    const select = document.createElement("select");
+    select.className = "ios-input";
+    const zones = window.getZones?.() || {};
+    Object.values(zones).forEach(z => {
+        const opt = document.createElement("option");
+        opt.value = z.name; opt.textContent = z.name;
+        if(z.name === trans.zone) opt.selected = true;
+        select.appendChild(opt);
     });
-    addFieldInput.value = "";
-    saveData();
-    selectedItemId = `field-${n}`;
-    renderMasterLists();
-    renderDetailPane();
-}
+    select.onchange = (e) => { trans.zone = e.target.value; saveData(); };
+    zoneWrapper.appendChild(select);
 
-function makeEditable(el, save) {
-    el.ondblclick = e => {
-        e.stopPropagation();
-        const old = el.textContent;
-        const input = document.createElement("input");
-        input.type = "text"; input.value = old;
-        input.style.fontSize = "inherit"; input.style.fontWeight = "inherit";
-        el.replaceWith(input); input.focus();
-        function done() {
-            const val = input.value.trim();
-            if (val && val !== old) save(val);
-            el.textContent = val || old; input.replaceWith(el);
-        }
-        input.onblur = done; input.onkeyup = e => { if (e.key === "Enter") done(); };
+    // Min Duration (Restored)
+    const minDurWrapper = document.createElement("div");
+    minDurWrapper.innerHTML = `<label class="section-label">Min Duration</label>`;
+    const durInput = document.createElement("input");
+    durInput.type = "number"; durInput.value = trans.minDurationMin; durInput.min = "0"; durInput.step = "5"; durInput.className = "ios-input";
+    durInput.onchange = (e) => { trans.minDurationMin = parseInt(e.target.value) || 0; saveData(); };
+    minDurWrapper.appendChild(durInput);
+
+    metaGrid.appendChild(zoneWrapper);
+    metaGrid.appendChild(minDurWrapper);
+    metaSection.appendChild(metaGrid);
+    
+    container.appendChild(metaSection);
+
+    // --- OPENING HOURS ---
+    const timeSection = document.createElement("div");
+    timeSection.className = "section-row";
+    timeSection.style.borderTop = "1px solid #F3F4F6"; timeSection.style.paddingTop = "24px";
+    
+    timeSection.innerHTML = `
+        <label class="section-label">Availability Exceptions</label>
+        <div class="section-desc">Default is Available 24/7. Add rules to restrict times.</div>
+    `;
+    
+    const ruleList = document.createElement("div");
+    item.timeRules.forEach((r, idx) => {
+        const row = document.createElement("div");
+        row.style.background = "#FFF"; row.style.border = "1px solid #E5E7EB"; row.style.padding = "8px 12px";
+        row.style.borderRadius = "6px"; row.style.marginBottom = "8px"; row.style.display="flex"; row.style.justifyContent="space-between";
+        row.innerHTML = `<span>${r.type}: ${r.start} - ${r.end}</span> <span style="cursor:pointer; color:#EF4444;">&times;</span>`;
+        row.querySelector("span:last-child").onclick = () => { item.timeRules.splice(idx, 1); saveData(); renderDetailPane(); };
+        ruleList.appendChild(row);
+    });
+    
+    // Simple Add
+    const addRow = document.createElement("div");
+    addRow.style.display="flex"; addRow.style.gap="8px";
+    addRow.innerHTML = `
+        <select id="new-rule-type" class="ios-input"><option>Available</option><option>Unavailable</option></select>
+        <input id="new-rule-start" placeholder="9:00am" class="ios-input" style="width:80px;">
+        <input id="new-rule-end" placeholder="5:00pm" class="ios-input" style="width:80px;">
+        <button id="add-rule-btn" class="ios-btn-secondary">Add</button>
+    `;
+    addRow.querySelector("#add-rule-btn").onclick = () => {
+        const type = addRow.querySelector("#new-rule-type").value;
+        const start = addRow.querySelector("#new-rule-start").value;
+        const end = addRow.querySelector("#new-rule-end").value;
+        if(start && end) { item.timeRules.push({type, start, end}); saveData(); renderDetailPane(); }
     };
+    
+    timeSection.appendChild(ruleList);
+    timeSection.appendChild(addRow);
+    container.appendChild(timeSection);
 }
 
-function createLimitChip(name, isActive, isDivision = true) {
-    const chip = document.createElement("span");
-    chip.textContent = name;
-    chip.style.padding = "4px 9px";
-    chip.style.borderRadius = "999px";
-    chip.style.cursor = "pointer";
-    chip.style.border = "1px solid #CBD5E1";
-    chip.style.fontSize = isDivision ? "0.82rem" : "0.78rem";
-    const activeBG = isDivision ? "#00C896" : "#38BDF8"; 
-    const activeColor = "#FFFFFF";
-    const inactiveBG = isDivision ? "#F3F4F6" : "#F9FAFB";
-    const inactiveColor = "#111827";
-    chip.style.backgroundColor = isActive ? activeBG : inactiveBG;
-    chip.style.color = isActive ? activeColor : inactiveColor;
-    chip.style.boxShadow = isActive ? "0 3px 8px rgba(0, 200, 150, 0.35)" : "none";
-    return chip;
-}
-
+// --- Init ---
 window.initFieldsTab = initFieldsTab;
 window.fields = fields;
 
