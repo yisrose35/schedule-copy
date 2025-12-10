@@ -5,7 +5,7 @@
 // UPDATES:
 // - Added Field Reservation Scanner and Check logic
 // - Integrated reservation check into canBlockFit
-// - Updated time parser to infer PM for 1-6
+// - Updated time parser to infer PM for 1-6 with conservative warning
 // ============================================================================
 
 (function () {
@@ -52,9 +52,12 @@
             if (hh === 12) hh = mer === "am" ? 0 : 12;
             else if (mer === "pm") hh += 12;
         } else {
-            // Inference logic from reservation module: 
-            // If AM/PM not specified, assume PM for 1-6, otherwise keep as is (likely AM for 8-11)
-            if (hh >= 1 && hh <= 6) hh += 12; 
+            // If no AM/PM specified, assume PM ONLY for afternoon hours (12-6)
+            // This prevents false positives from morning times
+            if (hh >= 1 && hh <= 6) {
+                console.warn(`[TIME PARSE] "${str}" has no AM/PM - assuming ${hh + 12 >= 12 ? 'PM' : 'AM'}`);
+                hh += 12; 
+            }
         }
 
         return hh * 60 + mm;
