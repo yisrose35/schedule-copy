@@ -586,29 +586,32 @@ function addDropListeners(gridContainer) {
         };
       }
 
-      // ===== NEW LOGIC: REMOVE OVERLAPPING EVENTS FIRST =====
+      // ... (inside addDropListeners, after the prompt logic) ...
+
+      // ===== UPDATED: STRICT OVERLAP REMOVAL =====
       if (newEvent) {
         const newStartMin = parseTimeToMinutes(newEvent.startTime);
         const newEndMin = parseTimeToMinutes(newEvent.endTime);
-        
+
         dailyOverrideSkeleton = dailyOverrideSkeleton.filter(item => {
           // Keep events from other divisions
           if (item.division !== divName) return true;
-          
+
           // Check for time overlap
           const itemStartMin = parseTimeToMinutes(item.startTime);
           const itemEndMin = parseTimeToMinutes(item.endTime);
-          
+
           if (itemStartMin == null || itemEndMin == null) return true;
-          
-          // Overlap condition: Item starts before new ends AND item ends after new starts
+
+          // OVERLAP CHECK:
+          // (Existing Start < New End) AND (Existing End > New Start)
           const overlaps = (itemStartMin < newEndMin) && (itemEndMin > newStartMin);
-          
+
           if (overlaps) {
-            console.log(`[SKELETON] Removing overlapping event: ${item.event} (${item.startTime}-${item.endTime})`);
-            return false; // Remove this overlapping event
+            console.log(`[OVERLAP FIX] Automatically removing overlapping event: ${item.event}`);
+            return false; // DELETE the existing event
           }
-          
+
           return true; // Keep non-overlapping events
         });
 
