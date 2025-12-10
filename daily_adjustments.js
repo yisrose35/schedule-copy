@@ -723,6 +723,43 @@ function minutesToTime(min) {
   return `${h}:${m}${ampm}`;
 }
 
+function parseTimeToMinutes(str) {
+  if (!str || typeof str !== "string") return null;
+  let s = str.trim().toLowerCase();
+  let mer = null;
+  if (s.endsWith("am") || s.endsWith("pm")) {
+    mer = s.endsWith("am") ? "am" : "pm";
+    s = s.replace(/am|pm/g, "").trim();
+  }
+  const m = s.match(/^(\d{1,2})\s*:\s*(\d{2})$/);
+  if (!m) return null;
+  let hh = parseInt(m[1], 10);
+  const mm = parseInt(m[2], 10);
+  if (Number.isNaN(hh) || Number.isNaN(mm) || mm < 0 || mm > 59) return null;
+  if (mer) {
+    if (hh === 12) hh = mer === "am" ? 0 : 12;
+    else if (mer === "pm") hh += 12;
+  } else {
+    // ===== FIX: INFER PM FOR 12–7 WHEN AM/PM MISSING =====
+    // If no AM/PM specified, assume PM for 12,1,2,3,4,5,6,7
+    if (hh >= 12 || hh <= 7) {
+      console.warn(`[TIME PARSE] "${str}" has no AM/PM - assuming PM`);
+      if (hh !== 12) hh += 12;  // convert 1–7 PM
+      // 12 stays as 12 (no change needed)
+    }
+  }
+  return hh * 60 + mm;
+}
+
+function uid() {
+  return `id_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+// =================================================================
+// ===== END: SKELETON EDITOR LOGIC =====
+// =================================================================
+
+
 // =================================================================
 // SMART TILE PRE-PROCESSOR HOOK (DISABLED for Capacity Fix)
 // =================================================================
@@ -765,41 +802,6 @@ function runOptimizer() {
     alert("Error during schedule generation. Check console.");
   }
 }
-
-function parseTimeToMinutes(str) {
-  if (!str || typeof str !== "string") return null;
-  let s = str.trim().toLowerCase();
-  let mer = null;
-  if (s.endsWith("am") || s.endsWith("pm")) {
-    mer = s.endsWith("am") ? "am" : "pm";
-    s = s.replace(/am|pm/g, "").trim();
-  }
-  const m = s.match(/^(\d{1,2})\s*:\s*(\d{2})$/);
-  if (!m) return null;
-  let hh = parseInt(m[1], 10);
-  const mm = parseInt(m[2], 10);
-  if (Number.isNaN(hh) || Number.isNaN(mm) || mm < 0 || mm > 59) return null;
-  if (mer) {
-    if (hh === 12) hh = mer === "am" ? 0 : 12;
-    else if (mer === "pm") hh += 12;
-  } else {
-    // ===== FIX: INFER PM FOR 12–7 WHEN AM/PM MISSING =====
-// If no AM/PM specified, assume PM for 12,1,2,3,4,5,6,7
-if (hh >= 12 || hh <= 7) {
-  console.warn(`[TIME PARSE] "${str}" has no AM/PM - assuming PM`);
-  if (hh !== 12) hh += 12;  // convert 1–7 PM
-  // 12 stays as 12 (no change needed)
-}
-
-
-function uid() {
-  return `id_${Math.random().toString(36).slice(2, 9)}`;
-}
-
-// =================================================================
-// ===== END: SKELETON EDITOR LOGIC =====
-// =================================================================
-
 
 /**
  * Main entry point for the Daily Adjustments tab
