@@ -576,6 +576,19 @@ window.debugBunkHistory = function(bunkName) {
         console.log(`  ${activity}: ${count}`);
     });
 };
+        // ====== CALL processSmartTiles ======
+        const smartTileBlocks = processSmartTiles(manualSkeleton, externalOverrides, {
+            divisions,
+            activityProperties,
+            masterSpecials,
+            dailyFieldAvailability,
+            historicalCounts,
+            specialActivityNames,
+            yesterdayHistory,
+            fieldUsageBySlot
+        });
+        schedulableSlotBlocks.push(...smartTileBlocks);
+        console.log(`[SmartTile] Added ${smartTileBlocks.length} blocks to scheduler`);
         // 5. Leagues
         const leagueContext = {
             schedulableSlotBlocks, 
