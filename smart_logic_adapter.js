@@ -1,14 +1,10 @@
 // ============================================================================
-// SmartLogicAdapter V42 (CAPACITY-AWARE + ACTUAL ACTIVITY NAMES)
+// SmartLogicAdapter V43 (DIVISION RESTRICTIONS FIX)
 // ============================================================================
-// CRITICAL FIXES:
-// 1. Resolves "Special" to ACTUAL activity names (Canteen, Gameroom, etc.)
-// 2. Dynamically calculates capacity by querying:
-//    - daily_adjustments.js for time-based availability
-//    - special_activities.js for per-activity capacity
-// 3. Tracks per-special usage within each block
-// 4. Re-queries availability for Block B (capacities are time-dependent)
-// 5. Respects maxUsage limits per bunk
+// CRITICAL FIXES FROM V42:
+// 1. NOW CHECKS DIVISION RESTRICTIONS (limitUsage, preferences.exclusive)
+// 2. Filters available specials BY DIVISION before calculating capacity
+// 3. Only specials that THIS division can use count toward capacity
 // ============================================================================
 
 (function() {
@@ -73,21 +69,120 @@
     }
 
     // =========================================================================
+    // CORE: CHECK IF DIVISION CAN USE A SPECIAL (NEW!)
+    // =========================================================================
+    
+    /**
+     * Checks if a specific division is allowed to use this special activity.
+     * 
+     * Checks:
+     * 1. limitUsage.enabled + limitUsage.divisions
+     * 2. preferences.exclusive + preferences.list
+     * 
+     * @param {string} divisionName - The division to check
+     * @param {object} props - The activity properties
+     * @returns {boolean} - True if division can use this special
+     */
+    function canDivisionUseSpecial(divisionName, props) {
+        if (!props) return true; // No props = no restrictions
+        
+        // Check limitUsage restrictions
+        if (props.limitUsage?.enabled) {
+            const allowedDivisions = props.limitUsage.divisions || {};
+            
+            // If limitUsage is enabled, division must be in the allowed list
+            if (!(divisionName in allowedDivisions)) {
+                return false;
+            }
+            
+            // If there are specific bunks listed, we'll check that separately
+            // For now, division is in the list = allowed
+        }
+        
+        // Check preferences.exclusive
+        if (props.preferences?.enabled && props.preferences?.exclusive) {
+            const preferredList = props.preferences.list || [];
+            
+            // If exclusive mode is on, division must be in the preference list
+            if (!preferredList.includes(divisionName)) {
+                return false;
+            }
+        }
+        
+        // Check allowedDivisions (another common pattern)
+        if (props.allowedDivisions?.length > 0) {
+            if (!props.allowedDivisions.includes(divisionName)) {
+                return false;
+            }
+        }
+        
+        return true;
+    }
+
+    /**
+     * Checks if a specific BUNK can use this special activity.
+     * 
+     * Checks:
+     * 1. Division-level access (via canDivisionUseSpecial)
+     * 2. Bunk-level restrictions (limitUsage.divisions[div] array)
+     * 
+     * @param {string} bunkName - The bunk to check
+     * @param {string} divisionName - The division this bunk belongs to
+     * @param {object} props - The activity properties
+     * @returns {boolean} - True if bunk can use this special
+     */
+    function canBunkAccessSpecial(bunkName, divisionName, props) {
+        if (!props) return true;
+        
+        // First check division-level
+        if (!canDivisionUseSpecial(divisionName, props)) {
+            return false;
+        }
+        
+        // Then check bunk-level restrictions
+        if (props.limitUsage?.enabled) {
+            const allowedDivisions = props.limitUsage.divisions || {};
+            const bunkRestrictions = allowedDivisions[divisionName];
+            
+            // If there's an array of specific bunks, check if this bunk is in it
+            if (Array.isArray(bunkRestrictions) && bunkRestrictions.length > 0) {
+                const bunkStr = String(bunkName);
+                const bunkNum = parseInt(bunkName);
+                const inList = bunkRestrictions.some(b => 
+                    String(b) === bunkStr || parseInt(b) === bunkNum
+                );
+                
+                if (!inList) {
+                    return false;
+                }
+            }
+            // If it's an empty array [], all bunks in that division are allowed
+        }
+        
+        return true;
+    }
+
+    // =========================================================================
     // CORE: GET AVAILABLE SPECIALS WITH CAPACITY FOR A TIME BLOCK
     // =========================================================================
     
     /**
      * Returns which special activities are OPEN during [startMin, endMin]
-     * and their individual capacities.
+     * AND available to the specified division.
      * 
      * This queries:
      * 1. window.getGlobalSpecialActivities() - master list
-     * 2. activityProps - for availability, time rules, capacity
+     * 2. activityProps - for availability, time rules, capacity, restrictions
      * 3. dailyFieldAvailability - for daily overrides
      * 
-     * @returns { name: string, capacity: number, maxUsage: number, remainingSlots: number }[]
+     * @param {number} startMin - Block start time in minutes
+     * @param {number} endMin - Block end time in minutes
+     * @param {string} divisionName - The division to check access for
+     * @param {object} activityProps - Activity properties map
+     * @param {object} dailyFieldAvailability - Daily overrides
+     * @returns {{ name: string, capacity: number, maxUsage: number, remainingSlots: number }[]}
      */
-    function getAvailableSpecialsForTimeBlock(startMin, endMin, activityProps, dailyFieldAvailability) {
+    function getAvailableSpecialsForTimeBlock(startMin, endMin, divisionName, activityProps, dailyFieldAvailability) {
         // Get all specials from the global registry
         const allSpecials = window.getGlobalSpecialActivities?.() || [];
         
@@ -106,7 +201,7 @@
         const combinedSpecials = [...allSpecials, ...propsSpecials];
         const available = [];
 
-        log(`\n  Checking specials for time ${startMin}-${endMin}:`);
+        log(`\n  Checking specials for ${divisionName} at ${startMin}-${endMin}:`);
         log(`  Found ${combinedSpecials.length} total specials to check`);
 
         // Get slots for this time block
@@ -126,13 +221,18 @@
                 return;
             }
 
-            // 2. Check daily overrides (from daily_adjustments.js)
+            // 2. CHECK DIVISION RESTRICTIONS (NEW!)
+            if (!canDivisionUseSpecial(divisionName, props)) {
+                log(`    ❌ ${specialName}: NOT ALLOWED for division "${divisionName}"`);
+                return;
+            }
+
+            // 3. Check daily overrides (from daily_adjustments.js)
             const dailyRules = dailyFieldAvailability?.[specialName] || [];
             
-            // 3. Check time rules (daily override takes precedence over global)
+            // 4. Check time rules (daily override takes precedence over global)
             const effectiveRules = dailyRules.length > 0 ? dailyRules : (props.timeRules || []);
             
-            // If there are time rules, check if this block is covered
             if (effectiveRules.length > 0) {
                 const isOpen = checkTimeRulesForBlock(startMin, endMin, effectiveRules, slots);
                 
@@ -142,7 +242,7 @@
                 }
             }
 
-            // 4. Calculate capacity from special_activities.js / fields.js
+            // 5. Calculate capacity from special_activities.js / fields.js
             let capacity = 1; // Default
             
             if (props.sharableWith?.capacity) {
@@ -151,18 +251,20 @@
                 capacity = 2;
             }
 
-            log(`    ✅ ${specialName}: AVAILABLE (capacity: ${capacity})`);
+            log(`    ✅ ${specialName}: AVAILABLE for ${divisionName} (capacity: ${capacity})`);
             
             available.push({
                 name: specialName,
                 capacity: capacity,
                 maxUsage: props.maxUsage || 0,
                 frequencyWeeks: props.frequencyWeeks || 0,
-                remainingSlots: capacity // Will be decremented as we assign
+                remainingSlots: capacity,
+                props: props // Keep reference for bunk-level checks
             });
         });
 
-        log(`  TOTAL: ${available.length} specials available, ${available.reduce((s,a) => s + a.capacity, 0)} total slots`);
+        const totalCap = available.reduce((s, a) => s + a.capacity, 0);
+        log(`  TOTAL FOR ${divisionName}: ${available.length} specials, ${totalCap} slots`);
         return available;
     }
 
@@ -170,14 +272,12 @@
      * Check if a time block passes time rules
      */
     function checkTimeRulesForBlock(startMin, endMin, rules, slots) {
-        // Parse rules
         const parsedRules = rules.map(r => ({
             ...r,
             startMin: parseTime(r.start) ?? r.startMin,
             endMin: parseTime(r.end) ?? r.endMin
         }));
 
-        // Check Available rules - if any exist, block must be within one
         const availableRules = parsedRules.filter(r => r.type === "Available");
         if (availableRules.length > 0) {
             const inAvailable = availableRules.some(r => 
@@ -186,11 +286,10 @@
             if (!inAvailable) return false;
         }
 
-        // Check Unavailable rules - block must not overlap any
         const unavailableRules = parsedRules.filter(r => r.type === "Unavailable");
         for (const rule of unavailableRules) {
             if (startMin < rule.endMin && endMin > rule.startMin) {
-                return false; // Overlap with unavailable
+                return false;
             }
         }
 
@@ -198,25 +297,35 @@
     }
 
     /**
-     * Calculate total "special" capacity for a time block
+     * Calculate total capacity for available specials
      */
     function getTotalSpecialCapacity(availableSpecials) {
         return availableSpecials.reduce((sum, s) => sum + s.capacity, 0);
     }
 
     // =========================================================================
-    // CORE: CHECK IF BUNK CAN USE A SPECIFIC SPECIAL
+    // CORE: CHECK IF BUNK CAN USE A SPECIFIC SPECIAL (UPDATED)
     // =========================================================================
 
     /**
      * Checks if a bunk can use a specific special activity.
-     * Considers maxUsage limits from historical counts.
+     * 
+     * Checks:
+     * 1. Bunk-level access (limitUsage.divisions[div] array)
+     * 2. maxUsage limits from historical counts
      */
-    function canBunkUseSpecial(bunk, special, historicalCounts) {
-        const maxUsage = special.maxUsage || 0;
+    function canBunkUseSpecial(bunk, divisionName, special, historicalCounts, activityProps) {
+        const props = activityProps?.[special.name] || special.props || special;
         
-        // No limit = always usable
-        if (maxUsage === 0) return true;
+        // Check bunk-level access restrictions
+        if (!canBunkAccessSpecial(bunk, divisionName, props)) {
+            log(`      ${bunk}: not allowed to use ${special.name} (bunk restriction)`);
+            return false;
+        }
+        
+        // Check maxUsage
+        const maxUsage = special.maxUsage || 0;
+        if (maxUsage === 0) return true; // No limit
 
         const bunkHistory = historicalCounts[bunk] || {};
         const usedCount = bunkHistory[special.name] || 0;
@@ -232,10 +341,10 @@
     /**
      * Find which specials a bunk can use from the available list
      */
-    function getUsableSpecialsForBunk(bunk, availableSpecials, historicalCounts) {
+    function getUsableSpecialsForBunk(bunk, divisionName, availableSpecials, historicalCounts, activityProps) {
         return availableSpecials.filter(special => 
             special.remainingSlots > 0 && 
-            canBunkUseSpecial(bunk, special, historicalCounts)
+            canBunkUseSpecial(bunk, divisionName, special, historicalCounts, activityProps)
         );
     }
 
@@ -247,7 +356,6 @@
         
         const bunkHistory = historicalCounts[bunk] || {};
         
-        // Sort by: least used by this bunk, then random
         const sorted = [...usableSpecials].sort((a, b) => {
             const countA = bunkHistory[a.name] || 0;
             const countB = bunkHistory[b.name] || 0;
@@ -264,9 +372,6 @@
 
     window.SmartLogicAdapter = {
 
-        /**
-         * Groups consecutive smart tiles by division into pairs (Block A + Block B)
-         */
         preprocessSmartTiles(rawSkeleton, dailyAdj, specials) {
             const jobs = [];
             const byDiv = {};
@@ -313,81 +418,77 @@
         },
 
         // =====================================================================
-        // MAIN ASSIGNMENT LOGIC (V42 - CAPACITY AWARE)
+        // MAIN ASSIGNMENT LOGIC (V43 - DIVISION AWARE)
         // =====================================================================
 
         generateAssignments(bunks, job, historical = {}, specialNames = [], activityProps = {}, masterFields = [], dailyFieldAvailability = {}, yesterdayHistory = {}) {
             
             log("\n" + "=".repeat(70));
-            log(`SMART TILE V42: ${job.division}`);
+            log(`SMART TILE V43: ${job.division}`);
             log(`Main1: ${job.main1}, Main2: ${job.main2}`);
             log(`Fallback: ${job.fallbackActivity} (for ${job.fallbackFor})`);
             log(`Bunks: ${bunks.join(', ')}`);
             log("=".repeat(70));
 
+            const divisionName = job.division;
             const main1 = job.main1?.trim();
             const main2 = job.main2?.trim();
             const fbAct = job.fallbackActivity || "Sports";
             const fbFor = job.fallbackFor || "";
 
-            // Determine which is the "special" (the limited one with fallback)
-            // and which is the "open" activity
+            // Determine which is the "special" and which is "open"
             let specialConfig, openAct;
             if (isSame(main1, fbFor)) {
-                specialConfig = main1; // This might be "Special" or an actual name
+                specialConfig = main1;
                 openAct = main2;
             } else if (isSame(main2, fbFor)) {
                 specialConfig = main2;
                 openAct = main1;
             } else {
-                // Default: main2 is the special/limited one
                 specialConfig = main2;
                 openAct = main1;
             }
 
-            // Check if specialConfig is a generic "Special" that needs resolution
             const needsResolution = isSpecialType(specialConfig);
             
             log(`\nConfiguration:`);
             log(`  "Special" config: ${specialConfig} (needs resolution: ${needsResolution})`);
             log(`  "Open" activity: ${openAct}`);
+            log(`  Division: ${divisionName}`);
 
             // -----------------------------------------------------------------
-            // STEP 1: Get available specials for BLOCK A
+            // STEP 1: Get available specials for BLOCK A (DIVISION-FILTERED!)
             // -----------------------------------------------------------------
-            log("\n--- BLOCK A: QUERYING AVAILABLE SPECIALS ---");
+            log("\n--- BLOCK A: QUERYING AVAILABLE SPECIALS FOR " + divisionName + " ---");
             
             let specialsBlockA = getAvailableSpecialsForTimeBlock(
                 job.blockA.startMin, 
-                job.blockA.endMin, 
+                job.blockA.endMin,
+                divisionName,  // PASS DIVISION!
                 activityProps, 
                 dailyFieldAvailability
             );
             
-            // If specialConfig is a specific activity (not generic "Special"),
-            // filter to just that one
             if (!needsResolution) {
                 specialsBlockA = specialsBlockA.filter(s => isSame(s.name, specialConfig));
-                if (specialsBlockA.length === 0) {
-                    log(`  WARNING: Specific special "${specialConfig}" not available!`);
-                }
             }
             
             const capacityA = getTotalSpecialCapacity(specialsBlockA);
-            log(`Block A capacity: ${capacityA} total slots from ${specialsBlockA.length} specials`);
+            log(`Block A capacity for ${divisionName}: ${capacityA} slots from ${specialsBlockA.map(s => `${s.name}(${s.capacity})`).join(', ') || 'none'}`);
 
             // -----------------------------------------------------------------
-            // STEP 2: Get available specials for BLOCK B (SEPARATE QUERY!)
+            // STEP 2: Get available specials for BLOCK B (DIVISION-FILTERED!)
             // -----------------------------------------------------------------
             let specialsBlockB = [];
             let capacityB = 0;
             
             if (job.blockB) {
-                log("\n--- BLOCK B: QUERYING AVAILABLE SPECIALS ---");
+                log("\n--- BLOCK B: QUERYING AVAILABLE SPECIALS FOR " + divisionName + " ---");
                 
                 specialsBlockB = getAvailableSpecialsForTimeBlock(
                     job.blockB.startMin, 
-                    job.blockB.endMin, 
+                    job.blockB.endMin,
+                    divisionName,  // PASS DIVISION!
                     activityProps, 
                     dailyFieldAvailability
                 );
@@ -397,7 +498,7 @@
                 }
                 
                 capacityB = getTotalSpecialCapacity(specialsBlockB);
-                log(`Block B capacity: ${capacityB} total slots from ${specialsBlockB.length} specials`);
+                log(`Block B capacity for ${divisionName}: ${capacityB} slots from ${specialsBlockB.map(s => `${s.name}(${s.capacity})`).join(', ') || 'none'}`);
             }
 
             // -----------------------------------------------------------------
@@ -408,7 +509,6 @@
             const eligibleBunks = [];
             const ineligibleBunks = [];
 
-            // Combine all available specials from both blocks for eligibility check
             const allAvailableNames = new Set([
                 ...specialsBlockA.map(s => s.name),
                 ...specialsBlockB.map(s => s.name)
@@ -423,7 +523,7 @@
 
             bunks.forEach(bunk => {
                 const usable = allAvailableSpecials.filter(s => 
-                    canBunkUseSpecial(bunk, s, historical)
+                    canBunkUseSpecial(bunk, divisionName, s, historical, activityProps)
                 );
                 
                 if (usable.length > 0) {
@@ -431,7 +531,7 @@
                     log(`  ${bunk}: ELIGIBLE (can use: ${usable.map(s => s.name).join(', ')})`);
                 } else {
                     ineligibleBunks.push(bunk);
-                    log(`  ${bunk}: INELIGIBLE (maxed out all specials)`);
+                    log(`  ${bunk}: INELIGIBLE (maxed out or restricted)`);
                 }
             });
 
@@ -441,7 +541,7 @@
             log("\n--- SORTING BY FAIRNESS ---");
             
             const priorityQueue = loadPriorityQueue();
-            const divPriority = priorityQueue[job.division] || [];
+            const divPriority = priorityQueue[divisionName] || [];
 
             function getSpecialUsageCount(bunk) {
                 let sum = 0;
@@ -462,70 +562,64 @@
             }
 
             const sortedEligible = [...eligibleBunks].sort((a, b) => {
-                // 1. Priority debt (bunks squeezed out before go first)
                 const pA = divPriority.includes(a) ? 1 : 0;
                 const pB = divPriority.includes(b) ? 1 : 0;
                 if (pA !== pB) return pB - pA;
 
-                // 2. Least special usage this week
                 const usageA = getSpecialUsageCount(a);
                 const usageB = getSpecialUsageCount(b);
                 if (usageA !== usageB) return usageA - usageB;
 
-                // 3. Didn't play yesterday
                 const yA = playedYesterday(a) ? 1 : 0;
                 const yB = playedYesterday(b) ? 1 : 0;
                 if (yA !== yB) return yA - yB;
 
-                // 4. Random tiebreaker
                 return Math.random() - 0.5;
             });
 
             log(`Sorted order: ${sortedEligible.join(', ')}`);
 
             // -----------------------------------------------------------------
-            // STEP 5: BLOCK A ASSIGNMENT (with ACTUAL activity names)
+            // STEP 5: BLOCK A ASSIGNMENT
             // -----------------------------------------------------------------
             log("\n--- BLOCK A ASSIGNMENT ---");
             
             const block1 = {};
             const specialWinnersA = new Set();
             
-            // Reset remaining slots for Block A
+            // Reset remaining slots
             specialsBlockA.forEach(s => s.remainingSlots = s.capacity);
 
-            // Assign specials to top bunks
             sortedEligible.forEach(bunk => {
-                // Find usable specials for this bunk that still have capacity
-                const usable = getUsableSpecialsForBunk(bunk, specialsBlockA, historical);
+                const usable = getUsableSpecialsForBunk(bunk, divisionName, specialsBlockA, historical, activityProps);
                 
                 if (usable.length > 0) {
-                    // Pick the best special for this bunk
                     const chosen = pickBestSpecialForBunk(bunk, usable, historical);
                     
                     if (chosen) {
-                        block1[bunk] = chosen.name; // ACTUAL NAME like "Canteen"
+                        block1[bunk] = chosen.name;
                         specialWinnersA.add(bunk);
                         chosen.remainingSlots--;
-                        log(`  ${bunk} -> ${chosen.name} ⭐ (${chosen.remainingSlots} slots left)`);
+                        log(`  ${bunk} -> ${chosen.name} ⭐ (${chosen.remainingSlots} left for ${chosen.name})`);
                     } else {
                         block1[bunk] = openAct;
-                        log(`  ${bunk} -> ${openAct} (no special available)`);
+                        log(`  ${bunk} -> ${openAct}`);
                     }
                 } else {
                     block1[bunk] = openAct;
-                    log(`  ${bunk} -> ${openAct} (capacity full or maxed out)`);
+                    log(`  ${bunk} -> ${openAct} (no capacity)`);
                 }
             });
 
-            // Ineligible bunks get the open activity in Block A
             ineligibleBunks.forEach(bunk => {
                 block1[bunk] = openAct;
                 log(`  ${bunk} -> ${openAct} (INELIGIBLE)`);
             });
 
+            log(`\n  Block A Summary: ${specialWinnersA.size} got specials, ${bunks.length - specialWinnersA.size} got ${openAct}`);
+
             // -----------------------------------------------------------------
-            // STEP 6: BLOCK B ASSIGNMENT (with ACTUAL activity names)
+            // STEP 6: BLOCK B ASSIGNMENT
             // -----------------------------------------------------------------
             const block2 = {};
             let nextDayPriority = divPriority.filter(b => !specialWinnersA.has(b));
@@ -533,102 +627,77 @@
             if (job.blockB) {
                 log("\n--- BLOCK B ASSIGNMENT ---");
                 
-                // Reset remaining slots for Block B (FRESH query!)
+                // Reset remaining slots for Block B
                 specialsBlockB.forEach(s => s.remainingSlots = s.capacity);
 
-                // Winners from A MUST get the open activity in B (the swap)
+                // Winners from A get the open activity
                 log("Winners from A get OPEN activity:");
                 specialWinnersA.forEach(bunk => {
                     block2[bunk] = openAct;
                     log(`  ${bunk} -> ${openAct} (swapped)`);
                 });
 
-                // Losers from A try to get special in B
+                // Losers from A try for specials
                 log("\nLosers from A try for SPECIAL:");
                 const losersFromA = sortedEligible.filter(b => !specialWinnersA.has(b));
 
                 losersFromA.forEach(bunk => {
-                    const usable = getUsableSpecialsForBunk(bunk, specialsBlockB, historical);
+                    const usable = getUsableSpecialsForBunk(bunk, divisionName, specialsBlockB, historical, activityProps);
                     
                     if (usable.length > 0) {
                         const chosen = pickBestSpecialForBunk(bunk, usable, historical);
                         
                         if (chosen) {
-                            block2[bunk] = chosen.name; // ACTUAL NAME
+                            block2[bunk] = chosen.name;
                             chosen.remainingSlots--;
-                            log(`  ${bunk} -> ${chosen.name} ⭐ (${chosen.remainingSlots} slots left)`);
-                            
-                            // They got what they were owed - remove from priority debt
+                            log(`  ${bunk} -> ${chosen.name} ⭐ (${chosen.remainingSlots} left)`);
                             nextDayPriority = nextDayPriority.filter(p => p !== bunk);
                         } else {
-                            // Fallback
                             block2[bunk] = fbAct;
-                            log(`  ${bunk} -> ${fbAct} (FALLBACK - no capacity)`);
-                            
+                            log(`  ${bunk} -> ${fbAct} (FALLBACK)`);
                             if (!nextDayPriority.includes(bunk)) {
                                 nextDayPriority.push(bunk);
                             }
                         }
                     } else {
-                        // NO ROOM! Forced to fallback
                         block2[bunk] = fbAct;
-                        log(`  ${bunk} -> ${fbAct} (FALLBACK - no usable specials)`);
-                        
+                        log(`  ${bunk} -> ${fbAct} (FALLBACK - no usable)`);
                         if (!nextDayPriority.includes(bunk)) {
                             nextDayPriority.push(bunk);
-                            log(`    -> Added to priority queue`);
                         }
                     }
                 });
 
-                // Ineligible bunks get fallback in B
-                log("\nIneligible bunks get FALLBACK:");
                 ineligibleBunks.forEach(bunk => {
                     block2[bunk] = fbAct;
-                    log(`  ${bunk} -> ${fbAct}`);
+                    log(`  ${bunk} -> ${fbAct} (INELIGIBLE)`);
                 });
 
-            } else {
-                log("\n--- NO BLOCK B ---");
+                const specialsInB = Object.values(block2).filter(act => 
+                    specialsBlockB.some(s => s.name === act)
+                ).length;
+                log(`\n  Block B Summary: ${specialsInB} got specials, ${bunks.length - specialsInB} got ${openAct}/${fbAct}`);
             }
 
             // -----------------------------------------------------------------
-            // STEP 7: Save priority queue for tomorrow
+            // STEP 7: Save priority queue
             // -----------------------------------------------------------------
-            priorityQueue[job.division] = nextDayPriority;
+            priorityQueue[divisionName] = nextDayPriority;
             savePriorityQueue(priorityQueue);
             log(`\nPriority queue for tomorrow: ${nextDayPriority.join(', ') || '(empty)'}`);
 
             // -----------------------------------------------------------------
-            // STEP 8: Generate output
+            // STEP 8: Store debug info and return
             // -----------------------------------------------------------------
-            const locked = [];
-            
-            function lockBlock(assignments, blockInfo) {
-                Object.entries(assignments).forEach(([bunk, act]) => {
-                    locked.push({
-                        bunk,
-                        division: blockInfo.division,
-                        start: blockInfo.startMin,
-                        end: blockInfo.endMin,
-                        activityLabel: act
-                    });
-                });
-            }
-
-            lockBlock(block1, job.blockA);
-            if (job.blockB) lockBlock(block2, job.blockB);
-
-            // Store for debugging
             window.__smartTileToday = window.__smartTileToday || {};
-            window.__smartTileToday[job.division] = {
+            window.__smartTileToday[divisionName] = {
                 specialConfig,
                 openAct,
                 fallbackAct: fbAct,
                 capacityA,
                 capacityB,
-                availableSpecialsA: specialsBlockA.map(s => s.name),
-                availableSpecialsB: specialsBlockB.map(s => s.name),
+                availableSpecialsA: specialsBlockA.map(s => `${s.name}(cap:${s.capacity})`),
+                availableSpecialsB: specialsBlockB.map(s => `${s.name}(cap:${s.capacity})`),
                 block1,
                 block2,
                 specialWinnersA: [...specialWinnersA],
@@ -637,7 +706,7 @@
             };
 
             log("\n" + "=".repeat(70));
-            log("SUMMARY:");
+            log("FINAL SUMMARY:");
             log(`  Block A: ${Object.entries(block1).map(([b,a]) => `${b}=${a}`).join(', ')}`);
             if (job.blockB) {
                 log(`  Block B: ${Object.entries(block2).map(([b,a]) => `${b}=${a}`).join(', ')}`);
@@ -647,54 +716,50 @@
             return {
                 block1Assignments: block1,
                 block2Assignments: block2,
-                lockedEvents: locked
+                lockedEvents: []
             };
         },
 
-        // =====================================================================
-        // UTILITY: Check if activity needs generation by solver
-        // =====================================================================
         needsGeneration(act) {
             if (!act) return false;
             const a = act.toLowerCase().trim();
-            // Only generic slots need generation
-            // Actual special names like "Canteen" should be filled directly
             return (
                 a === "sports" ||
                 a === "sports slot" ||
                 a === "general activity" ||
                 a === "general activity slot" ||
                 a === "activity"
-                // NOTE: "Special" is no longer here because we resolve it!
             );
         }
     };
 
     // =========================================================================
-    // DEBUG UTILITIES
+    // DEBUG UTILITY
     // =========================================================================
 
-    window.debugSmartTileCapacity = function(startMin, endMin) {
+    window.debugSmartTileCapacity = function(divisionName, startMin, endMin) {
         const activityProps = window.activityProperties || {};
         const dailyData = window.loadCurrentDailyData?.() || {};
         const dailyFieldAvailability = dailyData.dailyFieldAvailability || {};
         
-        console.log(`\n=== SMART TILE CAPACITY DEBUG ===`);
+        console.log(`\n=== SMART TILE CAPACITY FOR ${divisionName} ===`);
         console.log(`Time: ${startMin} - ${endMin} minutes`);
         
         const available = getAvailableSpecialsForTimeBlock(
             startMin, 
-            endMin, 
+            endMin,
+            divisionName,
             activityProps, 
             dailyFieldAvailability
         );
         
-        console.log(`\nAvailable Specials:`);
+        console.log(`\nAvailable Specials for ${divisionName}:`);
         available.forEach(s => {
             console.log(`  ${s.name}: capacity=${s.capacity}, maxUsage=${s.maxUsage}`);
         });
         
-        console.log(`\nTOTAL CAPACITY: ${getTotalSpecialCapacity(available)}`);
+        const total = available.reduce((s, a) => s + a.capacity, 0);
+        console.log(`\nTOTAL CAPACITY FOR ${divisionName}: ${total}`);
         
         return available;
     };
