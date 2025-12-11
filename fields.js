@@ -3,6 +3,7 @@
 // ============================================================================
 // 1. Layout: Apple-inspired Two-Pane with Collapsible Detail Sections.
 // 2. Logic: Retains all Transition (Zones/Occupancy), Sharing, and Priority logic.
+// 3. Fix: Access & Restrictions toggle stays open and updates locally.
 // ============================================================================
 
 (function(){
@@ -528,126 +529,147 @@ function renderSharing(item){
     return container;
 }
 
-// 4. ACCESS & PRIORITY (Complex Logic from Code 2)
+// 4. ACCESS & PRIORITY (Refactored to stay open)
 function renderAccess(item){
     const container = document.createElement("div");
-    const rules = item.limitUsage;
-    const prefs = item.preferences;
 
-    // Toggle Mode
-    const modeWrap = document.createElement("div");
-    modeWrap.style.display="flex"; modeWrap.style.gap="12px"; modeWrap.style.marginBottom="16px";
-    
-    const btnAll = document.createElement("button");
-    btnAll.textContent = "Open to All";
-    btnAll.className = !rules.enabled ? "active" : "";
-    btnAll.style.cssText = `flex:1; padding:8px; border-radius:6px; border:1px solid #E5E7EB; cursor:pointer; background:${!rules.enabled ? '#ECFDF5' : '#fff'}; color:${!rules.enabled ? '#047857' : '#333'}; border-color:${!rules.enabled ? '#10B981' : '#E5E7EB'};`;
-    
-    const btnRes = document.createElement("button");
-    btnRes.textContent = "Restricted / Priority";
-    btnRes.className = rules.enabled ? "active" : "";
-    btnRes.style.cssText = `flex:1; padding:8px; border-radius:6px; border:1px solid #E5E7EB; cursor:pointer; background:${rules.enabled ? '#ECFDF5' : '#fff'}; color:${rules.enabled ? '#047857' : '#333'}; border-color:${rules.enabled ? '#10B981' : '#E5E7EB'};`;
+    // Helper to update the summary in the accordion header
+    const updateSummary = () => {
+        const summaryEl = container.closest('.detail-section')?.querySelector('.detail-section-summary');
+        if(summaryEl) summaryEl.textContent = summaryAccess(item);
+    };
 
-    btnAll.onclick = ()=>{ rules.enabled=false; prefs.enabled=false; saveData(); renderDetailPane(); };
-    btnRes.onclick = ()=>{ rules.enabled=true; prefs.enabled=true; saveData(); renderDetailPane(); };
-
-    modeWrap.appendChild(btnAll);
-    modeWrap.appendChild(btnRes);
-    container.appendChild(modeWrap);
-
-    if(rules.enabled){
-        const body = document.createElement("div");
+    // Main render function for this section
+    const renderContent = () => {
+        container.innerHTML = ""; // Clear previous content
         
-        // Exclusive Checkbox
-        const exLabel = document.createElement("label");
-        exLabel.style.display="flex"; exLabel.style.alignItems="center"; exLabel.style.gap="8px"; exLabel.style.marginBottom="12px";
-        const exCk = document.createElement("input"); exCk.type="checkbox"; exCk.checked=prefs.exclusive;
-        exCk.onchange = ()=>{ prefs.exclusive=exCk.checked; saveData(); };
-        exLabel.appendChild(exCk);
-        exLabel.appendChild(document.createTextNode("Exclusive Mode (Only allowed divisions can use this)"));
-        body.appendChild(exLabel);
+        const rules = item.limitUsage;
+        const prefs = item.preferences;
 
-        // Priority List
-        const pHeader = document.createElement("div");
-        pHeader.textContent = "Priority Order (Top = First Choice):";
-        pHeader.style.fontSize="0.85rem"; pHeader.style.fontWeight="600"; pHeader.style.marginBottom="6px";
-        body.appendChild(pHeader);
+        // Toggle Mode Buttons
+        const modeWrap = document.createElement("div");
+        modeWrap.style.display="flex"; modeWrap.style.gap="12px"; modeWrap.style.marginBottom="16px";
+        
+        const btnAll = document.createElement("button");
+        btnAll.textContent = "Open to All";
+        btnAll.style.cssText = `flex:1; padding:8px; border-radius:6px; border:1px solid #E5E7EB; cursor:pointer; background:${!rules.enabled ? '#ECFDF5' : '#fff'}; color:${!rules.enabled ? '#047857' : '#333'}; border-color:${!rules.enabled ? '#10B981' : '#E5E7EB'}; font-weight:${!rules.enabled ? '600' : '400'}; transition:all 0.2s;`;
+        
+        const btnRes = document.createElement("button");
+        btnRes.textContent = "Restricted / Priority";
+        btnRes.style.cssText = `flex:1; padding:8px; border-radius:6px; border:1px solid #E5E7EB; cursor:pointer; background:${rules.enabled ? '#ECFDF5' : '#fff'}; color:${rules.enabled ? '#047857' : '#333'}; border-color:${rules.enabled ? '#10B981' : '#E5E7EB'}; font-weight:${rules.enabled ? '600' : '400'}; transition:all 0.2s;`;
 
-        const listContainer = document.createElement("div");
-        const refreshList = () => {
-             listContainer.innerHTML = "";
-             prefs.list = (prefs.list || []).filter(d => rules.divisions.hasOwnProperty(d));
-             if(prefs.list.length === 0) listContainer.innerHTML = `<div class="muted" style="font-size:0.8rem; font-style:italic; padding:4px;">No priority divisions set. Add below.</div>`;
-             
-             prefs.list.forEach((divName, idx) => {
-                 const row = document.createElement("div"); row.className = "priority-list-item";
-                 row.innerHTML = `<span style="font-weight:bold; color:#10B981; width:20px;">${idx+1}</span> <span style="flex:1;">${divName}</span>`;
-                 
-                 const ctrls = document.createElement("div"); ctrls.style.display="flex"; ctrls.style.gap="4px";
-                 
-                 const mkBtn = (txt, fn, dis) => {
-                     const b = document.createElement("button"); b.className="priority-btn"; b.textContent=txt;
-                     if(dis) b.disabled=true; else b.onclick=fn;
-                     return b;
-                 };
-                 
-                 ctrls.appendChild(mkBtn("↑", ()=>{ 
-                     [prefs.list[idx-1], prefs.list[idx]] = [prefs.list[idx], prefs.list[idx-1]]; saveData(); refreshList(); 
-                 }, idx===0));
-                 
-                 ctrls.appendChild(mkBtn("↓", ()=>{ 
-                     [prefs.list[idx+1], prefs.list[idx]] = [prefs.list[idx], prefs.list[idx+1]]; saveData(); refreshList(); 
-                 }, idx===prefs.list.length-1));
-                 
-                 const rm = mkBtn("✕", ()=>{ 
-                     prefs.list = prefs.list.filter(d=>d!==divName); saveData(); refreshList(); 
-                 }, false);
-                 rm.style.color="#DC2626"; rm.style.borderColor="#FECACA";
-                 ctrls.appendChild(rm);
-
-                 row.appendChild(ctrls);
-                 listContainer.appendChild(row);
-             });
+        btnAll.onclick = ()=>{ 
+            rules.enabled=false; 
+            prefs.enabled=false; 
+            saveData(); 
+            renderContent(); 
+            updateSummary();
         };
-        refreshList();
-        body.appendChild(listContainer);
+        btnRes.onclick = ()=>{ 
+            rules.enabled=true; 
+            prefs.enabled=true; 
+            saveData(); 
+            renderContent(); 
+            updateSummary();
+        };
 
-        // Division Selector Chips
-        const divHeader = document.createElement("div");
-        divHeader.textContent = "Allowed Divisions (Click to add/remove from priority):";
-        divHeader.style.fontSize="0.85rem"; divHeader.style.fontWeight="600"; divHeader.style.marginTop="16px"; divHeader.style.marginBottom="6px";
-        body.appendChild(divHeader);
+        modeWrap.appendChild(btnAll);
+        modeWrap.appendChild(btnRes);
+        container.appendChild(modeWrap);
 
-        const chipWrap = document.createElement("div");
-        const availableDivisions = window.availableDivisions || [];
-        availableDivisions.forEach(divName => {
-            const isAllowed = divName in rules.divisions;
-            const c = document.createElement("span");
-            c.className = "chip " + (isAllowed ? "active" : "inactive");
-            c.textContent = divName;
-            c.onclick = ()=>{
-                if(isAllowed){
-                    delete rules.divisions[divName];
-                    prefs.list = prefs.list.filter(d => d !== divName);
-                } else {
-                    rules.divisions[divName] = [];
-                    // Optionally add to priority list automatically
-                    if(!prefs.list.includes(divName)) prefs.list.push(divName);
-                }
-                saveData();
-                refreshList(); // Update the list above
-                c.className = "chip " + ((divName in rules.divisions) ? "active" : "inactive");
+        if(rules.enabled){
+            const body = document.createElement("div");
+            
+            // Exclusive Checkbox
+            const exLabel = document.createElement("label");
+            exLabel.style.display="flex"; exLabel.style.alignItems="center"; exLabel.style.gap="8px"; exLabel.style.marginBottom="12px"; exLabel.style.cursor="pointer";
+            const exCk = document.createElement("input"); exCk.type="checkbox"; exCk.checked=prefs.exclusive;
+            exCk.onchange = ()=>{ prefs.exclusive=exCk.checked; saveData(); updateSummary(); };
+            exLabel.appendChild(exCk);
+            exLabel.appendChild(document.createTextNode("Exclusive Mode (Only allowed divisions can use this)"));
+            body.appendChild(exLabel);
+
+            // Priority List
+            const pHeader = document.createElement("div");
+            pHeader.textContent = "Priority Order (Top = First Choice):";
+            pHeader.style.fontSize="0.85rem"; pHeader.style.fontWeight="600"; pHeader.style.marginBottom="6px";
+            body.appendChild(pHeader);
+
+            const listContainer = document.createElement("div");
+            
+            prefs.list = (prefs.list || []).filter(d => rules.divisions.hasOwnProperty(d));
+            if(prefs.list.length === 0) listContainer.innerHTML = `<div class="muted" style="font-size:0.8rem; font-style:italic; padding:4px; color:#6B7280;">No priority divisions set. Add below.</div>`;
+            
+            prefs.list.forEach((divName, idx) => {
+                const row = document.createElement("div"); row.className = "priority-list-item";
+                row.innerHTML = `<span style="font-weight:bold; color:#10B981; width:20px;">${idx+1}</span> <span style="flex:1;">${divName}</span>`;
                 
-                // Rerender specific bunk logic if we wanted deep granularity, but for this UI keep it clean.
-                // If detailed bunk logic is needed, we would expand a sub-panel here.
-            };
-            chipWrap.appendChild(c);
-        });
-        body.appendChild(chipWrap);
+                const ctrls = document.createElement("div"); ctrls.style.display="flex"; ctrls.style.gap="4px";
+                
+                const mkBtn = (txt, fn, dis) => {
+                    const b = document.createElement("button"); b.className="priority-btn"; b.textContent=txt;
+                    if(dis) b.disabled=true; else b.onclick=fn;
+                    return b;
+                };
+                
+                ctrls.appendChild(mkBtn("↑", ()=>{ 
+                    [prefs.list[idx-1], prefs.list[idx]] = [prefs.list[idx], prefs.list[idx-1]]; 
+                    saveData(); 
+                    renderContent(); 
+                }, idx===0));
+                
+                ctrls.appendChild(mkBtn("↓", ()=>{ 
+                    [prefs.list[idx+1], prefs.list[idx]] = [prefs.list[idx], prefs.list[idx+1]]; 
+                    saveData(); 
+                    renderContent(); 
+                }, idx===prefs.list.length-1));
+                
+                const rm = mkBtn("✕", ()=>{ 
+                    prefs.list = prefs.list.filter(d=>d!==divName); 
+                    saveData(); 
+                    renderContent(); 
+                }, false);
+                rm.style.color="#DC2626"; rm.style.borderColor="#FECACA";
+                ctrls.appendChild(rm);
 
-        container.appendChild(body);
-    }
+                row.appendChild(ctrls);
+                listContainer.appendChild(row);
+            });
+            body.appendChild(listContainer);
 
+            // Division Selector Chips
+            const divHeader = document.createElement("div");
+            divHeader.textContent = "Allowed Divisions (Click to add/remove from priority):";
+            divHeader.style.fontSize="0.85rem"; divHeader.style.fontWeight="600"; divHeader.style.marginTop="16px"; divHeader.style.marginBottom="6px";
+            body.appendChild(divHeader);
+
+            const chipWrap = document.createElement("div");
+            const availableDivisions = window.availableDivisions || [];
+            availableDivisions.forEach(divName => {
+                const isAllowed = divName in rules.divisions;
+                const c = document.createElement("span");
+                c.className = "chip " + (isAllowed ? "active" : "inactive");
+                c.textContent = divName;
+                c.onclick = ()=>{
+                    if(isAllowed){
+                        delete rules.divisions[divName];
+                        prefs.list = prefs.list.filter(d => d !== divName);
+                    } else {
+                        rules.divisions[divName] = [];
+                        if(!prefs.list.includes(divName)) prefs.list.push(divName);
+                    }
+                    saveData();
+                    renderContent(); 
+                };
+                chipWrap.appendChild(c);
+            });
+            body.appendChild(chipWrap);
+
+            container.appendChild(body);
+        }
+    };
+
+    renderContent(); 
     return container;
 }
 
