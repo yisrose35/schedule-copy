@@ -1,10 +1,11 @@
 // ============================================================================
-// scheduler_core_utils.js (FIXED v5 - GLOBAL LOCK INTEGRATION)
+// scheduler_core_utils.js (FIXED v6 - SPORT PLAYER REQUIREMENTS)
 // PART 1 of 3: THE FOUNDATION
 //
 // CRITICAL UPDATE:
 // - Integrated with GlobalFieldLocks for unified field availability checking
 // - canBlockFit() now checks GLOBAL LOCKS FIRST before any other checks
+// - NEW: Sport player requirements (min/max) as SOFT constraints
 // - Any field locked by leagues is COMPLETELY unavailable
 // ============================================================================
 
@@ -238,7 +239,121 @@
     };
 
     // =================================================================
-    // 5. FIELD USAGE HELPERS
+    // 5. SPORT PLAYER REQUIREMENTS (NEW!)
+    // =================================================================
+
+    /**
+     * Get the min/max player requirements for a sport
+     * @param {string} sportName - The sport to check
+     * @returns {{ minPlayers: number|null, maxPlayers: number|null }}
+     */
+    Utils.getSportPlayerRequirements = function(sportName) {
+        if (!sportName) return { minPlayers: null, maxPlayers: null };
+        
+        const sportMeta = window.getSportMetaData?.() || window.sportMetaData || Utils._sportMetaData || {};
+        const meta = sportMeta[sportName] || {};
+        
+        return {
+            minPlayers: meta.minPlayers || null,
+            maxPlayers: meta.maxPlayers || null
+        };
+    };
+
+    /**
+     * Check if player count is valid for a sport
+     * Returns: { valid: boolean, reason: string|null, severity: 'hard'|'soft'|null }
+     * 
+     * Hard violations: Way outside range (e.g., 5 players for baseball)
+     * Soft violations: Slightly outside range (e.g., 25 players for 24-max baseball)
+     */
+    Utils.checkPlayerCountForSport = function(sportName, playerCount, isForLeague = false) {
+        // Don't apply to leagues
+        if (isForLeague) {
+            return { valid: true, reason: null, severity: null };
+        }
+        
+        const reqs = Utils.getSportPlayerRequirements(sportName);
+        
+        // No requirements = always valid
+        if (reqs.minPlayers === null && reqs.maxPlayers === null) {
+            return { valid: true, reason: null, severity: null };
+        }
+        
+        // Check minimum
+        if (reqs.minPlayers !== null && playerCount < reqs.minPlayers) {
+            const deficit = reqs.minPlayers - playerCount;
+            const percentageUnder = deficit / reqs.minPlayers;
+            
+            // Hard violation: more than 40% under minimum
+            if (percentageUnder > 0.4) {
+                return { 
+                    valid: false, 
+                    reason: `Need at least ${reqs.minPlayers} players, only have ${playerCount}`,
+                    severity: 'hard'
+                };
+            }
+            
+            // Soft violation: slightly under
+            return { 
+                valid: false, 
+                reason: `Below minimum (${playerCount}/${reqs.minPlayers})`,
+                severity: 'soft'
+            };
+        }
+        
+        // Check maximum
+        if (reqs.maxPlayers !== null && playerCount > reqs.maxPlayers) {
+            const excess = playerCount - reqs.maxPlayers;
+            const percentageOver = excess / reqs.maxPlayers;
+            
+            // Hard violation: more than 30% over maximum
+            if (percentageOver > 0.3) {
+                return { 
+                    valid: false, 
+                    reason: `Maximum ${reqs.maxPlayers} players, have ${playerCount}`,
+                    severity: 'hard'
+                };
+            }
+            
+            // Soft violation: slightly over
+            return { 
+                valid: false, 
+                reason: `Above maximum (${playerCount}/${reqs.maxPlayers})`,
+                severity: 'soft'
+            };
+        }
+        
+        return { valid: true, reason: null, severity: null };
+    };
+
+    /**
+     * Calculate the total player count for bunks using a field at a slot
+     */
+    Utils.getFieldPlayerCount = function(fieldName, slotIndex, excludeBunk = null) {
+        const bunkMeta = window.getBunkMetaData?.() || window.bunkMetaData || Utils._bunkMetaData || {};
+        const schedules = window.scheduleAssignments || {};
+        
+        let totalPlayers = 0;
+        
+        for (const [bunk, slots] of Object.entries(schedules)) {
+            if (bunk === excludeBunk) continue;
+            
+            const entry = slots?.[slotIndex];
+            if (!entry) continue;
+            
+            const entryField = Utils.fieldLabel(entry.field) || entry._activity;
+            if (!entryField) continue;
+            
+            if (entryField.toLowerCase().trim() === fieldName.toLowerCase().trim()) {
+                totalPlayers += bunkMeta[bunk]?.size || 0;
+            }
+        }
+        
+        return totalPlayers;
+    };
+
+    // =================================================================
+    // 6. FIELD USAGE HELPERS
     // =================================================================
 
     function getFieldUsageAtSlot(slotIndex, fieldName, fieldUsageBySlot) {
@@ -298,7 +413,7 @@
     }
 
     // =================================================================
-    // 6. MAIN FIT LOGIC (WITH GLOBAL LOCK CHECK)
+    // 7. MAIN FIT LOGIC (WITH GLOBAL LOCK CHECK + PLAYER REQUIREMENTS)
     // =================================================================
 
     Utils.isTimeAvailable = function (slotIndex, props) {
@@ -346,7 +461,7 @@
 
     /**
      * =========================================================================
-     * MAIN FIT CHECK - NOW WITH GLOBAL LOCK CHECK FIRST
+     * MAIN FIT CHECK - NOW WITH GLOBAL LOCK CHECK + PLAYER REQUIREMENTS
      * =========================================================================
      * This is the CRITICAL function that determines if a bunk can use a field.
      * 
@@ -355,6 +470,7 @@
      * 2. Field reservations (skeleton)
      * 3. Activity properties (availability, time rules, preferences)
      * 4. Capacity checks
+     * 5. PLAYER REQUIREMENTS (soft check - adds penalty but doesn't reject outright)
      * =========================================================================
      */
     Utils.canBlockFit = function (block, fieldName, activityProperties, fieldUsageBySlot, actName, forceLeague = false) {
@@ -377,9 +493,6 @@
 
         // =================================================================
         // ★★★ CRITICAL: GLOBAL LOCK CHECK FIRST ★★★
-        // =================================================================
-        // If this field is locked by ANY league at ANY of these slots,
-        // it is COMPLETELY UNAVAILABLE - no exceptions!
         // =================================================================
         if (window.GlobalFieldLocks && uniqueSlots.length > 0) {
             const lockInfo = window.GlobalFieldLocks.isFieldLocked(fieldName, uniqueSlots);
@@ -508,6 +621,10 @@
         // =================================================================
         // CHECK EACH SLOT FOR CAPACITY AND ACTIVITY MATCHING
         // =================================================================
+        const bunkMeta = window.getBunkMetaData?.() || window.bunkMetaData || Utils._bunkMetaData || {};
+        const sportMeta = window.getSportMetaData?.() || window.sportMetaData || Utils._sportMetaData || {};
+        const mySize = bunkMeta[block.bunk]?.size || 0;
+
         for (const idx of uniqueSlots) {
             const trackedUsage = getFieldUsageAtSlot(idx, fieldName, fieldUsageBySlot);
             const scheduleUsage = getScheduleUsageAtSlot(idx, fieldName);
@@ -544,9 +661,26 @@
                 return false;
             }
 
-            const bunkMeta = window.bunkMetaData || Utils._bunkMetaData || {};
-            const sportMeta = window.sportMetaData || Utils._sportMetaData || {};
-            
+            // =================================================================
+            // SPORT PLAYER REQUIREMENTS (SOFT CHECK - only HARD violations reject)
+            // =================================================================
+            if (actName && !forceLeague) {
+                let currentHeadcount = 0;
+                allBunks.forEach(b => {
+                    currentHeadcount += (bunkMeta[b]?.size || 0);
+                });
+                const projectedHeadcount = currentHeadcount + mySize;
+                
+                const playerCheck = Utils.checkPlayerCountForSport(actName, projectedHeadcount, forceLeague);
+                
+                if (!playerCheck.valid && playerCheck.severity === 'hard') {
+                    if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - player count HARD violation: ${playerCheck.reason}`);
+                    return false;
+                }
+                // Soft violations are handled by penalty scoring, not rejection
+            }
+
+            // Legacy maxCapacity check (from sportMetaData.maxCapacity - kept for backwards compatibility)
             const maxHeadcount = sportMeta[actName]?.maxCapacity ?? Infinity;
             
             if (maxHeadcount !== Infinity) {
@@ -554,10 +688,9 @@
                 allBunks.forEach(b => {
                     currentHeadcount += (bunkMeta[b]?.size || 0);
                 });
-                const mySize = bunkMeta[block.bunk]?.size || 0;
                 
                 if (currentHeadcount + mySize > maxHeadcount) {
-                    if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - headcount exceeded`);
+                    if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - headcount exceeded (legacy check)`);
                     return false;
                 }
             }
@@ -569,6 +702,7 @@
 
     /**
      * Calculate sharing score - HIGHER is better
+     * NOW includes player requirement penalties
      */
     Utils.calculateSharingScore = function (block, fieldName, fieldUsageBySlot, actName) {
         if (!fieldUsageBySlot) fieldUsageBySlot = window.fieldUsageBySlot || {};
@@ -580,19 +714,35 @@
         }
         
         let score = 0;
+        const bunkMeta = window.getBunkMetaData?.() || window.bunkMetaData || Utils._bunkMetaData || {};
+        const mySize = bunkMeta[block.bunk]?.size || 0;
         
         for (const idx of slots) {
             const scheduleUsage = getScheduleUsageAtSlot(idx, fieldName);
             
             if (scheduleUsage.count === 0) {
                 score += 100;
+                
+                // Check if bunk alone meets player requirements
+                if (actName) {
+                    const playerCheck = Utils.checkPlayerCountForSport(actName, mySize, false);
+                    if (!playerCheck.valid) {
+                        if (playerCheck.severity === 'hard') {
+                            score -= 5000; // Heavy penalty for playing alone when way under minimum
+                        } else {
+                            score -= 500; // Moderate penalty for slightly under
+                        }
+                    }
+                }
             } else {
                 let minDistance = Infinity;
                 let sameActivity = true;
+                let combinedSize = mySize;
                 
                 for (const existingBunk of scheduleUsage.bunkList) {
                     const distance = Utils.getBunkDistance(block.bunk, existingBunk);
                     minDistance = Math.min(minDistance, distance);
+                    combinedSize += (bunkMeta[existingBunk]?.size || 0);
                     
                     const existingActivity = scheduleUsage.bunks[existingBunk];
                     if (existingActivity && actName) {
@@ -608,6 +758,18 @@
                 
                 if (sameActivity) {
                     score += 50;
+                    
+                    // Check if combined size meets player requirements
+                    if (actName) {
+                        const playerCheck = Utils.checkPlayerCountForSport(actName, combinedSize, false);
+                        if (playerCheck.valid) {
+                            score += 200; // Bonus for valid player count when sharing!
+                        } else if (playerCheck.severity === 'soft') {
+                            score -= 100; // Small penalty for slightly off
+                        } else {
+                            score -= 2000; // Larger penalty for way off
+                        }
+                    }
                 } else {
                     score -= 1000;
                 }
@@ -617,12 +779,29 @@
         return score;
     };
 
+    /**
+     * Calculate player count penalty for scoring purposes
+     * Returns penalty value (0 = no penalty, higher = worse)
+     */
+    Utils.calculatePlayerCountPenalty = function(actName, playerCount, isLeague = false) {
+        if (!actName || isLeague) return 0;
+        
+        const check = Utils.checkPlayerCountForSport(actName, playerCount, isLeague);
+        
+        if (check.valid) return 0;
+        
+        if (check.severity === 'hard') return 10000;
+        if (check.severity === 'soft') return 1000;
+        
+        return 0;
+    };
+
     Utils.canLeagueGameFit = function (block, fieldName, usage, props) {
         return Utils.canBlockFit(block, fieldName, props, usage, "League Game", true);
     };
 
     // =================================================================
-    // 7. TIMELINE & DEBUG
+    // 8. TIMELINE & DEBUG
     // =================================================================
 
     Utils.timeline = {
@@ -703,6 +882,23 @@
                 console.log('Not globally locked');
             }
         }
+    };
+
+    /**
+     * Debug utility: Check player requirements for a sport
+     */
+    Utils.debugSportRequirements = function(sportName) {
+        const reqs = Utils.getSportPlayerRequirements(sportName);
+        console.log(`\n=== ${sportName} PLAYER REQUIREMENTS ===`);
+        console.log(`Min Players: ${reqs.minPlayers || 'Not set'}`);
+        console.log(`Max Players: ${reqs.maxPlayers || 'Not set'}`);
+        
+        // Test with some sample sizes
+        [8, 12, 14, 18, 24, 28, 32].forEach(count => {
+            const check = Utils.checkPlayerCountForSport(sportName, count, false);
+            const status = check.valid ? '✅' : (check.severity === 'hard' ? '❌ HARD' : '⚠️ SOFT');
+            console.log(`  ${count} players: ${status} ${check.reason || ''}`);
+        });
     };
 
     window.SchedulerCoreUtils = Utils;
