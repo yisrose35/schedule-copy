@@ -117,6 +117,10 @@
 
                     <div class="sidebar-label" style="margin-top:12px;">Output & Help</div>
 
+                    <button class="sidebar-item" data-tab="camper-locator">
+                        <span class="sidebar-dot" style="background:#0284c7;"></span> 🔍 Camper Check
+                    </button>
+
                     <button class="sidebar-item" data-tab="report">
                         <span class="sidebar-dot"></span> Report
                     </button>
@@ -340,6 +344,7 @@
                     <div id="scheduleTable"></div>
                 </div>
 
+                <div id="camper-locator" class="tab-content"></div>
                 <div id="report" class="tab-content"><div id="report-content"></div></div>
                 <div id="print" class="tab-content"><div id="print-content"></div></div>
                 <div id="updates" class="tab-content"><div id="updates-content"></div></div>
@@ -388,6 +393,7 @@
 <script src="scheduler_core_main.js"></script>
 <script src="scheduler_ui.js"></script>
 <script src="analytics.js"></script>
+<script src="camper_locator.js"></script>
 <script src="validator.js"></script>
 <script src="print_center.js"></script>
 <script src="helper.js"></script>
@@ -421,6 +427,7 @@ function showTab(id) {
     if (id === "master-scheduler") window.initMasterScheduler?.();
     if (id === "daily-adjustments") window.initDailyAdjustments?.();
     if (id === "schedule") window.updateTable?.();
+    if (id === "camper-locator") window.initCamperLocator?.();
     if (id === "report") window.initReportTab?.();
     if (id === "print") window.initPrintCenter?.();
     if (id === "updates") window.initUpdatesTab?.();
