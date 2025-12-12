@@ -1,12 +1,12 @@
 // ============================================================================
-// scheduler_core_specialty_leagues.js
+// scheduler_core_specialty_leagues.js (FIXED v2 - GLOBAL LOCK INTEGRATION)
 // 
 // DEDICATED SCHEDULER CORE FOR SPECIALTY LEAGUES
-// Similar to scheduler_core_leagues.js but tailored for specialty leagues:
-// - Single sport per league
-// - Multiple games per field per time slot
-// - Conference system (East/West) with inter-conference play
-// - Fairness algorithms: Wait Priority + Field Rotation
+// 
+// CRITICAL UPDATE:
+// - Now uses GlobalFieldLocks to LOCK fields before assignment
+// - Checks for existing locks before using a field
+// - Fields locked by specialty leagues are COMPLETELY unavailable to all others
 // ============================================================================
 
 (function() {
@@ -26,12 +26,12 @@
         try {
             const raw = localStorage.getItem(SPECIALTY_HISTORY_KEY);
             if (!raw) return { 
-                teamFieldRotation: {},    // { leagueId|team: [field1, field2, ...] }
-                lastSlotOrder: {},        // { leagueId|team: slotOrder }
-                roundCounters: {},        // { leagueId: roundNumber }
-                conferenceRounds: {},     // { leagueId|conf: roundNumber }
-                matchupHistory: {},       // { leagueId|teamA|teamB: [dates] }
-                lastScheduledDate: {}     // { leagueId: "YYYY-MM-DD" } - tracks when round was last incremented
+                teamFieldRotation: {},
+                lastSlotOrder: {},
+                roundCounters: {},
+                conferenceRounds: {},
+                matchupHistory: {},
+                lastScheduledDate: {}
             };
             return JSON.parse(raw);
         } catch (e) {
@@ -59,7 +59,6 @@
     // =========================================================================
     // FAIRNESS ALGORITHM: Wait Priority Score
     // =========================================================================
-    // Teams that played 2nd or 3rd in their slot yesterday get HIGHER priority to play first today
     function getWaitPriorityScore(teamA, teamB, lastSlotOrder, leagueId) {
         const keyA = `${leagueId}|${teamA}`;
         const keyB = `${leagueId}|${teamB}`;
@@ -67,8 +66,6 @@
         const slotA = lastSlotOrder[keyA] || 1;
         const slotB = lastSlotOrder[keyB] || 1;
         
-        // Higher slot order = waited longer = higher priority
-        // Slot 3 (waited most) = 100 points, Slot 2 = 50 points, Slot 1 = 0 points
         const scoreA = (slotA - 1) * 50;
         const scoreB = (slotB - 1) * 50;
         
@@ -78,7 +75,6 @@
     // =========================================================================
     // FAIRNESS ALGORITHM: Field Rotation Score
     // =========================================================================
-    // Teams should play on all courts before repeating any court
     function getFieldRotationScore(teamA, teamB, fieldName, teamFieldRotation, allFields, leagueId) {
         const keyA = `${leagueId}|${teamA}`;
         const keyB = `${leagueId}|${teamB}`;
@@ -86,17 +82,12 @@
         const fieldsA = teamFieldRotation[keyA] || [];
         const fieldsB = teamFieldRotation[keyB] || [];
         
-        // Count how many times each team has played on this field
         const countA = fieldsA.filter(f => f === fieldName).length;
         const countB = fieldsB.filter(f => f === fieldName).length;
         
-        // If neither team has played on this field, big bonus
         if (countA === 0 && countB === 0) return 200;
-        
-        // If one team hasn't played on this field, medium bonus
         if (countA === 0 || countB === 0) return 100;
         
-        // Check if both teams have played on all fields at least once
         const allFieldsSet = new Set(allFields);
         const uniqueA = new Set(fieldsA);
         const uniqueB = new Set(fieldsB);
@@ -104,17 +95,15 @@
         const missingA = [...allFieldsSet].filter(f => !uniqueA.has(f));
         const missingB = [...allFieldsSet].filter(f => !uniqueB.has(f));
         
-        // Penalty if this field is being repeated before all fields are used
         if (missingA.length > 0 || missingB.length > 0) {
             return -100 * (countA + countB);
         }
         
-        // Small penalty for repetition
         return -10 * (countA + countB);
     }
 
     // =========================================================================
-    // ROUND ROBIN GENERATOR (within conference or full league)
+    // ROUND ROBIN GENERATOR
     // =========================================================================
     function generateRoundRobin(teams) {
         if (!teams || teams.length < 2) return [];
@@ -122,9 +111,8 @@
         const rounds = [];
         const teamsCopy = [...teams];
         
-        // Add dummy if odd number
         if (teamsCopy.length % 2 === 1) {
-            teamsCopy.push(null); // bye
+            teamsCopy.push(null);
         }
         
         const numRounds = teamsCopy.length - 1;
@@ -144,7 +132,6 @@
             
             rounds.push(matches);
             
-            // Rotate teams (keep first team fixed)
             const last = teamsCopy.pop();
             teamsCopy.splice(1, 0, last);
         }
@@ -162,16 +149,13 @@
         
         let matchups = [];
         
-        // Check if we have conferences
         const conferenceNames = Object.keys(conferences || {}).filter(c => (conferences[c]?.length || 0) > 0);
         
         if (conferenceNames.length > 0) {
-            // Generate intra-conference matchups
             conferenceNames.forEach(confName => {
                 const confTeams = conferences[confName] || [];
                 const roundRobin = generateRoundRobin(confTeams);
                 
-                // Get current round for this conference
                 const confKey = `${id}|${confName}`;
                 const currentRound = (history.conferenceRounds[confKey] || 0) % Math.max(1, roundRobin.length);
                 
@@ -184,12 +168,10 @@
                 }
             });
             
-            // Optionally add inter-conference matchups
             if (allowInterConference && conferenceNames.length >= 2) {
                 const conf1Teams = conferences[conferenceNames[0]] || [];
                 const conf2Teams = conferences[conferenceNames[1]] || [];
                 
-                // Simple inter-conference round robin based on current round
                 const interKey = `${id}|inter`;
                 const interRound = (history.conferenceRounds[interKey] || 0) % Math.max(1, Math.max(conf1Teams.length, conf2Teams.length));
                 
@@ -198,7 +180,6 @@
                     const team2 = conf2Teams[team2Idx];
                     
                     if (team1 && team2) {
-                        // Only add based on priority chance
                         if (Math.random() < (interConferencePriority || 0.3)) {
                             matchups.push({
                                 teamA: team1,
@@ -211,7 +192,6 @@
                 });
             }
         } else {
-            // No conferences - use all teams
             const roundRobin = generateRoundRobin(teams);
             const currentRound = (history.roundCounters[id] || 0) % Math.max(1, roundRobin.length);
             
@@ -228,25 +208,39 @@
     }
 
     // =========================================================================
-    // ASSIGN MATCHUPS TO FIELDS WITH FAIRNESS
+    // ★★★ CRITICAL: ASSIGN MATCHUPS WITH GLOBAL LOCK CHECK ★★★
     // =========================================================================
-    function assignMatchupsToFieldsAndSlots(matchups, league, history) {
+    function assignMatchupsToFieldsAndSlots(matchups, league, history, slots) {
         const { id, fields, gamesPerFieldSlot } = league;
         
         if (!fields || fields.length === 0) {
             console.warn(`[SpecialtyLeagues] No fields for league ${league.name}`);
             return [];
         }
+
+        // ★★★ FILTER OUT ALREADY-LOCKED FIELDS ★★★
+        let availableFields = [...fields];
+        if (window.GlobalFieldLocks && slots && slots.length > 0) {
+            availableFields = window.GlobalFieldLocks.filterAvailableFields(fields, slots);
+            
+            const lockedFields = fields.filter(f => !availableFields.includes(f));
+            if (lockedFields.length > 0) {
+                console.log(`[SpecialtyLeagues] ⚠️ Fields already locked: ${lockedFields.join(', ')}`);
+            }
+        }
+
+        if (availableFields.length === 0) {
+            console.error(`[SpecialtyLeagues] ❌ NO FIELDS AVAILABLE - all fields are locked!`);
+            return [];
+        }
+
+        const totalSlotsAvailable = availableFields.length * (gamesPerFieldSlot || 3);
         
-        const totalSlotsAvailable = fields.length * (gamesPerFieldSlot || 3);
+        console.log(`[SpecialtyLeagues] Available fields: ${availableFields.join(', ')}`);
+        console.log(`[SpecialtyLeagues] Total game slots: ${totalSlotsAvailable} (${availableFields.length} fields × ${gamesPerFieldSlot || 3} games)`);
         
-        console.log(`[SpecialtyLeagues] Fields: ${fields.join(', ')}`);
-        console.log(`[SpecialtyLeagues] Total slots available: ${totalSlotsAvailable} (${fields.length} fields × ${gamesPerFieldSlot || 3} games)`);
-        
-        // Limit matchups to available slots if needed
         let workingMatchups = [...matchups];
         if (workingMatchups.length > totalSlotsAvailable) {
-            // Score by wait priority and take highest
             workingMatchups = workingMatchups.map(m => ({
                 ...m,
                 waitScore: getWaitPriorityScore(m.teamA, m.teamB, history.lastSlotOrder, id)
@@ -257,39 +251,31 @@
         
         console.log(`[SpecialtyLeagues] Working matchups: ${workingMatchups.length}`);
         
-        // STRATEGY: Distribute matchups across ALL fields first, then fill slot orders
-        // This ensures all courts get used before any court gets multiple games
-        
         const assignments = [];
         const assignedMatchups = new Set();
-        const fieldGamesCount = {};  // Track games per field
-        fields.forEach(f => fieldGamesCount[f] = 0);
+        const fieldGamesCount = {};
+        availableFields.forEach(f => fieldGamesCount[f] = 0);
         
-        // Sort matchups by wait priority (highest first)
         workingMatchups = workingMatchups.map(m => ({
             ...m,
             waitScore: getWaitPriorityScore(m.teamA, m.teamB, history.lastSlotOrder, id)
         }));
         workingMatchups.sort((a, b) => b.waitScore - a.waitScore);
         
-        // Assign matchups round-robin across fields to ensure even distribution
         for (const matchup of workingMatchups) {
             const matchupKey = `${matchup.teamA}-${matchup.teamB}`;
             if (assignedMatchups.has(matchupKey)) continue;
             
-            // Find the field with the fewest games (ensures all fields get used)
             let bestField = null;
             let minGames = Infinity;
             
-            for (const field of fields) {
+            for (const field of availableFields) {
                 const currentGames = fieldGamesCount[field];
                 const maxGames = gamesPerFieldSlot || 3;
                 
                 if (currentGames < maxGames && currentGames < minGames) {
-                    // Also consider field rotation score
-                    const rotationScore = getFieldRotationScore(matchup.teamA, matchup.teamB, field, history.teamFieldRotation, fields, id);
+                    const rotationScore = getFieldRotationScore(matchup.teamA, matchup.teamB, field, history.teamFieldRotation, availableFields, id);
                     
-                    // Prefer fields with fewer games, tie-break by rotation score
                     if (currentGames < minGames || (currentGames === minGames && rotationScore > 0)) {
                         minGames = currentGames;
                         bestField = field;
@@ -310,17 +296,15 @@
                 
                 fieldGamesCount[bestField]++;
                 assignedMatchups.add(matchupKey);
-                console.log(`[SpecialtyLeagues] Assigned ${matchup.teamA} vs ${matchup.teamB} to ${bestField} (slot ${slotOrder})`);
+                console.log(`[SpecialtyLeagues] ✅ Assigned ${matchup.teamA} vs ${matchup.teamB} to ${bestField} (slot ${slotOrder})`);
             }
         }
         
-        // Sort by field then slot order for display
         assignments.sort((a, b) => {
             if (a.field !== b.field) return a.field.localeCompare(b.field);
             return a.slotOrder - b.slotOrder;
         });
         
-        // Log field distribution
         console.log(`[SpecialtyLeagues] Field distribution: ${Object.entries(fieldGamesCount).map(([f, c]) => `${f}:${c}`).join(', ')}`);
         
         return assignments;
@@ -333,36 +317,28 @@
         const { id, conferences } = league;
         const currentDate = window.currentScheduleDate || new Date().toISOString().slice(0, 10);
         
-        // Check if this is a new day for this league
         if (!history.lastScheduledDate) history.lastScheduledDate = {};
         const isNewDay = history.lastScheduledDate[id] !== currentDate;
         
-        // Only update field rotation and slot order if it's a new day
-        // (prevents duplicate history entries when regenerating same day)
         if (isNewDay) {
-            // Update field rotation and slot order for each team
             assignments.forEach(game => {
                 const keyA = `${id}|${game.teamA}`;
                 const keyB = `${id}|${game.teamB}`;
                 
-                // Field rotation
                 if (!history.teamFieldRotation[keyA]) history.teamFieldRotation[keyA] = [];
                 if (!history.teamFieldRotation[keyB]) history.teamFieldRotation[keyB] = [];
                 history.teamFieldRotation[keyA].push(game.field);
                 history.teamFieldRotation[keyB].push(game.field);
                 
-                // Last slot order
                 history.lastSlotOrder[keyA] = game.slotOrder;
                 history.lastSlotOrder[keyB] = game.slotOrder;
                 
-                // Matchup history
                 const matchupKey = [game.teamA, game.teamB].sort().join('|');
                 const fullKey = `${id}|${matchupKey}`;
                 if (!history.matchupHistory[fullKey]) history.matchupHistory[fullKey] = [];
                 history.matchupHistory[fullKey].push(currentDate);
             });
             
-            // Increment round counters ONLY on new day
             const conferenceNames = Object.keys(conferences || {}).filter(c => (conferences[c]?.length || 0) > 0);
             
             if (conferenceNames.length > 0) {
@@ -379,7 +355,6 @@
                 history.roundCounters[id] = (history.roundCounters[id] || 0) + 1;
             }
             
-            // Mark this date as scheduled for this league
             history.lastScheduledDate[id] = currentDate;
             
             console.log(`[SpecialtyLeagues] New day (${currentDate}) - incremented round counter`);
@@ -389,10 +364,12 @@
     }
 
     // =========================================================================
-    // MAIN PROCESSOR: Process Specialty Leagues for Optimizer
+    // ★★★ MAIN PROCESSOR: PROCESSES FIRST, LOCKS FIELDS GLOBALLY ★★★
     // =========================================================================
     SpecialtyLeagues.processSpecialtyLeagues = function(context) {
-        console.log("\n=== SPECIALTY LEAGUE SCHEDULER START ===");
+        console.log("\n" + "=".repeat(60));
+        console.log("★★★ SPECIALTY LEAGUE SCHEDULER START (PRIORITY 1) ★★★");
+        console.log("=".repeat(60));
         
         const {
             schedulableSlotBlocks,
@@ -403,7 +380,6 @@
             disabledSpecialtyLeagues
         } = context;
 
-        // Load specialty leagues configuration
         const specialtyLeaguesConfig = loadSpecialtyLeagues();
         
         if (!specialtyLeaguesConfig || Object.keys(specialtyLeaguesConfig).length === 0) {
@@ -411,10 +387,8 @@
             return;
         }
         
-        // Load persistent history
         const history = loadSpecialtyHistory();
         
-        // Find all specialty league blocks from skeleton
         const specialtyBlocks = schedulableSlotBlocks.filter(b => 
             b.type === 'specialty_league' || 
             (b.event && b.event.toLowerCase().includes('specialty league'))
@@ -443,7 +417,6 @@
             
             console.log(`\n[SpecialtyLeagues] Processing ${divName} @ ${startTime}`);
             
-            // Find applicable league for this division
             const league = Object.values(specialtyLeaguesConfig).find(l => {
                 if (!l.enabled) return false;
                 if (disabledSpecialtyLeagues?.includes(l.name)) return false;
@@ -458,8 +431,15 @@
             
             console.log(`[SpecialtyLeagues] Using league: ${league.name}`);
             console.log(`[SpecialtyLeagues] Teams: ${(league.teams || []).join(', ')}`);
-            console.log(`[SpecialtyLeagues] Fields: ${(league.fields || []).join(', ')}`);
+            console.log(`[SpecialtyLeagues] Configured Fields: ${(league.fields || []).join(', ')}`);
             console.log(`[SpecialtyLeagues] Sport: ${league.sport}`);
+            
+            // Get all slots for this league block
+            const allSlots = [];
+            blocks.forEach(block => {
+                if (block.slots) allSlots.push(...block.slots);
+            });
+            const uniqueSlots = [...new Set(allSlots)].sort((a, b) => a - b);
             
             // Get today's matchups
             const matchups = getLeagueMatchupsForToday(league, history);
@@ -472,53 +452,59 @@
             console.log(`[SpecialtyLeagues] Generated ${matchups.length} matchups`);
             matchups.forEach(m => console.log(`   • ${m.teamA} vs ${m.teamB} (${m.conference || 'No Conference'})`));
             
-            // Assign matchups to fields with fairness
-            const assignments = assignMatchupsToFieldsAndSlots(matchups, league, history);
+            // ★★★ ASSIGN MATCHUPS - RESPECTING GLOBAL LOCKS ★★★
+            const assignments = assignMatchupsToFieldsAndSlots(matchups, league, history, uniqueSlots);
             
             if (assignments.length === 0) {
-                console.log(`[SpecialtyLeagues] No assignments made (no fields?)`);
+                console.log(`[SpecialtyLeagues] ❌ No assignments made`);
                 continue;
             }
             
-            console.log(`\n[SpecialtyLeagues] Final Assignments:`);
-            assignments.forEach(a => {
-                console.log(`   ${a.teamA} vs ${a.teamB} @ ${a.field} (Slot ${a.slotOrder})`);
-            });
+            // ★★★ CRITICAL: LOCK ALL USED FIELDS GLOBALLY ★★★
+            const usedFields = [...new Set(assignments.map(a => a.field))];
+            console.log(`\n[SpecialtyLeagues] 🔒 LOCKING FIELDS: ${usedFields.join(', ')}`);
             
-            // Build matchup display strings - ONLY "TeamA vs TeamB — CourtName"
-            // NO "undefined @" - just team names and court
-            const matchupStrings = assignments.map(a => 
-                `${a.teamA} vs ${a.teamB} — ${a.field}`
-            );
+            if (window.GlobalFieldLocks) {
+                window.GlobalFieldLocks.lockMultipleFields(usedFields, uniqueSlots, {
+                    lockedBy: 'specialty_league',
+                    leagueName: league.name,
+                    division: divName,
+                    activity: `${league.name} (${league.sport})`
+                });
+            }
             
-            // Calculate current round (add 1 because counter is 0-indexed before first increment)
-            const roundNum = (history.roundCounters[league.id] || 0) + 1;
-            // Format: "{League Name} Game {X}" - NO "Specialty League" prefix
-            const gameLabel = `${league.name} Game ${roundNum}`;
-            
-            // ============ LOCK FIELDS FOR SPECIALTY LEAGUE ============
-            // Prevent other activities from using these fields during this time slot
-            const usedFields = new Set(assignments.map(a => a.field));
+            // Also lock in fieldUsageBySlot for compatibility
             blocks.forEach(block => {
                 block.slots.forEach(slotIdx => {
                     usedFields.forEach(fieldName => {
                         if (!fieldUsageBySlot[slotIdx]) fieldUsageBySlot[slotIdx] = {};
-                        // Mark field as fully used (capacity exhausted)
                         fieldUsageBySlot[slotIdx][fieldName] = {
-                            count: 999, // Max out usage
+                            count: 999,
                             divisions: [divName],
                             bunks: {},
                             _lockedBySpecialtyLeague: league.name
                         };
-                        console.log(`[SpecialtyLeagues] Locked field "${fieldName}" at slot ${slotIdx}`);
                     });
                 });
             });
             
-            // Fill all blocks in this division/time with the league data
+            console.log(`\n[SpecialtyLeagues] Final Assignments:`);
+            assignments.forEach(a => {
+                console.log(`   ✅ ${a.teamA} vs ${a.teamB} @ ${a.field} (Slot ${a.slotOrder})`);
+            });
+            
+            // Build matchup display strings
+            const matchupStrings = assignments.map(a => 
+                `${a.teamA} vs ${a.teamB} — ${a.field}`
+            );
+            
+            const roundNum = (history.roundCounters[league.id] || 0) + 1;
+            const gameLabel = `${league.name} Game ${roundNum}`;
+            
+            // Fill all blocks
             blocks.forEach(block => {
                 const pick = {
-                    field: gameLabel,  // Shows as "{League Name} Game {X}" - NO prefix
+                    field: gameLabel,
                     sport: league.sport || 'League',
                     _activity: gameLabel,
                     _h2h: true,
@@ -526,18 +512,17 @@
                     _allMatchups: matchupStrings,
                     _gameLabel: gameLabel,
                     _leagueName: league.name,
-                    _isSpecialtyLeague: true,  // Flag for UI to NOT add "Specialty League" prefix
-                    _assignments: assignments  // Store full assignment data
+                    _isSpecialtyLeague: true,
+                    _assignments: assignments
                 };
                 
                 fillBlock(block, pick, fieldUsageBySlot, {}, true, activityProperties);
                 block.processed = true;
             });
             
-            // Update history for this league
             updateHistoryAfterScheduling(league, assignments, history);
             
-            // Also store in leagueAssignments for UI
+            // Store in leagueAssignments for UI
             if (!window.leagueAssignments) window.leagueAssignments = {};
             if (!window.leagueAssignments[divName]) window.leagueAssignments[divName] = {};
             
@@ -547,7 +532,7 @@
                     leagueName: league.name,
                     sport: league.sport,
                     gameLabel: gameLabel,
-                    isSpecialtyLeague: true,  // Flag for UI
+                    isSpecialtyLeague: true,
                     matchups: assignments.map(a => ({
                         teamA: a.teamA,
                         teamB: a.teamB,
@@ -559,15 +544,22 @@
             }
         }
         
-        // Save updated history
         saveSpecialtyHistory(history);
         
-        console.log("\n=== SPECIALTY LEAGUE SCHEDULER COMPLETE ===");
+        console.log("\n" + "=".repeat(60));
+        console.log("★★★ SPECIALTY LEAGUE SCHEDULER COMPLETE ★★★");
+        console.log("=".repeat(60) + "\n");
+        
+        // Debug print all locks
+        if (window.GlobalFieldLocks) {
+            window.GlobalFieldLocks.debugPrintLocks();
+        }
     };
 
     // =========================================================================
-    // UTILITY: Get schedule for today (for UI)
+    // UTILITY FUNCTIONS
     // =========================================================================
+    
     SpecialtyLeagues.getSpecialtyLeagueScheduleForToday = function(leagueId) {
         const config = loadSpecialtyLeagues();
         const league = config[leagueId];
@@ -576,7 +568,7 @@
         
         const history = loadSpecialtyHistory();
         const matchups = getLeagueMatchupsForToday(league, history);
-        const assignments = assignMatchupsToFieldsAndSlots(matchups, league, history);
+        const assignments = assignMatchupsToFieldsAndSlots(matchups, league, history, []);
         
         return {
             leagueName: league.name,
@@ -587,9 +579,6 @@
         };
     };
 
-    // =========================================================================
-    // UTILITY: Reset specialty league history
-    // =========================================================================
     SpecialtyLeagues.resetHistory = function() {
         if (confirm("Reset ALL specialty league history? This will start fresh.")) {
             localStorage.removeItem(SPECIALTY_HISTORY_KEY);
@@ -598,9 +587,6 @@
         }
     };
 
-    // =========================================================================
-    // UTILITY: View history (for debugging)
-    // =========================================================================
     SpecialtyLeagues.viewHistory = function() {
         const history = loadSpecialtyHistory();
         console.log("\n=== SPECIALTY LEAGUE HISTORY ===");
@@ -608,9 +594,6 @@
         return history;
     };
 
-    // =========================================================================
-    // UTILITY: View team stats
-    // =========================================================================
     SpecialtyLeagues.viewTeamStats = function(leagueId) {
         const history = loadSpecialtyHistory();
         const config = loadSpecialtyLeagues();
@@ -631,7 +614,6 @@
             const fieldHistory = history.teamFieldRotation[key] || [];
             const lastSlot = history.lastSlotOrder[key] || 'N/A';
             
-            // Count field usage
             const fieldCounts = {};
             fieldHistory.forEach(f => {
                 fieldCounts[f] = (fieldCounts[f] || 0) + 1;
@@ -653,9 +635,10 @@
     // =========================================================================
     window.SchedulerCoreSpecialtyLeagues = SpecialtyLeagues;
     
-    // Also add to existing SchedulerCoreLeagues for compatibility
     if (window.SchedulerCoreLeagues) {
         window.SchedulerCoreLeagues.processSpecialtyLeagues = SpecialtyLeagues.processSpecialtyLeagues;
     }
+
+    console.log('[SpecialtyLeagues] Module loaded with Global Lock integration');
 
 })();
