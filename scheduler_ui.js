@@ -345,15 +345,13 @@
           // This is the generated output from the League Engine
           const leagueData = window.leagueAssignments?.[div]?.[slotIdx];
           
-         
-if (leagueData && leagueData.matchups) {
-    allMatchups = leagueData.matchups.map(m => {
-        // Only add the sport part if m.sport actually exists
-        const sportDisplay = m.sport ? ` — ${m.sport}` : ""; 
-        return `${m.teamA} vs ${m.teamB}${sportDisplay} @ ${m.field || 'TBD'}`;
-    });
-    gameLabel = leagueData.gameLabel;
-}
+          if (leagueData && leagueData.matchups) {
+              // Found authoritative data!
+              // Format matchups for display
+              allMatchups = leagueData.matchups.map(m => 
+                 `${m.teamA} vs ${m.teamB} — ${m.sport} @ ${m.field || 'TBD'}`
+              );
+              gameLabel = leagueData.gameLabel;
           } else {
               // Fallback: Scan bunks (legacy support)
               for (const b of bunks) {
