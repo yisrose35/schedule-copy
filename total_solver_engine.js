@@ -1,10 +1,11 @@
 // ============================================================================
-// total_solver_engine.js (FIXED v5 - GLOBAL LOCK INTEGRATION)
+// total_solver_engine.js (FIXED v6 - SPORT PLAYER REQUIREMENTS)
 // Backtracking Constraint Solver + League Engine
 // ----------------------------------------------------------------------------
 // CRITICAL UPDATE:
 // - ALL candidate options are filtered against GlobalFieldLocks
 // - Locked fields are completely excluded from consideration
+// - NEW: Player count requirements are soft constraints with penalties
 // - This ensures NO field double-booking across divisions
 // ============================================================================
 
@@ -49,7 +50,7 @@
     }
 
     // ============================================================================
-    // PENALTY ENGINE
+    // PENALTY ENGINE (WITH PLAYER COUNT REQUIREMENTS)
     // ============================================================================
 
     function calculatePenaltyCost(block, pick) {
@@ -57,6 +58,10 @@
         const bunk = block.bunk;
         const act = pick._activity;
         const fieldName = pick.field;
+
+        // Get bunk metadata
+        const bunkMeta = window.getBunkMetaData?.() || window.bunkMetaData || {};
+        const mySize = bunkMeta[bunk]?.size || 0;
 
         const sharingScore = window.SchedulerCoreUtils?.calculateSharingScore?.(
             block, 
@@ -73,6 +78,7 @@
         for (const slotIdx of slots) {
             let fieldCount = 0;
             let existingActivities = new Set();
+            let combinedSize = mySize;
             
             for (const [otherBunk, otherSlots] of Object.entries(schedules)) {
                 if (otherBunk === bunk) continue;
@@ -82,6 +88,7 @@
                 const entryField = window.SchedulerCoreUtils?.fieldLabel(entry.field) || entry._activity;
                 if (entryField && entryField.toLowerCase().trim() === fieldName.toLowerCase().trim()) {
                     fieldCount++;
+                    combinedSize += (bunkMeta[otherBunk]?.size || 0);
                     if (entry._activity) {
                         existingActivities.add(entry._activity.toLowerCase().trim());
                     }
@@ -104,6 +111,29 @@
                 const myActivity = (act || '').toLowerCase().trim();
                 if (!existingActivities.has(myActivity)) {
                     return 888888;
+                }
+            }
+
+            // =================================================================
+            // SPORT PLAYER REQUIREMENTS PENALTY (NEW!)
+            // =================================================================
+            if (act && !pick._isLeague) {
+                const playerCheck = window.SchedulerCoreUtils?.checkPlayerCountForSport?.(act, combinedSize, false);
+                
+                if (playerCheck && !playerCheck.valid) {
+                    if (playerCheck.severity === 'hard') {
+                        // Heavy penalty but NOT a rejection - we prefer this over "Free"
+                        penalty += 8000;
+                        debugLog(`[PENALTY] ${bunk} - ${act}: HARD player violation (${combinedSize} players), penalty +8000`);
+                    } else if (playerCheck.severity === 'soft') {
+                        // Moderate penalty for slightly off
+                        penalty += 1500;
+                        debugLog(`[PENALTY] ${bunk} - ${act}: SOFT player violation (${combinedSize} players), penalty +1500`);
+                    }
+                } else if (playerCheck && playerCheck.valid) {
+                    // BONUS for meeting player requirements!
+                    penalty -= 500;
+                    debugLog(`[PENALTY] ${bunk} - ${act}: Player count GOOD (${combinedSize} players), bonus -500`);
                 }
             }
         }
@@ -287,7 +317,7 @@
     }
 
     /**
-     * ★★★ GET VALID PICKS - RESPECTS GLOBAL LOCKS ★★★
+     * ★★★ GET VALID PICKS - RESPECTS GLOBAL LOCKS + PLAYER REQUIREMENTS ★★★
      */
     Solver.getValidActivityPicks = function (block) {
         const picks = [];
@@ -319,6 +349,8 @@
                 };
                 const cost = calculatePenaltyCost(block, pick);
                 
+                // Allow picks with higher penalties (soft constraints)
+                // Only reject if cost is astronomical (hard constraints)
                 if (cost < 500000) {
                     picks.push({ pick, cost });
                 }
@@ -329,10 +361,11 @@
             console.log(`⚠️ NO VALID PICKS for ${block.bunk} at ${block.startTime}`);
         }
         
-        // Always have Free as fallback
+        // Always have Free as fallback - but with VERY high penalty
+        // This ensures we prefer even bad sports matches over Free
         picks.push({ 
             pick: { field: "Free", sport: null, _activity: "Free" }, 
-            cost: 50000 
+            cost: 100000  // High but not impossible
         });
         
         return picks;
@@ -412,7 +445,7 @@
             
             const picks = Solver.getValidActivityPicks(block)
                 .sort((a, b) => a.cost - b.cost)
-                .slice(0, 10);
+                .slice(0, 15); // Increased from 10 to consider more options
 
             for (const p of picks) {
                 const res = Solver.applyTentativePick(block, p);
@@ -484,6 +517,56 @@
         }
         
         return true;
+    };
+
+    /**
+     * Debug utility: Analyze player requirements impact
+     */
+    Solver.debugPlayerRequirements = function() {
+        const bunkMeta = window.getBunkMetaData?.() || {};
+        const sportMeta = window.getSportMetaData?.() || {};
+        
+        console.log('\n=== PLAYER REQUIREMENTS DEBUG ===');
+        console.log('\nBunk Sizes:');
+        Object.entries(bunkMeta).forEach(([bunk, meta]) => {
+            console.log(`  ${bunk}: ${meta.size || 0} players`);
+        });
+        
+        console.log('\nSport Requirements:');
+        Object.entries(sportMeta).forEach(([sport, meta]) => {
+            const min = meta.minPlayers || 'none';
+            const max = meta.maxPlayers || 'none';
+            console.log(`  ${sport}: min=${min}, max=${max}`);
+        });
+        
+        console.log('\nViability Analysis:');
+        const bunks = Object.keys(bunkMeta);
+        Object.entries(sportMeta).forEach(([sport, meta]) => {
+            if (meta.minPlayers || meta.maxPlayers) {
+                console.log(`\n  ${sport} (min: ${meta.minPlayers || 'n/a'}, max: ${meta.maxPlayers || 'n/a'}):`);
+                
+                // Check solo play
+                bunks.forEach(bunk => {
+                    const size = bunkMeta[bunk]?.size || 0;
+                    const check = window.SchedulerCoreUtils?.checkPlayerCountForSport?.(sport, size, false);
+                    if (check && !check.valid) {
+                        console.log(`    ${bunk} (${size}): ${check.severity} - ${check.reason}`);
+                    }
+                });
+                
+                // Check pairs
+                console.log('    Viable pairs:');
+                for (let i = 0; i < bunks.length; i++) {
+                    for (let j = i + 1; j < bunks.length; j++) {
+                        const combined = (bunkMeta[bunks[i]]?.size || 0) + (bunkMeta[bunks[j]]?.size || 0);
+                        const check = window.SchedulerCoreUtils?.checkPlayerCountForSport?.(sport, combined, false);
+                        if (check && check.valid) {
+                            console.log(`      ${bunks[i]} + ${bunks[j]} = ${combined} ✅`);
+                        }
+                    }
+                }
+            }
+        });
     };
 
     window.totalSolverEngine = Solver;
