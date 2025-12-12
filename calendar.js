@@ -1,14 +1,11 @@
 // =================================================================
 // calendar.js
 //
-// --- UPDATED (Smart Logic Reset) ---
-// - eraseRotationHistory now clears ALL rotation systems:
-//   1. Regular Rotation History → campRotationHistory_v1
-//   2. Legacy Smart Tile History → smartTileHistory_v1
-//   3. NEW Smart Tile Special History → smartTileSpecialHistory_v1
-//   4. Manual Usage Offsets (Analytics)
-//
-// This guarantees SmartLogicAdapter V31 starts fresh.
+// --- UPDATED (New Half Feature) ---
+// - eraseRotationHistory clears ALL rotation systems
+// - NEW: startNewHalf() resets bunk activity counters and league
+//   game counters without touching fields, special activities,
+//   or master schedule
 // =================================================================
 
 (function() {
@@ -22,11 +19,15 @@
     const ROTATION_HISTORY_KEY = "campRotationHistory_v1";
     const AUTO_SAVE_KEY = "campAutoSave_v1";
 
-    // legacy smart tile history (old versions)
+    // Legacy smart tile history (old versions)
     const SMART_TILE_HISTORY_KEY = "smartTileHistory_v1";
 
     // NEW Smart Tile rotation (SmartLogicAdapter V31)
     const SMART_TILE_SPECIAL_HISTORY_KEY = "smartTileSpecialHistory_v1";
+
+    // League history keys
+    const LEAGUE_HISTORY_KEY = "campLeagueHistory_v2";
+    const SPECIALTY_LEAGUE_HISTORY_KEY = "specialtyLeagueHistory_v1";
 
     // ==========================================================
     // Helper — formatted date YYYY-MM-DD
@@ -180,7 +181,7 @@
     };
 
     // ==========================================================
-    // ⭐ RESET ALL ACTIVITY / SPECIAL ROTATION
+    // ⭐ RESET ALL ACTIVITY / SPECIAL ROTATION (Full Reset)
     // ==========================================================
     window.eraseRotationHistory = function() {
         try {
@@ -212,6 +213,118 @@
     };
 
     // ==========================================================
+    // ⭐⭐⭐ NEW HALF - Reset for Second Half of Season ⭐⭐⭐
+    // ==========================================================
+    // Resets:
+    // - Bunk activity usage counters (rotation history)
+    // - Smart tile histories
+    // - Regular league game counters (back to Game 1)
+    // - Specialty league game counters (back to Game 1)
+    // - All daily schedules
+    //
+    // Does NOT touch:
+    // - Fields configuration
+    // - Special activities configuration
+    // - Master schedule templates
+    // - Divisions and bunks setup
+    // ==========================================================
+    window.startNewHalf = function() {
+        // Confirmation dialog
+        const confirmed = confirm(
+            "🏕️ START NEW HALF\n\n" +
+            "This will reset:\n" +
+            "  ✓ Bunk activity usage counters\n" +
+            "  ✓ Smart Tile rotation history\n" +
+            "  ✓ Regular League game counters (back to Game 1)\n" +
+            "  ✓ Specialty League game counters (back to Game 1)\n" +
+            "  ✓ All generated daily schedules\n\n" +
+            "This will NOT change:\n" +
+            "  • Fields configuration\n" +
+            "  • Special Activities setup\n" +
+            "  • Master Schedule templates\n" +
+            "  • Divisions and Bunks\n\n" +
+            "Are you sure you want to start a new half?"
+        );
+
+        if (!confirmed) return;
+
+        try {
+            console.log("=".repeat(50));
+            console.log("⭐ STARTING NEW HALF - Resetting Counters ⭐");
+            console.log("=".repeat(50));
+
+            // 1. Clear bunk rotation history (activity usage per bunk)
+            localStorage.removeItem(ROTATION_HISTORY_KEY);
+            console.log("✓ Cleared bunk rotation history");
+
+            // 2. Clear Smart Tile histories
+            localStorage.removeItem(SMART_TILE_HISTORY_KEY);
+            localStorage.removeItem(SMART_TILE_SPECIAL_HISTORY_KEY);
+            console.log("✓ Cleared Smart Tile histories");
+
+            // 3. Reset Regular League counters to 0
+            localStorage.removeItem(LEAGUE_HISTORY_KEY);
+            console.log("✓ Reset regular league history (Game counters back to 1)");
+
+            // 4. Reset Specialty League counters
+            localStorage.removeItem(SPECIALTY_LEAGUE_HISTORY_KEY);
+            // Also check for any other specialty league keys
+            const keysToCheck = [
+                'specialtyLeagueHistory',
+                'specialty_league_history',
+                'campSpecialtyLeagueHistory_v1',
+                'specialtyLeagueRoundState'
+            ];
+            keysToCheck.forEach(key => {
+                if (localStorage.getItem(key)) {
+                    localStorage.removeItem(key);
+                    console.log(`✓ Removed ${key}`);
+                }
+            });
+            console.log("✓ Reset specialty league history (Game counters back to 1)");
+
+            // 5. Clear in-memory league state
+            if (window.leagueRoundState) {
+                window.leagueRoundState = {};
+            }
+            window.saveGlobalSettings?.('leagueRoundState', {});
+            console.log("✓ Cleared in-memory league round state");
+
+            // 6. Clear all daily schedules
+            localStorage.removeItem(DAILY_DATA_KEY);
+            console.log("✓ Cleared all daily schedules");
+
+            // 7. Clear manual usage offsets from analytics
+            const settings = window.loadGlobalSettings();
+            if (settings.manualUsageOffsets) {
+                delete settings.manualUsageOffsets;
+                localStorage.setItem(GLOBAL_SETTINGS_KEY, JSON.stringify(settings));
+                console.log("✓ Cleared manual usage offsets");
+            }
+
+            // 8. Clear any cached league assignments in daily data
+            // (Already handled by removing DAILY_DATA_KEY)
+
+            console.log("=".repeat(50));
+            console.log("⭐ NEW HALF RESET COMPLETE ⭐");
+            console.log("=".repeat(50));
+
+            alert(
+                "✅ New Half Started!\n\n" +
+                "All activity and league counters have been reset.\n" +
+                "The first game generated will now be Game 1.\n\n" +
+                "Reloading page..."
+            );
+
+            window.location.reload();
+
+        } catch (e) {
+            console.error("Failed to start new half:", e);
+            alert("Error starting new half. Check console for details.");
+        }
+    };
+
+    // ==========================================================
     // 5. ERASE ALL DATA BUTTON
     // ==========================================================
     function setupEraseAll() {
@@ -227,6 +340,8 @@
             localStorage.removeItem(AUTO_SAVE_KEY);
             localStorage.removeItem(SMART_TILE_HISTORY_KEY);
             localStorage.removeItem(SMART_TILE_SPECIAL_HISTORY_KEY);
+            localStorage.removeItem(LEAGUE_HISTORY_KEY);
+            localStorage.removeItem(SPECIALTY_LEAGUE_HISTORY_KEY);
 
             localStorage.removeItem("campSchedulerData");
             localStorage.removeItem("fixedActivities_v2");
@@ -272,7 +387,9 @@
             const backup = {
                 globalSettings: JSON.parse(localStorage.getItem(GLOBAL_SETTINGS_KEY) || "{}"),
                 dailyData: JSON.parse(localStorage.getItem(DAILY_DATA_KEY) || "{}"),
-                rotationHistory: JSON.parse(localStorage.getItem(ROTATION_HISTORY_KEY) || "{}")
+                rotationHistory: JSON.parse(localStorage.getItem(ROTATION_HISTORY_KEY) || "{}"),
+                leagueHistory: JSON.parse(localStorage.getItem(LEAGUE_HISTORY_KEY) || "{}"),
+                specialtyLeagueHistory: JSON.parse(localStorage.getItem(SPECIALTY_LEAGUE_HISTORY_KEY) || "{}")
             };
 
             const json = JSON.stringify(backup, null, 2);
@@ -311,6 +428,14 @@
                 localStorage.setItem(GLOBAL_SETTINGS_KEY, JSON.stringify(backup.globalSettings || {}));
                 localStorage.setItem(DAILY_DATA_KEY, JSON.stringify(backup.dailyData || {}));
                 localStorage.setItem(ROTATION_HISTORY_KEY, JSON.stringify(backup.rotationHistory || {}));
+                
+                // Also restore league histories if present in backup
+                if (backup.leagueHistory) {
+                    localStorage.setItem(LEAGUE_HISTORY_KEY, JSON.stringify(backup.leagueHistory));
+                }
+                if (backup.specialtyLeagueHistory) {
+                    localStorage.setItem(SPECIALTY_LEAGUE_HISTORY_KEY, JSON.stringify(backup.specialtyLeagueHistory));
+                }
 
                 alert("Import successful. Reloading...");
                 window.location.reload();
@@ -332,7 +457,9 @@
                 timestamp: Date.now(),
                 [GLOBAL_SETTINGS_KEY]: localStorage.getItem(GLOBAL_SETTINGS_KEY),
                 [DAILY_DATA_KEY]: localStorage.getItem(DAILY_DATA_KEY),
-                [ROTATION_HISTORY_KEY]: localStorage.getItem(ROTATION_HISTORY_KEY)
+                [ROTATION_HISTORY_KEY]: localStorage.getItem(ROTATION_HISTORY_KEY),
+                [LEAGUE_HISTORY_KEY]: localStorage.getItem(LEAGUE_HISTORY_KEY),
+                [SPECIALTY_LEAGUE_HISTORY_KEY]: localStorage.getItem(SPECIALTY_LEAGUE_HISTORY_KEY)
             };
 
             localStorage.setItem(AUTO_SAVE_KEY, JSON.stringify(snapshot));
@@ -362,6 +489,14 @@
             localStorage.setItem(GLOBAL_SETTINGS_KEY, snap[GLOBAL_SETTINGS_KEY]);
             localStorage.setItem(DAILY_DATA_KEY, snap[DAILY_DATA_KEY]);
             localStorage.setItem(ROTATION_HISTORY_KEY, snap[ROTATION_HISTORY_KEY]);
+            
+            // Restore league histories if present
+            if (snap[LEAGUE_HISTORY_KEY]) {
+                localStorage.setItem(LEAGUE_HISTORY_KEY, snap[LEAGUE_HISTORY_KEY]);
+            }
+            if (snap[SPECIALTY_LEAGUE_HISTORY_KEY]) {
+                localStorage.setItem(SPECIALTY_LEAGUE_HISTORY_KEY, snap[SPECIALTY_LEAGUE_HISTORY_KEY]);
+            }
 
             alert("Auto-save restored. Reloading...");
             window.location.reload();
