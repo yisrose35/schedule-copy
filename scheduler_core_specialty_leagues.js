@@ -240,6 +240,9 @@
         
         const totalSlotsAvailable = fields.length * (gamesPerFieldSlot || 3);
         
+        console.log(`[SpecialtyLeagues] Fields: ${fields.join(', ')}`);
+        console.log(`[SpecialtyLeagues] Total slots available: ${totalSlotsAvailable} (${fields.length} fields × ${gamesPerFieldSlot || 3} games)`);
+        
         // Limit matchups to available slots if needed
         let workingMatchups = [...matchups];
         if (workingMatchups.length > totalSlotsAvailable) {
@@ -252,70 +255,62 @@
             workingMatchups = workingMatchups.slice(0, totalSlotsAvailable);
         }
         
-        // Create all possible slot assignments
-        const possibleSlots = [];
-        fields.forEach(field => {
-            for (let slot = 1; slot <= (gamesPerFieldSlot || 3); slot++) {
-                possibleSlots.push({ field, slotOrder: slot });
-            }
-        });
+        console.log(`[SpecialtyLeagues] Working matchups: ${workingMatchups.length}`);
         
-        // Score each matchup-slot combination
-        const scoredOptions = [];
+        // STRATEGY: Distribute matchups across ALL fields first, then fill slot orders
+        // This ensures all courts get used before any court gets multiple games
         
-        workingMatchups.forEach(matchup => {
-            possibleSlots.forEach(slot => {
-                // Calculate combined fairness score
-                const waitScore = getWaitPriorityScore(matchup.teamA, matchup.teamB, history.lastSlotOrder, id);
-                const fieldScore = getFieldRotationScore(matchup.teamA, matchup.teamB, slot.field, history.teamFieldRotation, fields, id);
-                
-                // Wait priority affects slot assignment
-                // Teams with high wait score should get slotOrder 1
-                let slotBonus = 0;
-                const maxSlots = gamesPerFieldSlot || 3;
-                if (waitScore > 50) {
-                    // Team waited yesterday - bonus for slot 1, penalty for later slots
-                    slotBonus = (maxSlots - slot.slotOrder + 1) * 30;
-                } else {
-                    // Team played first yesterday - slight penalty for slot 1
-                    slotBonus = slot.slotOrder * 5;
-                }
-                
-                const totalScore = waitScore + fieldScore + slotBonus + (Math.random() * 10); // Small random for variety
-                
-                scoredOptions.push({
-                    matchup,
-                    slot,
-                    score: totalScore
-                });
-            });
-        });
-        
-        // Sort by score (highest first)
-        scoredOptions.sort((a, b) => b.score - a.score);
-        
-        // Greedy assignment
         const assignments = [];
         const assignedMatchups = new Set();
-        const assignedSlots = new Set();
+        const fieldGamesCount = {};  // Track games per field
+        fields.forEach(f => fieldGamesCount[f] = 0);
         
-        for (const option of scoredOptions) {
-            const matchupKey = `${option.matchup.teamA}-${option.matchup.teamB}`;
-            const slotKey = `${option.slot.field}-${option.slot.slotOrder}`;
+        // Sort matchups by wait priority (highest first)
+        workingMatchups = workingMatchups.map(m => ({
+            ...m,
+            waitScore: getWaitPriorityScore(m.teamA, m.teamB, history.lastSlotOrder, id)
+        }));
+        workingMatchups.sort((a, b) => b.waitScore - a.waitScore);
+        
+        // Assign matchups round-robin across fields to ensure even distribution
+        for (const matchup of workingMatchups) {
+            const matchupKey = `${matchup.teamA}-${matchup.teamB}`;
+            if (assignedMatchups.has(matchupKey)) continue;
             
-            if (!assignedMatchups.has(matchupKey) && !assignedSlots.has(slotKey)) {
+            // Find the field with the fewest games (ensures all fields get used)
+            let bestField = null;
+            let minGames = Infinity;
+            
+            for (const field of fields) {
+                const currentGames = fieldGamesCount[field];
+                const maxGames = gamesPerFieldSlot || 3;
+                
+                if (currentGames < maxGames && currentGames < minGames) {
+                    // Also consider field rotation score
+                    const rotationScore = getFieldRotationScore(matchup.teamA, matchup.teamB, field, history.teamFieldRotation, fields, id);
+                    
+                    // Prefer fields with fewer games, tie-break by rotation score
+                    if (currentGames < minGames || (currentGames === minGames && rotationScore > 0)) {
+                        minGames = currentGames;
+                        bestField = field;
+                    }
+                }
+            }
+            
+            if (bestField) {
+                const slotOrder = fieldGamesCount[bestField] + 1;
                 assignments.push({
-                    teamA: option.matchup.teamA,
-                    teamB: option.matchup.teamB,
-                    field: option.slot.field,
-                    slotOrder: option.slot.slotOrder,
-                    conference: option.matchup.conference,
-                    isInterConference: option.matchup.isInterConference,
-                    _score: option.score
+                    teamA: matchup.teamA,
+                    teamB: matchup.teamB,
+                    field: bestField,
+                    slotOrder: slotOrder,
+                    conference: matchup.conference,
+                    isInterConference: matchup.isInterConference
                 });
                 
+                fieldGamesCount[bestField]++;
                 assignedMatchups.add(matchupKey);
-                assignedSlots.add(slotKey);
+                console.log(`[SpecialtyLeagues] Assigned ${matchup.teamA} vs ${matchup.teamB} to ${bestField} (slot ${slotOrder})`);
             }
         }
         
@@ -324,6 +319,9 @@
             if (a.field !== b.field) return a.field.localeCompare(b.field);
             return a.slotOrder - b.slotOrder;
         });
+        
+        // Log field distribution
+        console.log(`[SpecialtyLeagues] Field distribution: ${Object.entries(fieldGamesCount).map(([f, c]) => `${f}:${c}`).join(', ')}`);
         
         return assignments;
     }
@@ -487,20 +485,40 @@
                 console.log(`   ${a.teamA} vs ${a.teamB} @ ${a.field} (Slot ${a.slotOrder})`);
             });
             
-            // Build matchup display strings - just show court name without "undefined @"
+            // Build matchup display strings - ONLY "TeamA vs TeamB — CourtName"
+            // NO "undefined @" - just team names and court
             const matchupStrings = assignments.map(a => 
                 `${a.teamA} vs ${a.teamB} — ${a.field}`
             );
             
             // Calculate current round (add 1 because counter is 0-indexed before first increment)
             const roundNum = (history.roundCounters[league.id] || 0) + 1;
-            // Format: "{League Name} Game {X}"
+            // Format: "{League Name} Game {X}" - NO "Specialty League" prefix
             const gameLabel = `${league.name} Game ${roundNum}`;
+            
+            // ============ LOCK FIELDS FOR SPECIALTY LEAGUE ============
+            // Prevent other activities from using these fields during this time slot
+            const usedFields = new Set(assignments.map(a => a.field));
+            blocks.forEach(block => {
+                block.slots.forEach(slotIdx => {
+                    usedFields.forEach(fieldName => {
+                        if (!fieldUsageBySlot[slotIdx]) fieldUsageBySlot[slotIdx] = {};
+                        // Mark field as fully used (capacity exhausted)
+                        fieldUsageBySlot[slotIdx][fieldName] = {
+                            count: 999, // Max out usage
+                            divisions: [divName],
+                            bunks: {},
+                            _lockedBySpecialtyLeague: league.name
+                        };
+                        console.log(`[SpecialtyLeagues] Locked field "${fieldName}" at slot ${slotIdx}`);
+                    });
+                });
+            });
             
             // Fill all blocks in this division/time with the league data
             blocks.forEach(block => {
                 const pick = {
-                    field: gameLabel,  // Shows as "{League Name} Game {X}"
+                    field: gameLabel,  // Shows as "{League Name} Game {X}" - NO prefix
                     sport: league.sport || 'League',
                     _activity: gameLabel,
                     _h2h: true,
@@ -508,6 +526,7 @@
                     _allMatchups: matchupStrings,
                     _gameLabel: gameLabel,
                     _leagueName: league.name,
+                    _isSpecialtyLeague: true,  // Flag for UI to NOT add "Specialty League" prefix
                     _assignments: assignments  // Store full assignment data
                 };
                 
@@ -528,12 +547,13 @@
                     leagueName: league.name,
                     sport: league.sport,
                     gameLabel: gameLabel,
+                    isSpecialtyLeague: true,  // Flag for UI
                     matchups: assignments.map(a => ({
                         teamA: a.teamA,
                         teamB: a.teamB,
                         field: a.field,
                         slotOrder: a.slotOrder,
-                        conference: a.conference
+                        conference: a.conference || null
                     }))
                 };
             }
