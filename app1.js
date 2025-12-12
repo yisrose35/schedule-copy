@@ -442,20 +442,18 @@ function renameBunkEverywhere(oldName, newName, newSize) {
     window.updateTable?.();
 }
 
-// -------------------- CSV / Bulk Logic --------------------
+// -------------------- CSV / Bulk Logic (UPDATED FOR CAMPER NAMES) --------------------
 function downloadTemplate() {
-    let csv = "Division,Bunk Name,Camper Count\n";
+    let csv = "Division,Bunk Name,Camper Name OR Count\n";
 
     if (availableDivisions.length === 0) {
-        csv += "Junior,Bunk 1,12\nJunior,Bunk 2,14\nSenior,Bunk A,18\n";
+        csv += "Junior,Bunk 1,12\nJunior,Bunk 2,Moshe Cohen\nSenior,Bunk A,David Levy\n";
     } else {
         availableDivisions.forEach(div => {
             const d = divisions[div];
             if (d.bunks.length > 0) {
                 d.bunks.forEach(b => {
-                    const meta = bunkMetaData[b] || {};
-                    const size = meta.size || 0;
-                    csv += `"${div}","${b}",${size}\n`;
+                    csv += `"${div}","${b}",(Enter Name or Count)\n`;
                 });
             } else {
                 csv += `"${div}","",\n`;
@@ -468,7 +466,7 @@ function downloadTemplate() {
     const a = document.createElement("a");
     a.setAttribute("hidden", "");
     a.href = url;
-    a.download = "camp_setup_template.csv";
+    a.download = "camp_roster_template.csv";
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -479,7 +477,15 @@ function handleBulkImport(file) {
     reader.onload = e => {
         const text = e.target.result;
         const lines = text.split("\n");
-        let addedDivs = 0, addedBunks = 0, updatedSizes = 0;
+        let addedDivs = 0, addedBunks = 0, updatedSizes = 0, addedCampers = 0;
+
+        // Load existing roster
+        const globalSettings = window.loadGlobalSettings?.() || {};
+        const app1Data = globalSettings.app1 || {};
+        const camperRoster = app1Data.camperRoster || {};
+        
+        // Count bunks if importing names
+        const bunkCounts = {};
 
         for (let i = 1; i < lines.length; i++) {
             const line = lines[i].trim();
@@ -490,7 +496,7 @@ function handleBulkImport(file) {
 
             const divName = parts[0];
             const bunkName = parts[1];
-            const size = parseInt(parts[2]) || 0;
+            const thirdCol = parts[2]; // Count or Name
 
             if (divName) {
                 // Add Div
@@ -516,19 +522,57 @@ function handleBulkImport(file) {
                         sortBunksInPlace(div.bunks);
                     }
 
-                    if (!bunkMetaData[bunkName]) bunkMetaData[bunkName] = {};
-                    bunkMetaData[bunkName].size = size;
-                    updatedSizes++;
+                    // Handle Size or Roster
+                    if (thirdCol) {
+                        const asNum = parseInt(thirdCol);
+                        const isNumeric = !isNaN(asNum) && String(asNum).length === String(thirdCol).trim().length;
+                        
+                        if (isNumeric) {
+                             if (!bunkMetaData[bunkName]) bunkMetaData[bunkName] = {};
+                             bunkMetaData[bunkName].size = asNum;
+                             updatedSizes++;
+                        } else if (thirdCol.length > 1) {
+                             // Treat as name
+                             camperRoster[thirdCol] = {
+                                 division: divName,
+                                 bunk: bunkName,
+                                 team: "" // Empty initially
+                             };
+                             addedCampers++;
+                             
+                             if(!bunkCounts[bunkName]) bunkCounts[bunkName] = 0;
+                             bunkCounts[bunkName]++;
+                        }
+                    }
                 }
             }
         }
+        
+        // Update sizes from counts if names were found
+        Object.keys(bunkCounts).forEach(b => {
+             if (!bunkMetaData[b]) bunkMetaData[b] = {};
+             bunkMetaData[b].size = bunkCounts[b];
+             updatedSizes++;
+        });
+
+        // Save Roster to global storage via app1Data structure
+        // We modify the global object directly then save it via saveData() which reads it back
+        // But since saveData reads from global, we need to inject it into the persistence flow
+        // Hack: Attach to window.app1 for immediate availability then let saveData handle the merge
+        window.app1.camperRoster = camperRoster;
+        
+        // Explicitly save the updated roster to storage now
+        const currentGlobal = window.loadGlobalSettings?.() || {};
+        if(!currentGlobal.app1) currentGlobal.app1 = {};
+        currentGlobal.app1.camperRoster = camperRoster;
+        window.saveGlobalSettings?.("app1", currentGlobal.app1);
 
         saveData();
         setupDivisionButtons();
         renderDivisionDetailPane();
 
         alert(
-            `Import Complete!\nAdded Divisions: ${addedDivs}\nAdded Bunks: ${addedBunks}\nUpdated Metadata: ${updatedSizes}`
+            `Import Complete!\nAdded Divisions: ${addedDivs}\nAdded Bunks: ${addedBunks}\nUpdated Metadata: ${updatedSizes}\nCampers Imported: ${addedCampers}`
         );
     };
 
@@ -553,7 +597,7 @@ function renderBulkImportUI() {
              Camp Setup &amp; Configuration
              <span style="font-size:0.7rem; background:#8A5DFF; color:white; padding:2px 8px; border-radius:999px;">Step 1</span>
           </h3>
-          <p class="muted" style="margin:4px 0 0;">Use this panel to import data or add new divisions below. Sport player requirements are configured in the <strong>Fields</strong> tab.</p>
+          <p class="muted" style="margin:4px 0 0;">Import data via CSV (Divisions, Bunks, Camper Names) or add manually below.</p>
         </div>
 
         <div style="display:flex; gap:10px; align-items:center;">
