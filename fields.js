@@ -81,9 +81,8 @@ function initFieldsTab(){
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 16px;
-            padding-bottom: 12px;
-            border-bottom: 1px solid #E5E7EB;
+            cursor: pointer;
+            user-select: none;
         }
         .sport-rules-title {
             font-size: 1.1rem;
@@ -244,7 +243,7 @@ function saveData(){
 }
 
 //------------------------------------------------------------------
-// SPORT PLAYER REQUIREMENTS SECTION (Moved from app1.js)
+// SPORT RULES SECTION (Dropdown/Collapsible)
 //------------------------------------------------------------------
 function renderSportRulesSection() {
     const container = document.getElementById("sport-rules-section");
@@ -252,18 +251,20 @@ function renderSportRulesSection() {
 
     const allSports = window.getAllGlobalSports?.() || [];
     
+    // Empty state handling
     if (allSports.length === 0) {
         container.innerHTML = `
             <div class="sport-rules-card">
                 <div class="sport-rules-header">
                     <div class="sport-rules-title">
-                        ⚡ Sport Player Requirements
-                        <span class="sport-rules-badge">NEW</span>
+                        ⚡ Sports Rules
                     </div>
                 </div>
-                <p class="muted" style="text-align:center; padding:20px;">
-                    No sports configured yet. Add sports to fields first.
-                </p>
+                <div class="sport-rules-body" style="display:block; padding-top:10px; text-align:center;">
+                    <p class="muted" style="padding:10px;">
+                        No sports configured yet. Add sports to fields first.
+                    </p>
+                </div>
             </div>
         `;
         return;
@@ -306,32 +307,54 @@ function renderSportRulesSection() {
         `;
     });
 
+    // Render the dropdown structure
     container.innerHTML = `
         <div class="sport-rules-card">
-            <div class="sport-rules-header">
+            <!-- Header (Toggle Trigger) -->
+            <div class="sport-rules-header" id="sport-rules-toggle">
                 <div class="sport-rules-title">
-                    ⚡ Sport Player Requirements
-                    <span class="sport-rules-badge">SOFT RULES</span>
+                    ⚡ Sports Rules
                 </div>
-                <button id="save-sport-rules-btn" style="background:#10B981; color:white; border:none; padding:8px 20px; border-radius:999px; cursor:pointer; font-weight:600; font-size:0.85rem;">
-                    Save Rules
-                </button>
+                <span id="sport-rules-caret" style="transform: rotate(0deg); transition: transform 0.2s; color:#6B7280;">
+                     <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"></path></svg>
+                </span>
             </div>
             
-            <div class="sport-rules-hint">
-                <strong>How this works:</strong> Set minimum and maximum players for each sport. 
-                The scheduler will try to match bunks appropriately based on their sizes. 
-                If a bunk is too small, it may be paired with another bunk. 
-                If combined bunks are slightly over the max, the scheduler will still prefer a valid sport over "Free".
-            </div>
+            <!-- Body (Collapsible Content) -->
+            <div id="sport-rules-body" style="display:none; margin-top:16px; padding-top:16px; border-top:1px solid #E5E7EB;">
+                <div class="sport-rules-hint">
+                    <strong>How this works:</strong> Set minimum and maximum players for each sport. 
+                    The scheduler will try to match bunks appropriately based on their sizes. 
+                    If a bunk is too small, it may be paired with another bunk. 
+                    If combined bunks are slightly over the max, the scheduler will still prefer a valid sport over "Free".
+                </div>
 
-            <div id="sport-rules-list">
-                ${sportsHTML}
+                <div id="sport-rules-list">
+                    ${sportsHTML}
+                </div>
+
+                <div style="margin-top:20px; text-align:right;">
+                     <button id="save-sport-rules-btn" style="background:#10B981; color:white; border:none; padding:8px 24px; border-radius:999px; cursor:pointer; font-weight:600; font-size:0.9rem; box-shadow: 0 2px 5px rgba(16,185,129,0.3);">
+                        Save Rules
+                    </button>
+                </div>
             </div>
         </div>
     `;
 
-    // Add event listeners
+    // Toggle Logic
+    const toggleBtn = document.getElementById('sport-rules-toggle');
+    const bodyEl = document.getElementById('sport-rules-body');
+    const caretEl = document.getElementById('sport-rules-caret');
+
+    toggleBtn.onclick = () => {
+        const isHidden = bodyEl.style.display === 'none';
+        bodyEl.style.display = isHidden ? 'block' : 'none';
+        caretEl.style.transform = isHidden ? 'rotate(180deg)' : 'rotate(0deg)';
+        // Visual polish: remove extra padding on bottom if open? No, keep standard spacing.
+    };
+
+    // Add event listeners for Inputs
     container.querySelectorAll('.sport-rule-input').forEach(input => {
         input.addEventListener('change', () => {
             const sport = input.dataset.sport;
@@ -348,34 +371,38 @@ function renderSportRulesSection() {
         });
     });
 
-    container.querySelector('#save-sport-rules-btn').onclick = () => {
-        // Collect all values
-        container.querySelectorAll('.sport-rule-input').forEach(input => {
-            const sport = input.dataset.sport;
-            const type = input.dataset.type;
-            const val = parseInt(input.value) || null;
+    // Save Button Logic
+    const saveBtn = document.getElementById('save-sport-rules-btn');
+    if(saveBtn) {
+        saveBtn.onclick = (e) => {
+            e.stopPropagation(); // Prevent toggling if somehow bubbled
+            // Collect all values
+            container.querySelectorAll('.sport-rule-input').forEach(input => {
+                const sport = input.dataset.sport;
+                const type = input.dataset.type;
+                const val = parseInt(input.value) || null;
 
-            if (!sportMetaData[sport]) sportMetaData[sport] = {};
+                if (!sportMetaData[sport]) sportMetaData[sport] = {};
+                
+                if (type === 'min') {
+                    sportMetaData[sport].minPlayers = val;
+                } else if (type === 'max') {
+                    sportMetaData[sport].maxPlayers = val;
+                }
+            });
+
+            saveData();
             
-            if (type === 'min') {
-                sportMetaData[sport].minPlayers = val;
-            } else if (type === 'max') {
-                sportMetaData[sport].maxPlayers = val;
-            }
-        });
-
-        saveData();
-        
-        // Visual feedback
-        const btn = container.querySelector('#save-sport-rules-btn');
-        const originalText = btn.textContent;
-        btn.textContent = '✓ Saved!';
-        btn.style.background = '#059669';
-        setTimeout(() => {
-            btn.textContent = originalText;
-            btn.style.background = '#10B981';
-        }, 1500);
-    };
+            // Visual feedback
+            const originalText = saveBtn.textContent;
+            saveBtn.textContent = '✓ Saved!';
+            saveBtn.style.background = '#059669';
+            setTimeout(() => {
+                saveBtn.textContent = originalText;
+                saveBtn.style.background = '#10B981';
+            }, 1500);
+        };
+    }
 }
 
 //------------------------------------------------------------------
