@@ -239,7 +239,7 @@
 
                                     <button id="eraseTodayBtn"
                                             style="background:#db7a00;color:#fff;border:none;"
-                                            onclick="if(confirm('Delete today’s schedule?')) window.eraseCurrentDailyData?.();">
+                                            onclick="if(confirm('Delete today\'s schedule?')) window.eraseCurrentDailyData?.();">
                                         Delete ONLY Today's Schedule
                                     </button>
 
@@ -249,17 +249,10 @@
                                         Delete ALL Daily Schedules
                                     </button>
 
-                                    <button id="eraseHistoryBtn"
+                                    <button id="newHalfBtn"
                                             style="background:#5e35b1;color:#fff;border:none;"
-                                            onclick="
-                                                if(confirm('Reset rotation history and League counters?')) {
-                                                    window.eraseRotationHistory?.();
-                                                    window.leagueRoundState = {};
-                                                    window.saveGlobalSettings?.('leagueRoundState', {});
-                                                    alert('Activity History and Game Counters reset!');
-                                                }
-                                            ">
-                                        Reset Activity History
+                                            onclick="window.startNewHalf?.();">
+                                        🔄 New Half
                                     </button>
 
                                 </div>
