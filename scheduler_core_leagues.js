@@ -1,11 +1,12 @@
 // ============================================================================
-// scheduler_core_leagues.js (FIXED v3 - GLOBAL LOCK INTEGRATION)
+// scheduler_core_leagues.js (FIXED v4 - DAY-AWARE COUNTER)
 //
 // CRITICAL UPDATE:
 // - Now uses GlobalFieldLocks to check/lock fields
 // - Regular leagues process AFTER specialty leagues
 // - Any field locked by specialty leagues is unavailable
 // - Regular leagues lock their fields to prevent double-booking
+// - Game counter only increments when day changes, not on regenerate
 // ============================================================================
 
 (function () {
@@ -22,11 +23,14 @@
     function loadLeagueHistory() {
         try {
             const raw = localStorage.getItem(LEAGUE_HISTORY_KEY);
-            if (!raw) return { teamSports: {}, matchupHistory: {}, roundCounters: {} };
-            return JSON.parse(raw);
+            if (!raw) return { teamSports: {}, matchupHistory: {}, roundCounters: {}, lastScheduledDay: {} };
+            const history = JSON.parse(raw);
+            // Ensure lastScheduledDay exists for backward compatibility
+            if (!history.lastScheduledDay) history.lastScheduledDay = {};
+            return history;
         } catch (e) {
             console.error("Failed to load league history:", e);
-            return { teamSports: {}, matchupHistory: {}, roundCounters: {} };
+            return { teamSports: {}, matchupHistory: {}, roundCounters: {}, lastScheduledDay: {} };
         }
     }
     
@@ -224,7 +228,8 @@
             fillBlock,
             fieldUsageBySlot,
             activityProperties,
-            rotationHistory
+            rotationHistory,
+            currentDay  // ★★★ NEED THIS FROM CONTEXT ★★★
         } = context;
 
         if (!masterLeagues || Object.keys(masterLeagues).length === 0) {
@@ -233,6 +238,17 @@
         }
         
         const history = loadLeagueHistory();
+        
+        // ★★★ GET CURRENT DAY IDENTIFIER ★★★
+        // Try multiple sources for the day identifier
+        const dayIdentifier = currentDay 
+            || context.date 
+            || context.dayOfWeek 
+            || context.selectedDay 
+            || window.currentScheduleDay 
+            || new Date().toDateString();
+        
+        console.log(`[RegularLeagues] Current day identifier: "${dayIdentifier}"`);
 
         // Group blocks by time
         const blocksByTime = {};
@@ -292,7 +308,26 @@
                     continue;
                 }
 
-                const roundCounter = history.roundCounters[league.name] || 0;
+                // ★★★ CHECK IF THIS IS A NEW DAY FOR THIS LEAGUE ★★★
+                const lastDay = history.lastScheduledDay[league.name];
+                const isNewDay = (lastDay !== dayIdentifier);
+                
+                let roundCounter = history.roundCounters[league.name] || 0;
+                
+                if (isNewDay) {
+                    // New day - increment the counter
+                    console.log(`   🆕 New day detected (last: "${lastDay || 'none'}", now: "${dayIdentifier}")`);
+                    // Note: We'll increment AFTER processing, so the first day uses round 0
+                    if (lastDay !== undefined) {
+                        // Only increment if this isn't the very first time
+                        roundCounter = (history.roundCounters[league.name] || 0) + 1;
+                        history.roundCounters[league.name] = roundCounter;
+                    }
+                    history.lastScheduledDay[league.name] = dayIdentifier;
+                } else {
+                    console.log(`   🔄 Same day regeneration - keeping Game ${roundCounter + 1}`);
+                }
+
                 const fullSchedule = generateRoundRobinSchedule(leagueTeams);
                 const roundIndex = roundCounter % fullSchedule.length;
                 const matchups = fullSchedule[roundIndex] || [];
@@ -366,8 +401,11 @@
                 assignments.forEach(a => {
                     console.log(`      ✅ ${a.team1} vs ${a.team2} → ${a.sport} @ ${a.field}`);
                     
-                    recordTeamSport(league.name, a.team1, a.sport, history);
-                    recordTeamSport(league.name, a.team2, a.sport, history);
+                    // ★★★ ONLY RECORD SPORT HISTORY ON NEW DAY ★★★
+                    if (isNewDay) {
+                        recordTeamSport(league.name, a.team1, a.sport, history);
+                        recordTeamSport(league.name, a.team2, a.sport, history);
+                    }
                 });
 
                 const gameNumber = roundCounter + 1;
@@ -394,7 +432,8 @@
                     });
                 });
 
-                history.roundCounters[league.name] = roundCounter + 1;
+                // ★★★ REMOVED: No longer increment here - done above only on new day ★★★
+                // history.roundCounters[league.name] = roundCounter + 1;
                 
                 if (!window.leagueRoundState) window.leagueRoundState = {};
                 window.leagueRoundState[league.name] = { currentRound: roundCounter + 1 };
@@ -465,6 +504,6 @@
 
     window.SchedulerCoreLeagues = Leagues;
 
-    console.log('[RegularLeagues] Module loaded with Global Lock integration');
+    console.log('[RegularLeagues] Module loaded with Global Lock integration + Day-Aware Counter');
 
 })();
