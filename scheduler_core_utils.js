@@ -1,11 +1,11 @@
 // ============================================================================
-// scheduler_core_utils.js (FIXED v4 - WITH FIELD RESERVATIONS)
+// scheduler_core_utils.js (FIXED v5 - GLOBAL LOCK INTEGRATION)
 // PART 1 of 3: THE FOUNDATION
 //
-// UPDATES:
-// - Added Field Reservation Scanner and Check logic
-// - Integrated reservation check into canBlockFit
-// - Updated time parser to infer PM for 1-6 with conservative warning
+// CRITICAL UPDATE:
+// - Integrated with GlobalFieldLocks for unified field availability checking
+// - canBlockFit() now checks GLOBAL LOCKS FIRST before any other checks
+// - Any field locked by leagues is COMPLETELY unavailable
 // ============================================================================
 
 (function () {
@@ -53,7 +53,6 @@
             else if (mer === "pm") hh += 12;
         } else {
             // If no AM/PM specified, assume PM ONLY for afternoon hours (12-6)
-            // This prevents false positives from morning times
             if (hh >= 1 && hh <= 6) {
                 console.warn(`[TIME PARSE] "${str}" has no AM/PM - assuming ${hh + 12 >= 12 ? 'PM' : 'AM'}`);
                 hh += 12; 
@@ -120,13 +119,9 @@
     };
 
     // =================================================================
-    // 2. FIELD RESERVATION LOGIC (NEW)
+    // 2. FIELD RESERVATION LOGIC (Skeleton-based)
     // =================================================================
 
-    /**
-     * Scans the skeleton for all field reservations
-     * Returns: { fieldName: [ { startMin, endMin, division, event } ] }
-     */
     Utils.getFieldReservationsFromSkeleton = function(skeleton) {
         const reservations = {};
         
@@ -135,7 +130,6 @@
         }
         
         skeleton.forEach(block => {
-            // Check if this block has reserved fields
             if (block.reservedFields && Array.isArray(block.reservedFields) && block.reservedFields.length > 0) {
                 const startMin = Utils.parseTimeToMinutes(block.startTime);
                 const endMin = Utils.parseTimeToMinutes(block.endTime);
@@ -162,23 +156,19 @@
         return reservations;
     };
 
-    /**
-     * Checks if a field is reserved at a given time
-     */
     Utils.isFieldReserved = function(fieldName, startMin, endMin, reservations) {
         if (!reservations || !reservations[fieldName]) {
-            return null; // No reservations for this field
+            return null;
         }
         
         for (const reservation of reservations[fieldName]) {
-            // Check for time overlap
             const overlaps = (startMin < reservation.endMin) && (endMin > reservation.startMin);
             if (overlaps) {
-                return reservation; // Return the blocking reservation
+                return reservation;
             }
         }
         
-        return null; // Field is available
+        return null;
     };
 
     // =================================================================
@@ -251,10 +241,6 @@
     // 5. FIELD USAGE HELPERS
     // =================================================================
 
-    /**
-     * Get current usage for a field at a slot
-     * Returns: { count, bunks: {bunkName: activityName}, activities: Set }
-     */
     function getFieldUsageAtSlot(slotIndex, fieldName, fieldUsageBySlot) {
         const result = { 
             count: 0, 
@@ -274,7 +260,6 @@
         result.bunks = fieldData.bunks || {};
         result.bunkList = Object.keys(result.bunks);
         
-        // Extract unique activities
         Object.values(result.bunks).forEach(actName => {
             if (actName) result.activities.add(actName.toLowerCase().trim());
         });
@@ -282,9 +267,6 @@
         return result;
     }
 
-    /**
-     * Also check window.scheduleAssignments for more accurate count
-     */
     function getScheduleUsageAtSlot(slotIndex, fieldName) {
         const result = { 
             count: 0, 
@@ -302,7 +284,6 @@
             const entryField = Utils.fieldLabel(entry.field) || entry._activity;
             if (!entryField) continue;
             
-            // Check if this is the same field
             if (entryField.toLowerCase().trim() === fieldName.toLowerCase().trim()) {
                 result.count++;
                 result.bunks[bunk] = entry._activity || entry.sport || entryField;
@@ -317,7 +298,7 @@
     }
 
     // =================================================================
-    // 6. MAIN FIT LOGIC (STRICT ENFORCEMENT)
+    // 6. MAIN FIT LOGIC (WITH GLOBAL LOCK CHECK)
     // =================================================================
 
     Utils.isTimeAvailable = function (slotIndex, props) {
@@ -364,7 +345,17 @@
     };
 
     /**
-     * MAIN FIT CHECK - Now with strict enforcement and Reservation Checks
+     * =========================================================================
+     * MAIN FIT CHECK - NOW WITH GLOBAL LOCK CHECK FIRST
+     * =========================================================================
+     * This is the CRITICAL function that determines if a bunk can use a field.
+     * 
+     * CHECK ORDER:
+     * 1. GLOBAL LOCKS (leagues) - If locked, IMMEDIATELY REJECT
+     * 2. Field reservations (skeleton)
+     * 3. Activity properties (availability, time rules, preferences)
+     * 4. Capacity checks
+     * =========================================================================
      */
     Utils.canBlockFit = function (block, fieldName, activityProperties, fieldUsageBySlot, actName, forceLeague = false) {
         if (!fieldUsageBySlot) fieldUsageBySlot = window.fieldUsageBySlot || {};
@@ -372,6 +363,34 @@
             if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - no field name`);
             return false;
         }
+
+        // Get slots for this block
+        let uniqueSlots = [];
+        if (block.slots && block.slots.length > 0) {
+            uniqueSlots = [...new Set(block.slots)].sort((a, b) => a - b);
+        } else {
+            const { blockStartMin, blockEndMin } = Utils.getBlockTimeRange(block);
+            if (blockStartMin != null && blockEndMin != null) {
+                uniqueSlots = Utils.findSlotsForRange(blockStartMin, blockEndMin);
+            }
+        }
+
+        // =================================================================
+        // ★★★ CRITICAL: GLOBAL LOCK CHECK FIRST ★★★
+        // =================================================================
+        // If this field is locked by ANY league at ANY of these slots,
+        // it is COMPLETELY UNAVAILABLE - no exceptions!
+        // =================================================================
+        if (window.GlobalFieldLocks && uniqueSlots.length > 0) {
+            const lockInfo = window.GlobalFieldLocks.isFieldLocked(fieldName, uniqueSlots);
+            if (lockInfo) {
+                if (DEBUG_FITS) {
+                    console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - GLOBALLY LOCKED by ${lockInfo.lockedBy} (${lockInfo.leagueName || lockInfo.activity})`);
+                }
+                return false;
+            }
+        }
+        // =================================================================
 
         const baseProps = {
             available: true,
@@ -382,12 +401,6 @@
         };
 
         const props = activityProperties?.[fieldName];
-        
-        if (!props) {
-            // Field not configured - allow it as a fallback with base props
-            if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: Using base props (not in activityProperties)`);
-        }
-        
         const effectiveProps = props || baseProps;
 
         // Get transition rules
@@ -399,8 +412,7 @@
         } = Utils.getEffectiveTimeRange(block, rules);
 
         // =================================================================
-        // FIELD RESERVATION CHECK (NEW)
-        // Checks if this field is blocked by a reservation on the skeleton
+        // FIELD RESERVATION CHECK (Skeleton-based)
         // =================================================================
         if (window.fieldReservations && blockStartMin != null && blockEndMin != null) {
             const reservation = Utils.isFieldReserved(
@@ -423,7 +435,7 @@
         }
 
         // =================================================================
-        // CAPACITY CALCULATION (STRICT)
+        // CAPACITY CALCULATION
         // =================================================================
         let maxCapacity = 1;
         
@@ -474,18 +486,6 @@
             if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: limitUsage PASSED - division ${block.divName} allowed`);
         }
 
-        // Get slots to check - USE BLOCK'S SLOTS IF AVAILABLE
-        let uniqueSlots = [];
-        
-        if (block.slots && block.slots.length > 0) {
-            uniqueSlots = [...new Set(block.slots)].sort((a, b) => a - b);
-        } else {
-            const slots = rules.occupiesField
-                ? Utils.findSlotsForRange(blockStartMin, blockEndMin)
-                : Utils.findSlotsForRange(effectiveStart, effectiveEnd);
-            uniqueSlots = [...new Set(slots)].sort((a, b) => a - b);
-        }
-        
         if (uniqueSlots.length === 0 && blockStartMin != null) {
             if (window.unifiedTimes) {
                 for (let i = 0; i < window.unifiedTimes.length; i++) {
@@ -506,7 +506,7 @@
         }
 
         // =================================================================
-        // CHECK EACH SLOT
+        // CHECK EACH SLOT FOR CAPACITY AND ACTIVITY MATCHING
         // =================================================================
         for (const idx of uniqueSlots) {
             const trackedUsage = getFieldUsageAtSlot(idx, fieldName, fieldUsageBySlot);
@@ -569,23 +569,24 @@
 
     /**
      * Calculate sharing score - HIGHER is better
-     * Used by solver to prefer adjacent bunks
      */
     Utils.calculateSharingScore = function (block, fieldName, fieldUsageBySlot, actName) {
         if (!fieldUsageBySlot) fieldUsageBySlot = window.fieldUsageBySlot || {};
         
-        let score = 0;
-        
+        // First check if field is globally locked
         const slots = Utils.findSlotsForRange(block.startTime, block.endTime);
+        if (window.GlobalFieldLocks?.isFieldLocked(fieldName, slots)) {
+            return -999999; // Completely unavailable
+        }
+        
+        let score = 0;
         
         for (const idx of slots) {
             const scheduleUsage = getScheduleUsageAtSlot(idx, fieldName);
             
             if (scheduleUsage.count === 0) {
-                // Empty field - good base score
                 score += 100;
             } else {
-                // Field has existing bunks - check adjacency
                 let minDistance = Infinity;
                 let sameActivity = true;
                 
@@ -593,7 +594,6 @@
                     const distance = Utils.getBunkDistance(block.bunk, existingBunk);
                     minDistance = Math.min(minDistance, distance);
                     
-                    // Check activity match
                     const existingActivity = scheduleUsage.bunks[existingBunk];
                     if (existingActivity && actName) {
                         if (existingActivity.toLowerCase().trim() !== actName.toLowerCase().trim()) {
@@ -606,7 +606,6 @@
                     score += Math.max(0, 100 - (minDistance * 10));
                 }
                 
-                // Bonus for same activity
                 if (sameActivity) {
                     score += 50;
                 } else {
@@ -628,7 +627,12 @@
 
     Utils.timeline = {
         checkAvailability(resourceName, startMin, endMin, weight, capacity, excludeBunk) {
+            // Check global locks first
             const slots = Utils.findSlotsForRange(startMin, endMin);
+            if (window.GlobalFieldLocks?.isFieldLocked(resourceName, slots)) {
+                return false;
+            }
+            
             const assigns = window.scheduleAssignments || {};
 
             for (const s of slots) {
@@ -687,6 +691,18 @@
         console.log('SharableWith:', props?.sharableWith);
         console.log('TimeRules:', props?.timeRules);
         console.log('Preferences:', props?.preferences);
+        
+        // Check global lock status
+        if (window.GlobalFieldLocks) {
+            console.log('Global Lock Status: checking all slots...');
+            const allSlots = window.unifiedTimes?.map((_, i) => i) || [];
+            const lockInfo = window.GlobalFieldLocks.isFieldLocked(fieldName, allSlots);
+            if (lockInfo) {
+                console.log('GLOBALLY LOCKED BY:', lockInfo);
+            } else {
+                console.log('Not globally locked');
+            }
+        }
     };
 
     window.SchedulerCoreUtils = Utils;
