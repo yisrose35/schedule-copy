@@ -1,5 +1,5 @@
 // ============================================================================
-// scheduler_core_main.js (UPDATED V4: ROTATING SPLIT TILES + RESERVATIONS)
+// scheduler_core_main.js (UPDATED V5: SPECIALTY LEAGUES INTEGRATION)
 //
 // UPDATES:
 // 1. Intercepts 'split' tiles in the optimizer.
@@ -7,6 +7,7 @@
 // 3. Intelligently routes "Pinned" (Swim) vs "Generated" (Sports) sub-activities.
 // 4. Scans skeleton for Field Reservations early.
 // 5. Skips slots that overlap with Pinned events (priority filtering).
+// 6. NEW: Uses dedicated SchedulerCoreSpecialtyLeagues processor
 // ============================================================================
 
 (function () {
@@ -344,7 +345,7 @@
     // MAIN ENTRY
     // -------------------------------------------------------------------------
     window.runSkeletonOptimizer = function (manualSkeleton, externalOverrides) {
-        console.log(">>> OPTIMIZER STARTED (Split Logic v2)");
+        console.log(">>> OPTIMIZER STARTED (V5 - Specialty Leagues Integration)");
         const Utils = window.SchedulerCoreUtils;
         const config = Utils.loadAndFilterData();
         window.activityProperties = config.activityProperties;
@@ -572,7 +573,17 @@
             fillBlock,
             fields: config.masterFields || []
         };
-        window.SchedulerCoreLeagues?.processSpecialtyLeagues?.(leagueContext);
+        
+        // Process Specialty Leagues FIRST (use dedicated processor if available)
+        if (window.SchedulerCoreSpecialtyLeagues?.processSpecialtyLeagues) {
+            console.log("[OPTIMIZER] Using dedicated SchedulerCoreSpecialtyLeagues processor");
+            window.SchedulerCoreSpecialtyLeagues.processSpecialtyLeagues(leagueContext);
+        } else {
+            console.log("[OPTIMIZER] Using legacy SchedulerCoreLeagues.processSpecialtyLeagues");
+            window.SchedulerCoreLeagues?.processSpecialtyLeagues?.(leagueContext);
+        }
+        
+        // Then process Regular Leagues
         window.SchedulerCoreLeagues?.processRegularLeagues?.(leagueContext);
 
         // 6. Total Solver
