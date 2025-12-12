@@ -1,9 +1,10 @@
 // ============================================================================
-// fields.js — MERGED: NEW UX + EXISTING LOGIC
+// fields.js — MERGED: NEW UX + EXISTING LOGIC + SPORT PLAYER REQUIREMENTS
 // ============================================================================
 // 1. Layout: Apple-inspired Two-Pane with Collapsible Detail Sections.
 // 2. Logic: Retains all Transition (Zones/Occupancy), Sharing, and Priority logic.
 // 3. Fix: Access & Restrictions toggle stays open and updates locally.
+// 4. NEW: Sport Player Requirements section for min/max players per sport
 // ============================================================================
 
 (function(){
@@ -14,6 +15,9 @@ let selectedItemId = null;
 let fieldsListEl = null;
 let detailPaneEl = null;
 let addFieldInput = null;
+
+// Sport metadata (min/max players) - synced with app1.js sportMetaData
+let sportMetaData = {};
 
 //------------------------------------------------------------------
 // INIT
@@ -64,6 +68,90 @@ function initFieldsTab(){
         .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
         input:checked + .slider { background-color: #10B981; }
         input:checked + .slider:before { transform: translateX(14px); }
+
+        /* Sport Rules Card */
+        .sport-rules-card {
+            border: 1px solid #E5E7EB;
+            border-radius: 16px;
+            padding: 20px;
+            background: linear-gradient(135deg, #F0FDF4 0%, #FFFFFF 100%);
+            margin-bottom: 24px;
+        }
+        .sport-rules-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #E5E7EB;
+        }
+        .sport-rules-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #111827;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .sport-rules-badge {
+            background: #10B981;
+            color: white;
+            padding: 2px 10px;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+        .sport-rule-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid #F3F4F6;
+        }
+        .sport-rule-row:last-child {
+            border-bottom: none;
+        }
+        .sport-rule-name {
+            font-weight: 500;
+            color: #374151;
+            flex: 1;
+        }
+        .sport-rule-inputs {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        .sport-rule-input-group {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .sport-rule-label {
+            font-size: 0.8rem;
+            color: #6B7280;
+        }
+        .sport-rule-input {
+            width: 60px;
+            padding: 6px 8px;
+            border: 1px solid #D1D5DB;
+            border-radius: 6px;
+            text-align: center;
+            font-size: 0.9rem;
+        }
+        .sport-rule-input:focus {
+            outline: none;
+            border-color: #10B981;
+            box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+        }
+        .sport-rules-hint {
+            font-size: 0.85rem;
+            color: #6B7280;
+            margin-bottom: 16px;
+            padding: 12px;
+            background: #F9FAFB;
+            border-radius: 8px;
+            border-left: 3px solid #10B981;
+        }
     `;
     container.appendChild(style);
 
@@ -74,9 +162,12 @@ function initFieldsTab(){
               <span class="setup-step-pill">Fields</span>
               <div class="setup-card-text">
                 <h3>Manage Fields & Facilities</h3>
-                <p>Configure courts, fields, capabilities, and restriction rules.</p>
+                <p>Configure courts, fields, capabilities, restriction rules, and sport player requirements.</p>
               </div>
             </div>
+
+            <!-- SPORT PLAYER REQUIREMENTS SECTION -->
+            <div id="sport-rules-section"></div>
 
             <div style="display:flex; flex-wrap:wrap; gap:24px;">
               <!-- LEFT SIDE: MASTER LIST -->
@@ -109,6 +200,7 @@ function initFieldsTab(){
     document.getElementById("add-field-btn").onclick = addField;
     addFieldInput.onkeyup = e => { if(e.key === "Enter") addField(); };
 
+    renderSportRulesSection();
     renderMasterLists();
     renderDetailPane();
 }
@@ -119,6 +211,7 @@ function initFieldsTab(){
 function loadData(){
     const app1 = (window.loadGlobalSettings?.().app1) || {};
     fields = app1.fields || [];
+    sportMetaData = app1.sportMetaData || {};
 
     fields.forEach(f => {
         f.available = f.available !== false;
@@ -146,7 +239,143 @@ function saveData(){
     const settings = window.loadGlobalSettings?.() || {};
     settings.app1 = settings.app1 || {};
     settings.app1.fields = fields;
+    settings.app1.sportMetaData = sportMetaData;
     window.saveGlobalSettings?.("app1", settings.app1);
+}
+
+//------------------------------------------------------------------
+// SPORT PLAYER REQUIREMENTS SECTION (Moved from app1.js)
+//------------------------------------------------------------------
+function renderSportRulesSection() {
+    const container = document.getElementById("sport-rules-section");
+    if (!container) return;
+
+    const allSports = window.getAllGlobalSports?.() || [];
+    
+    if (allSports.length === 0) {
+        container.innerHTML = `
+            <div class="sport-rules-card">
+                <div class="sport-rules-header">
+                    <div class="sport-rules-title">
+                        ⚡ Sport Player Requirements
+                        <span class="sport-rules-badge">NEW</span>
+                    </div>
+                </div>
+                <p class="muted" style="text-align:center; padding:20px;">
+                    No sports configured yet. Add sports to fields first.
+                </p>
+            </div>
+        `;
+        return;
+    }
+
+    let sportsHTML = '';
+    const sortedSports = [...allSports].sort();
+
+    sortedSports.forEach(sport => {
+        const meta = sportMetaData[sport] || {};
+        const minPlayers = meta.minPlayers || '';
+        const maxPlayers = meta.maxPlayers || '';
+
+        sportsHTML += `
+            <div class="sport-rule-row">
+                <span class="sport-rule-name">${sport}</span>
+                <div class="sport-rule-inputs">
+                    <div class="sport-rule-input-group">
+                        <span class="sport-rule-label">Min:</span>
+                        <input type="number" 
+                               class="sport-rule-input" 
+                               data-sport="${sport}" 
+                               data-type="min"
+                               value="${minPlayers}" 
+                               placeholder="—"
+                               min="1">
+                    </div>
+                    <div class="sport-rule-input-group">
+                        <span class="sport-rule-label">Max:</span>
+                        <input type="number" 
+                               class="sport-rule-input" 
+                               data-sport="${sport}" 
+                               data-type="max"
+                               value="${maxPlayers}" 
+                               placeholder="∞"
+                               min="1">
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+
+    container.innerHTML = `
+        <div class="sport-rules-card">
+            <div class="sport-rules-header">
+                <div class="sport-rules-title">
+                    ⚡ Sport Player Requirements
+                    <span class="sport-rules-badge">SOFT RULES</span>
+                </div>
+                <button id="save-sport-rules-btn" style="background:#10B981; color:white; border:none; padding:8px 20px; border-radius:999px; cursor:pointer; font-weight:600; font-size:0.85rem;">
+                    Save Rules
+                </button>
+            </div>
+            
+            <div class="sport-rules-hint">
+                <strong>How this works:</strong> Set minimum and maximum players for each sport. 
+                The scheduler will try to match bunks appropriately based on their sizes. 
+                If a bunk is too small, it may be paired with another bunk. 
+                If combined bunks are slightly over the max, the scheduler will still prefer a valid sport over "Free".
+            </div>
+
+            <div id="sport-rules-list">
+                ${sportsHTML}
+            </div>
+        </div>
+    `;
+
+    // Add event listeners
+    container.querySelectorAll('.sport-rule-input').forEach(input => {
+        input.addEventListener('change', () => {
+            const sport = input.dataset.sport;
+            const type = input.dataset.type;
+            const val = parseInt(input.value) || null;
+
+            if (!sportMetaData[sport]) sportMetaData[sport] = {};
+            
+            if (type === 'min') {
+                sportMetaData[sport].minPlayers = val;
+            } else if (type === 'max') {
+                sportMetaData[sport].maxPlayers = val;
+            }
+        });
+    });
+
+    container.querySelector('#save-sport-rules-btn').onclick = () => {
+        // Collect all values
+        container.querySelectorAll('.sport-rule-input').forEach(input => {
+            const sport = input.dataset.sport;
+            const type = input.dataset.type;
+            const val = parseInt(input.value) || null;
+
+            if (!sportMetaData[sport]) sportMetaData[sport] = {};
+            
+            if (type === 'min') {
+                sportMetaData[sport].minPlayers = val;
+            } else if (type === 'max') {
+                sportMetaData[sport].maxPlayers = val;
+            }
+        });
+
+        saveData();
+        
+        // Visual feedback
+        const btn = container.querySelector('#save-sport-rules-btn');
+        const originalText = btn.textContent;
+        btn.textContent = '✓ Saved!';
+        btn.style.background = '#059669';
+        setTimeout(() => {
+            btn.textContent = originalText;
+            btn.style.background = '#10B981';
+        }, 1500);
+    };
 }
 
 //------------------------------------------------------------------
@@ -378,6 +607,8 @@ function renderActivities(item, allSports){
             // Update summary without rerendering everything
             const summaryEl = b.closest('.detail-section').querySelector('.detail-section-summary');
             if(summaryEl) summaryEl.textContent = summaryActivities(item);
+            // Re-render sport rules section to show updated sports
+            renderSportRulesSection();
         };
         wrap.appendChild(b);
     });
@@ -393,7 +624,9 @@ function renderActivities(item, allSports){
             const s = add.value.trim();
             window.addGlobalSport?.(s);
             if(!item.activities.includes(s)) item.activities.push(s);
-            saveData(); renderDetailPane();
+            saveData(); 
+            renderDetailPane();
+            renderSportRulesSection();
         }
     };
 
@@ -791,5 +1024,10 @@ function parseTimeToMinutes(str) {
 //------------------------------------------------------------------
 window.initFieldsTab = initFieldsTab;
 window.fields = fields;
+
+// Export sport metadata getter for scheduler
+window.getSportMetaData = function() {
+    return sportMetaData;
+};
 
 })();
