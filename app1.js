@@ -6,6 +6,7 @@
 // - Bulk Import at TOP
 // - Double-click bunk to DELETE
 // - Wider inputs for bunk editing
+// - Sport Rules moved to Fields tab
 // =================================================================
 
 (function () {
@@ -318,35 +319,6 @@ function ensureSharedSetupStyles() {
             box-sizing: border-box;
         }
 
-        /* Sports Modal */
-        .sports-modal-overlay {
-            position: fixed; top: 0; left: 0;
-            width: 100%; height: 100%;
-            background: rgba(0,0,0,0.4); z-index: 9999;
-            display: flex; justify-content: center; align-items: center;
-            backdrop-filter: blur(2px);
-        }
-        .sports-modal {
-            background: white;
-            width: 400px; max-height: 80vh;
-            border-radius: 16px; padding: 24px;
-            overflow-y: auto;
-            box-shadow: 0 20px 50px rgba(0,0,0,0.2);
-        }
-        .sports-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 8px 0;
-            border-bottom: 1px solid #F3F4F6;
-        }
-        .sport-cap-input {
-            width: 60px;
-            padding: 4px;
-            border: 1px solid #D1D5DB;
-            border-radius: 6px;
-            text-align: center;
-        }
         .muted {
             color: #6B7280;
             font-size: 0.86rem;
@@ -563,69 +535,6 @@ function handleBulkImport(file) {
     reader.readAsText(file);
 }
 
-function showSportsRulesModal() {
-    const overlay = document.createElement("div");
-    overlay.className = "sports-modal-overlay";
-
-    const modal = document.createElement("div");
-    modal.className = "sports-modal";
-
-    modal.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-        <h2 style="margin:0; color:#111827;">Sports Capacity Rules</h2>
-        <button id="close-sports-modal" style="border:none; background:none; font-size:1.5rem; cursor:pointer;">&times;</button>
-      </div>
-
-      <p class="muted" style="margin-bottom:15px;">Set max total players per sport.</p>
-
-      <div id="sports-rules-list"></div>
-
-      <div style="margin-top:22px; text-align:right;">
-        <button id="save-sports-rules" style="background:#00C896; color:white; border:none; padding:8px 20px; border-radius:999px; cursor:pointer; font-weight:600;">
-            Save Rules
-        </button>
-      </div>
-    `;
-
-    overlay.appendChild(modal);
-    document.body.appendChild(overlay);
-
-    const list = modal.querySelector("#sports-rules-list");
-    const sortedSports = [...allSports].sort();
-
-    sortedSports.forEach(sport => {
-        const meta = sportMetaData[sport] || {};
-        const cap = meta.maxCapacity || "";
-
-        const row = document.createElement("div");
-        row.className = "sports-row";
-        row.innerHTML = `
-            <strong>${sport}</strong>
-            <div>
-                <span style="font-size:0.8rem; margin-right:5px;">Max Kids:</span>
-                <input type="number" class="sport-cap-input" data-sport="${sport}" value="${cap}" placeholder="∞">
-            </div>
-        `;
-
-        list.appendChild(row);
-    });
-
-    modal.querySelector("#close-sports-modal").onclick = () => overlay.remove();
-
-    modal.querySelector("#save-sports-rules").onclick = () => {
-        modal.querySelectorAll(".sport-cap-input").forEach(input => {
-            const sport = input.dataset.sport;
-            const val = parseInt(input.value);
-
-            if (!sportMetaData[sport]) sportMetaData[sport] = {};
-            sportMetaData[sport].maxCapacity = val > 0 ? val : null;
-        });
-
-        saveData();
-        overlay.remove();
-    };
-}
-
 function renderBulkImportUI() {
     if (document.getElementById("bulk-data-card")) return;
 
@@ -644,16 +553,10 @@ function renderBulkImportUI() {
              Camp Setup &amp; Configuration
              <span style="font-size:0.7rem; background:#8A5DFF; color:white; padding:2px 8px; border-radius:999px;">Step 1</span>
           </h3>
-          <p class="muted" style="margin:4px 0 0;">Use this panel to import data, set rules, or add new divisions below.</p>
+          <p class="muted" style="margin:4px 0 0;">Use this panel to import data or add new divisions below. Sport player requirements are configured in the <strong>Fields</strong> tab.</p>
         </div>
 
         <div style="display:flex; gap:10px; align-items:center;">
-            <button id="btn-manage-sports" style="background:#FFFFFF; border:1px solid #E5E7EB; color:#374151; padding:8px 16px; border-radius:999px; cursor:pointer; font-size:0.85rem; font-weight:500; display:flex; align-items:center; gap:6px;">
-                <span>⚡</span> Sports Rules
-            </button>
-
-            <div style="height:24px; width:1px; background:#E5E7EB;"></div>
-
             <button id="btn-download-template" style="background:white; border:1px solid #D1D5DB; padding:8px 16px; border-radius:999px; font-size:0.85rem; cursor:pointer;">Template</button>
 
             <button id="btn-trigger-upload" style="background:#0094FF; color:white; border:none; padding:8px 18px; border-radius:999px; font-size:0.85rem; cursor:pointer; font-weight:600;">Upload CSV</button>
@@ -665,7 +568,6 @@ function renderBulkImportUI() {
 
     target.prepend(card);
 
-    card.querySelector("#btn-manage-sports").onclick = showSportsRulesModal;
     card.querySelector("#btn-download-template").onclick = downloadTemplate;
 
     const uploadBtn = card.querySelector("#btn-trigger-upload");
