@@ -1,29 +1,10 @@
 // =================================================================
-// trip_wizard.js — HUMAN-CENTRIC TRIP PLANNER (FIXED + SAFE)
+// trip_wizard.js — HUMAN-CENTRIC TRIP PLANNER (SELF-CONTAINED FIX)
+// NO dependency on daily_adjustments.js internals
 // =================================================================
 
 (function () {
   'use strict';
-
-  // ------------------------------------------------------------
-  // HARD GUARD — REQUIRED DEPENDENCIES
-  // ------------------------------------------------------------
-  if (typeof window.parseTimeToMinutes !== "function") {
-    alert(
-      "Trip Wizard cannot start.\n\n" +
-      "parseTimeToMinutes() was not found.\n\n" +
-      "Make sure daily_adjustments.js loads BEFORE trip_wizard.js."
-    );
-    return;
-  }
-
-  if (typeof window.loadCurrentDailyData !== "function") {
-    alert(
-      "Trip Wizard cannot start.\n\n" +
-      "loadCurrentDailyData() was not found."
-    );
-    return;
-  }
 
   // ------------------------------------------------------------
   // STATE
@@ -34,24 +15,34 @@
   let wizardEl = null;
 
   // ------------------------------------------------------------
-  // TIME HELPERS (AM / PM ONLY)
+  // TIME PARSER — AM/PM ONLY (SELF CONTAINED)
   // ------------------------------------------------------------
   function toMin(str) {
-    try {
-      return window.parseTimeToMinutes(str);
-    } catch {
-      return null;
-    }
+    if (!str || typeof str !== "string") return null;
+    const s = str.trim().toLowerCase();
+    const m = s.match(/^(\d{1,2}):(\d{2})(am|pm)$/);
+    if (!m) return null;
+
+    let h = parseInt(m[1], 10);
+    const min = parseInt(m[2], 10);
+    const ap = m[3];
+
+    if (min < 0 || min > 59 || h < 1 || h > 12) return null;
+    if (h === 12) h = ap === "am" ? 0 : 12;
+    else if (ap === "pm") h += 12;
+
+    return h * 60 + min;
   }
 
   function addMinutes(timeStr, mins) {
-    const d = new Date("1/1/2000 " + timeStr);
-    d.setMinutes(d.getMinutes() + mins);
-    let h = d.getHours();
-    const m = d.getMinutes();
+    const base = toMin(timeStr);
+    if (base == null) return null;
+    const t = base + mins;
+    let h = Math.floor(t / 60) % 24;
+    const m = t % 60;
     const ap = h >= 12 ? 'pm' : 'am';
     h = h % 12 || 12;
-    return `${h}:${m.toString().padStart(2, '0')}${ap}`;
+    return `${h}:${String(m).padStart(2, '0')}${ap}`;
   }
 
   // ------------------------------------------------------------
@@ -87,7 +78,7 @@
           .map(i => i.value);
 
         if (!chosen.length) {
-          alert("Please pick at least one division.");
+          alert("Please select at least one division.");
           return;
         }
 
@@ -98,12 +89,12 @@
   }
 
   // ------------------------------------------------------------
-  // STEP 2 — TRIP DETAILS
+  // STEP 2 — DETAILS
   // ------------------------------------------------------------
   function stepTripDetails() {
     renderStep({
       title: "Trip details",
-      text: "Where are they going and when?",
+      text: "Where are they going and what time are they leaving and coming back?",
       body: `
         <label>Destination</label>
         <input id="tw-dest" placeholder="Zoo, Park, Museum">
@@ -123,7 +114,7 @@
         const eMin = toMin(end);
 
         if (!dest || sMin == null || eMin == null || eMin <= sMin) {
-          alert("Please enter a valid destination and times (am/pm).");
+          alert("Please enter a destination and valid times using am/pm.");
           return;
         }
 
@@ -148,7 +139,7 @@
     }
 
     const trip = tripManifest[index];
-    const dailyData = window.loadCurrentDailyData() || {};
+    const dailyData = window.loadCurrentDailyData?.() || {};
     const skeleton = dailyData.manualSkeleton || [];
 
     const overlaps = skeleton.filter(b =>
@@ -157,11 +148,11 @@
       toMin(b.endTime) > toMin(trip.start)
     );
 
-    handleImpacts(trip, overlaps, index);
+    handleImpacts(trip, overlaps.slice(), index);
   }
 
   // ------------------------------------------------------------
-  // HANDLE IMPACTS ONE BY ONE
+  // HANDLE IMPACTS (HUMAN FLOW)
   // ------------------------------------------------------------
   function handleImpacts(trip, blocks, index) {
     if (!blocks.length) {
@@ -182,18 +173,19 @@
     // ---- LUNCH ----
     if (evt.includes("lunch")) {
       renderStep({
-        title: `${trip.division} – Lunch`,
-        text: "Looks like lunch would be missed. What do you want to do?",
+        title: `${trip.division} — Lunch`,
+        text: "Looks like lunch would be missed. When do you want them to eat?",
         body: `
-          <label>Eat earlier</label>
+          <label>From</label>
           <input id="lstart" placeholder="10:40am">
+          <label>To</label>
           <input id="lend" placeholder="11:00am">
         `,
         next: () => {
           const s = wizardEl.querySelector('#lstart').value;
           const e = wizardEl.querySelector('#lend').value;
           if (toMin(s) == null || toMin(e) == null || toMin(e) <= toMin(s)) {
-            alert("Enter a valid lunch time.");
+            alert("Please enter a valid lunch window.");
             return;
           }
           plannedChanges.push({
@@ -213,8 +205,8 @@
     if (evt.includes("swim")) {
       const suggested = addMinutes(trip.end, 0);
       renderStep({
-        title: `${trip.division} – Swim`,
-        text: "They’ll miss swim. Here’s a suggestion — you can change it.",
+        title: `${trip.division} — Swim`,
+        text: "They’ll miss swim. I suggest moving it right when they get back.",
         body: `
           <label>Suggested swim time</label>
           <input id="sstart" value="${suggested}">
@@ -224,7 +216,7 @@
           const s = wizardEl.querySelector('#sstart').value;
           const e = wizardEl.querySelector('#send').value;
           if (toMin(s) == null || toMin(e) == null || toMin(e) <= toMin(s)) {
-            alert("Enter a valid swim time.");
+            alert("Please enter a valid swim time.");
             return;
           }
           plannedChanges.push({
@@ -240,35 +232,30 @@
       return;
     }
 
-    // ---- DEFAULT (SKIP) ----
+    // ---- DEFAULT ----
     renderStep({
       title: `${trip.division}`,
-      text: `"${block.event}" will be missed because of the trip.`,
-      body: `<p>We’ll skip it for today.</p>`,
+      text: `"${block.event}" will be skipped because of the trip.`,
+      body: `<p>No action needed — we’ll move on.</p>`,
       next: () => handleImpacts(trip, blocks, index)
     });
   }
 
   // ------------------------------------------------------------
-  // PREVIEW SCREEN
+  // PREVIEW
   // ------------------------------------------------------------
   function showPreview() {
     const html = plannedChanges.map(c => `
-      <div style="margin-bottom:6px;">
-        <strong>${c.division}</strong>: ${c.event}
-        (${c.startTime}–${c.endTime})
-      </div>
+      <div><strong>${c.division}</strong>: ${c.event} (${c.startTime}–${c.endTime})</div>
     `).join("");
 
     renderStep({
-      title: "Here’s what today would look like",
-      text: "Please review before applying.",
+      title: "Preview changes",
+      text: "Here’s what today will look like. Want to apply this?",
       body: html,
-      nextText: "Apply Changes",
+      nextText: "Apply",
       next: () => {
-        if (onComplete) {
-          onComplete(groupByDivision(plannedChanges));
-        }
+        onComplete?.(groupByDivision(plannedChanges));
         close();
       },
       cancelText: "Cancel"
@@ -288,11 +275,10 @@
   }
 
   // ------------------------------------------------------------
-  // UI RENDERING
+  // UI
   // ------------------------------------------------------------
   function renderBase() {
-    const old = document.getElementById("tw-overlay");
-    if (old) old.remove();
+    document.getElementById("tw-overlay")?.remove();
 
     const o = document.createElement("div");
     o.id = "tw-overlay";
@@ -305,59 +291,18 @@
         <div id="tw-content"></div>
       </div>
       <style>
-        #tw-overlay {
-          position: fixed;
-          inset: 0;
-          background: rgba(0,0,0,.5);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          z-index: 9999;
-        }
-        .tw-box {
-          background: white;
-          padding: 20px;
-          border-radius: 12px;
-          width: 520px;
-          max-height: 85vh;
-          overflow-y: auto;
-          box-shadow: 0 10px 30px rgba(0,0,0,.25);
-        }
-        .tw-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 10px;
-        }
-        #tw-exit {
-          background: none;
-          border: none;
-          font-size: 18px;
-          cursor: pointer;
-        }
-        label {
-          display: block;
-          margin-top: 10px;
-        }
-        input {
-          width: 100%;
-          padding: 8px;
-          margin-top: 4px;
-          box-sizing: border-box;
-        }
-        button {
-          margin-top: 15px;
-          padding: 8px 14px;
-        }
+        #tw-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:9999}
+        .tw-box{background:white;padding:20px;border-radius:12px;width:520px;max-height:85vh;overflow-y:auto}
+        .tw-header{display:flex;justify-content:space-between;align-items:center}
+        input{width:100%;padding:8px;margin-top:4px}
+        button{margin-top:15px}
       </style>
     `;
     document.body.appendChild(o);
     wizardEl = document.getElementById("tw-content");
 
     document.getElementById("tw-exit").onclick = () => {
-      if (confirm("Exit trip setup? No changes will be saved.")) {
-        close();
-      }
+      if (confirm("Exit trip setup?")) close();
     };
   }
 
@@ -372,9 +317,7 @@
       </div>
     `;
     wizardEl.querySelector('#tw-next').onclick = next;
-    if (cancelText) {
-      wizardEl.querySelector('#tw-cancel').onclick = close;
-    }
+    if (cancelText) wizardEl.querySelector('#tw-cancel').onclick = close;
   }
 
   function close() {
