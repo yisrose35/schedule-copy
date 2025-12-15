@@ -1134,7 +1134,7 @@ function renderTripsForm() {
   }
 
   form.appendChild(addBtn);
-  bunkOverridesContainer.appendChild(form);
+  tripsFormContainer.appendChild(form);
 
   const listContainer = document.createElement('div');
   listContainer.id = "bunk-overrides-list-container";
@@ -1166,7 +1166,7 @@ function renderTripsForm() {
       listContainer.appendChild(el);
     });
   }
-  bunkOverridesContainer.appendChild(listContainer);
+  tripsFormContainer.appendChild(listContainer);
 }
 
 /**
