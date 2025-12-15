@@ -970,7 +970,7 @@ function init() {
 
   initDailySkeletonUI();
   renderTripsForm();
-  renderBunkOverridesUI();
+ 
   renderResourceOverridesUI();
 }
 
