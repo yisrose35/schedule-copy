@@ -1070,13 +1070,13 @@ function renderTripsForm() {
   form.appendChild(divisionChipBox);
 
   const addBtn = document.createElement('button');
-  addBtn.textContent = 'Add Trip to Skeleton';
+  addBtn.textContent = 'Start Trip Planner 🪄'; // Updated Label
   addBtn.className = 'bunk-button';
   addBtn.style.background = '#007BFF';
   addBtn.style.color = 'white';
   addBtn.style.marginTop = '15px';
 
-  // --- REPLACEMENT CODE START ---
+  // --- REPLACEMENT ONCLICK HANDLER ---
   addBtn.onclick = () => {
     // 1. Check if the Wizard file is loaded
     if (!window.TripWizard) {
@@ -1132,121 +1132,6 @@ function renderTripsForm() {
     
     alert("Trips applied successfully!");
   }
-  // --- REPLACEMENT CODE END ---
-  form.appendChild(addBtn);
-  tripsFormContainer.appendChild(form);
-}
-
-/**
- * NEW: Renders the UI for the "Bunk Specific" tab
- */
-function renderBunkOverridesUI() {
-  bunkOverridesContainer.innerHTML = "";
-
-  const divisions = masterSettings.app1.divisions || {};
-  const availableDivisions = masterSettings.app1.availableDivisions || [];
-  const allBunksByDiv = {};
-  availableDivisions.forEach(divName => {
-    allBunksByDiv[divName] = (divisions[divName]?.bunks || []).sort();
-  });
-
-  const allSports = (masterSettings.app1.fields || []).flatMap(f => f.activities || []);
-  const allSpecials = (masterSettings.app1.specialActivities || []).map(s => s.name);
-  const allActivities = [...new Set([...allSports, ...allSpecials])].sort();
-
-  const form = document.createElement('div');
-  form.style.border = '1px solid #ccc';
-  form.style.padding = '15px';
-  form.style.borderRadius = '8px';
-  form.style.marginBottom = '20px';
-
-  let activityOptions = `<option value="">-- Select an Activity --</option>`;
-  allActivities.forEach(act => {
-    activityOptions += `<option value="${act}">${act}</option>`;
-  });
-
-  form.innerHTML = `
-    <label for="bunk-override-activity" style="display:block;margin-bottom:5px;font-weight:600;">Activity:</label>
-    <select id="bunk-override-activity" style="width:250px;padding:5px;font-size:1em;">${activityOptions}</select>
-
-    <label for="bunk-override-start" style="display:block;margin-top:10px;font-weight:600;">Start Time:</label>
-    <input id="bunk-override-start" placeholder="e.g., 9:00am" style="margin-right:8px;">
-
-    <label for="bunk-override-end" style="display:block;margin-top:10px;font-weight:600;">End Time:</label>
-    <input id="bunk-override-end" placeholder="e.g., 10:00am" style="margin-right:8px;">
-
-    <p style="margin-top:15px;font-weight:600;">Select Bunks:</p>
-  `;
-
-  availableDivisions.forEach(divName => {
-    const bunks = allBunksByDiv[divName];
-    if (bunks.length === 0) return;
-
-    const divLabel = document.createElement('div');
-    divLabel.textContent = divName;
-    divLabel.style.fontWeight = 'bold';
-    divLabel.style.marginTop = '8px';
-    form.appendChild(divLabel);
-
-    const bunkChipBox = document.createElement('div');
-    bunkChipBox.className = 'chips';
-    bunkChipBox.style.marginBottom = '5px';
-    bunks.forEach(bunkName => {
-      const chip = createChip(bunkName, divisions[divName]?.color || '#ccc');
-      bunkChipBox.appendChild(chip);
-    });
-    form.appendChild(bunkChipBox);
-  });
-
-  const addBtn = document.createElement('button');
-  addBtn.textContent = 'Add Pinned Activity';
-  addBtn.className = 'bunk-button';
-  addBtn.style.background = '#007BFF';
-  addBtn.style.color = 'white';
-  addBtn.style.marginTop = '15px';
-
-  addBtn.onclick = () => {
-    const activityEl = form.querySelector('#bunk-override-activity');
-    const startEl = form.querySelector('#bunk-override-start');
-    const endEl = form.querySelector('#bunk-override-end');
-    const selectedBunks = Array.from(
-      form.querySelectorAll('.bunk-button.selected')
-    ).map(el => el.dataset.value);
-
-    const activity = activityEl.value;
-    const start = startEl.value.trim();
-    const end = endEl.value.trim();
-
-    if (!activity) { alert('Please select an activity.'); return; }
-    if (!start || !end) { alert('Please enter a start and end time.'); return; }
-    if (selectedBunks.length === 0) { alert('Please select at least one bunk.'); return; }
-
-    const startMin = parseTimeToMinutes(start);
-    const endMin = parseTimeToMinutes(end);
-    if (startMin == null || endMin == null || endMin <= startMin) {
-      alert('Invalid time range. Please use formats like "9:00am" and ensure end is after start.');
-      return;
-    }
-
-    const overrides = window.loadCurrentDailyData?.().bunkActivityOverrides || [];
-    selectedBunks.forEach(bunk => {
-      overrides.push({
-        id: uid(),
-        bunk: bunk,
-        activity: activity,
-        startTime: start,
-        endTime: end
-      });
-    });
-    window.saveCurrentDailyData("bunkActivityOverrides", overrides);
-    currentOverrides.bunkActivityOverrides = overrides;
-
-    activityEl.value = "";
-    startEl.value = "";
-    endEl.value = "";
-    form.querySelectorAll('.bunk-button.selected').forEach(chip => chip.click());
-    renderBunkOverridesUI();
-  };
 
   form.appendChild(addBtn);
   bunkOverridesContainer.appendChild(form);
