@@ -1033,141 +1033,96 @@ function initDailySkeletonUI() {
 
 /**
  * Renders the UI for the "Trips" tab
+ * SINGLE RESPONSIBILITY: Launch Trip Wizard
  */
 function renderTripsForm() {
+  if (!tripsFormContainer) return;
+
+  // Clear tab
   tripsFormContainer.innerHTML = "";
 
-  const form = document.createElement('div');
-  form.style.border = '1px solid #ccc';
-  form.style.padding = '15px';
-  form.style.borderRadius = '8px';
+  // Wrapper card
+  const card = document.createElement('div');
+  card.style.border = '1px solid #ddd';
+  card.style.padding = '20px';
+  card.style.borderRadius = '10px';
+  card.style.background = '#fff';
+  card.style.maxWidth = '500px';
 
-  form.innerHTML = `
-    <label for="tripName" style="display:block;margin-bottom:5px;font-weight:600;">Trip Name:</label>
-    <input type="text" id="tripName" placeholder="e.g., Museum Trip" style="width:250px;">
-
-    <label for="tripStart" style="display:block;margin-top:10px;font-weight:600;">Start Time:</label>
-    <input id="tripStart" placeholder="e.g., 9:00am" style="margin-right:8px;">
-
-    <label for="tripEnd" style="display:block;margin-top:10px;font-weight:600;">End Time:</label>
-    <input id="tripEnd" placeholder="e.g., 2:00pm" style="margin-right:8px;">
-
-    <p style="margin-top:15px;font-weight:600;">Select Divisions (Trip will apply to all bunks in the division):</p>
+  card.innerHTML = `
+    <h3 style="margin-top:0;">Plan a Trip</h3>
+    <p style="color:#555;font-size:0.95em;">
+      Use the Trip Planner to schedule off-campus trips.
+      The wizard will automatically resolve conflicts with
+      lunch, leagues, swim, and specialty activities.
+    </p>
   `;
 
-  const divisions = masterSettings.app1.divisions || {};
-  const availableDivisions = masterSettings.app1.availableDivisions || [];
+  // Primary CTA button
+  const startBtn = document.createElement('button');
+  startBtn.textContent = "Start Trip Planner 🪄";
+  startBtn.style.background = '#2563eb';
+  startBtn.style.color = 'white';
+  startBtn.style.padding = '12px 18px';
+  startBtn.style.fontSize = '1.05em';
+  startBtn.style.border = 'none';
+  startBtn.style.borderRadius = '6px';
+  startBtn.style.cursor = 'pointer';
+  startBtn.style.marginTop = '10px';
 
-  const divisionChipBox = document.createElement('div');
-  divisionChipBox.className = 'chips';
-  divisionChipBox.style.marginBottom = '5px';
-
-  availableDivisions.forEach(divName => {
-    const divColor = divisions[divName]?.color || '#333';
-    const chip = createChip(divName, divColor, true);
-    divisionChipBox.appendChild(chip);
-  });
-  form.appendChild(divisionChipBox);
-
-  const addBtn = document.createElement('button');
-  addBtn.textContent = 'Start Trip Planner 🪄'; // Updated Label
-  addBtn.className = 'bunk-button';
-  addBtn.style.background = '#007BFF';
-  addBtn.style.color = 'white';
-  addBtn.style.marginTop = '15px';
-
-  // --- REPLACEMENT ONCLICK HANDLER ---
-  addBtn.onclick = () => {
-    // 1. Check if the Wizard file is loaded
-    if (!window.TripWizard) {
-        alert("Trip Wizard module (trip_wizard.js) is not loaded! Please check your index.html.");
-        return;
+  startBtn.onclick = () => {
+    if (!window.TripWizard || typeof window.TripWizard.start !== "function") {
+      alert(
+        "Trip Wizard is not loaded.\n\n" +
+        "Make sure trip_wizard.js is included AFTER daily_adjustments.js."
+      );
+      return;
     }
 
-    // 2. Launch the Wizard
     window.TripWizard.start((instructions) => {
-        console.log("Trip Wizard Instructions:", instructions);
-        applyTripInstructions(instructions);
+      console.log("Trip Wizard completed:", instructions);
+
+      // Apply wizard instructions to skeleton
+      loadDailySkeleton();
+
+      instructions.forEach(instr => {
+        const div = instr.division;
+
+        // Remove existing blocks for division
+        dailyOverrideSkeleton = dailyOverrideSkeleton.filter(b => b.division !== div);
+
+        // Apply wizard actions
+        instr.actions.forEach(act => {
+          if (act.type === 'wipe') return;
+
+          dailyOverrideSkeleton.push({
+            id: `trip_${Math.random().toString(36).slice(2)}`,
+            type: act.type,
+            event: act.event,
+            division: div,
+            startTime: act.startTime,
+            endTime: act.endTime,
+            reservedFields: act.reservedFields || []
+          });
+        });
+      });
+
+      saveDailySkeleton();
+
+      // Refresh skeleton grid if visible
+      if (skeletonContainer) {
+        const grid = skeletonContainer.querySelector('#daily-skeleton-grid');
+        if (grid) renderGrid(grid);
+      }
+
+      alert("Trip scheduled successfully!");
     });
   };
 
-  // Helper function to execute the Wizard's plan
-  function applyTripInstructions(instructions) {
-    // Refresh current data
-    loadDailySkeleton(); 
-
-    instructions.forEach(instr => {
-      const divName = instr.division;
-      
-      // Wipe existing blocks for this division
-      dailyOverrideSkeleton = dailyOverrideSkeleton.filter(b => b.division !== divName);
-
-      // Add new blocks from the Wizard
-      instr.actions.forEach(act => {
-        if (act.type === 'wipe') return; // 'wipe' was implicit above
-
-        dailyOverrideSkeleton.push({
-          id: `trip_${Math.random().toString(36).slice(2)}`,
-          type: act.type, // e.g. 'pinned', 'league', 'lunch'
-          event: act.event,
-          division: divName,
-          startTime: act.startTime,
-          endTime: act.endTime,
-          reservedFields: act.reservedFields || []
-        });
-      });
-    });
-
-    // Save and Refresh
-    saveDailySkeleton();
-    
-    // Find the grid container to update the view
-    if (skeletonContainer) {
-        const gridEl = skeletonContainer.querySelector('#daily-skeleton-grid');
-        if (gridEl) renderGrid(gridEl);
-    }
-    
-    // Clear the form chips visually
-    form.querySelectorAll('.bunk-button.selected').forEach(chip => chip.classList.remove('selected'));
-    
-    alert("Trips applied successfully!");
-  }
-
-  form.appendChild(addBtn);
-  tripsFormContainer.appendChild(form);
-
-  const listContainer = document.createElement('div');
-  listContainer.id = "bunk-overrides-list-container";
-
-  const overrides = currentOverrides.bunkActivityOverrides;
-  if (overrides.length === 0) {
-    listContainer.innerHTML = `<p class="muted">No bunk-specific activities added yet.</p>`;
-  } else {
-    overrides.forEach(item => {
-      const el = document.createElement('div');
-      el.className = 'item';
-      el.innerHTML = `
-        <div style="flex-grow:1;">
-          <div><strong>${item.bunk}</strong> &raquo; ${item.activity}</div>
-          <div class="muted" style="font-size:0.9em;">${item.startTime} - ${item.endTime}</div>
-        </div>
-        <button data-id="${item.id}"
-                style="padding:6px 10px;border-radius:4px;cursor:pointer;background:#c0392b;color:white;border:none;">
-          Remove
-        </button>
-      `;
-      el.querySelector('button').onclick = () => {
-        let currentList = window.loadCurrentDailyData?.().bunkActivityOverrides || [];
-        currentList = currentList.filter(o => o.id !== item.id);
-        window.saveCurrentDailyData("bunkActivityOverrides", currentList);
-        currentOverrides.bunkActivityOverrides = currentList;
-        renderTripsForm();
-      };
-      listContainer.appendChild(el);
-    });
-  }
-  tripsFormContainer.appendChild(listContainer);
+  card.appendChild(startBtn);
+  tripsFormContainer.appendChild(card);
 }
+
 
 /**
  * NEW: Renders the UI for the "Resource Availability" tab
