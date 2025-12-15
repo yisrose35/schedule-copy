@@ -1161,7 +1161,7 @@ function renderTripsForm() {
         currentList = currentList.filter(o => o.id !== item.id);
         window.saveCurrentDailyData("bunkActivityOverrides", currentList);
         currentOverrides.bunkActivityOverrides = currentList;
-        renderBunkOverridesUI();
+        renderTripsForm();
       };
       listContainer.appendChild(el);
     });
