@@ -1060,7 +1060,7 @@ function renderTripsForm() {
 
   // Primary CTA button
   const startBtn = document.createElement('button');
-  startBtn.textContent = "Start Trip Planner 🪄";
+  startBtn.textContent = "Start Trip Planner";
   startBtn.style.background = '#2563eb';
   startBtn.style.color = 'white';
   startBtn.style.padding = '12px 18px';
