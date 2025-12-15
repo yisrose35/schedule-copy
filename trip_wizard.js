@@ -1,394 +1,304 @@
 // =================================================================
-// trip_wizard.js — GCM v1
-// Scheduler-Aware Trip Wizard with Impact Detection + Safe Exit
+// trip_wizard.js — HUMAN-CENTRIC TRIP PLANNER (CASCADE SAFE)
 // =================================================================
 
 (function () {
   'use strict';
 
-  // ---------------------------------------------------------------
+  // ------------------------------------------------------------
   // STATE
-  // ---------------------------------------------------------------
-  let tripManifest = [];
-  let impactReports = [];
-  let finalInstructions = [];
-  let onCompleteCallback = null;
-  let wizardContainer = null;
+  // ------------------------------------------------------------
+  let tripManifest = [];           // [{ division, destination, start, end }]
+  let plannedChanges = [];         // [{ division, type, event, startTime, endTime, note }]
+  let pendingQuestions = [];       // Queue of follow-ups
+  let onComplete = null;
 
-  // ---------------------------------------------------------------
-  // CONSTANTS
-  // ---------------------------------------------------------------
-  const DAY_START = 8 * 60;
-  const DAY_END = 17 * 60;
-  const LUNCH_START = 12 * 60;
-  const LUNCH_END = 13 * 60;
+  let wizardEl = null;
 
-  // ---------------------------------------------------------------
+  // ------------------------------------------------------------
+  // HELPERS (TIME)
+// ------------------------------------------------------------
+  function toMin(str) {
+    return window.parseTimeToMinutes(str);
+  }
+
+  function addMinutes(timeStr, mins) {
+    const d = new Date("1/1/2000 " + timeStr);
+    d.setMinutes(d.getMinutes() + mins);
+    let h = d.getHours();
+    const m = d.getMinutes();
+    const ap = h >= 12 ? 'pm' : 'am';
+    h = h % 12 || 12;
+    return `${h}:${m.toString().padStart(2, '0')}${ap}`;
+  }
+
+  // ------------------------------------------------------------
   // PUBLIC API
-  // ---------------------------------------------------------------
+  // ------------------------------------------------------------
   window.TripWizard = {
     start(cb) {
-      resetState();
-      onCompleteCallback = cb;
-      renderModalBase();
-      showWhoStep();
+      tripManifest = [];
+      plannedChanges = [];
+      pendingQuestions = [];
+      onComplete = cb;
+
+      renderBase();
+      stepWho();
     }
   };
 
-  function resetState() {
-    tripManifest = [];
-    impactReports = [];
-    finalInstructions = [];
-    onCompleteCallback = null;
-  }
-
-  // ---------------------------------------------------------------
+  // ------------------------------------------------------------
   // STEP 1 — WHO
-  // ---------------------------------------------------------------
-  function showWhoStep() {
+  // ------------------------------------------------------------
+  function stepWho() {
     const divisions = window.availableDivisions || [];
 
     renderStep({
-      title: "Plan a Trip",
+      title: "Let’s plan a trip",
+      text: "Which divisions are going?",
       body: `
-        <p>Select the divisions going on the trip.</p>
-        <div class="tw-checkbox-grid">
-          ${divisions.map(d => `
-            <label class="tw-checkbox">
-              <input type="checkbox" value="${d}">
-              <span>${d}</span>
-            </label>
-          `).join("")}
-        </div>
+        ${divisions.map(d => `
+          <label class="tw-check">
+            <input type="checkbox" value="${d}"> ${d}
+          </label>
+        `).join("")}
       `,
-      nextLabel: "Next",
-      onNext: () => {
-        const selected = [...wizardContainer.querySelectorAll('input:checked')]
+      next: () => {
+        const chosen = [...wizardEl.querySelectorAll('input[type=checkbox]:checked')]
           .map(i => i.value);
 
-        if (!selected.length) {
-          alert("Select at least one division.");
-          return;
-        }
+        if (!chosen.length) return alert("Pick at least one division.");
 
-        tripManifest = selected.map(d => ({ division: d }));
-        showDetailsStep(0);
+        tripManifest = chosen.map(d => ({ division: d }));
+        stepDestination();
       }
     });
   }
 
-  // ---------------------------------------------------------------
-  // STEP 2 — DETAILS (PER DIVISION)
-  // ---------------------------------------------------------------
-  function showDetailsStep(index) {
-    if (index >= tripManifest.length) {
-      analyzeImpacts();
-      return;
-    }
-
-    const t = tripManifest[index];
-
+  // ------------------------------------------------------------
+  // STEP 2 — DESTINATION + TIME
+  // ------------------------------------------------------------
+  function stepDestination() {
     renderStep({
-      title: `Trip Details — ${t.division}`,
+      title: "Trip details",
+      text: "Where are they going and when?",
       body: `
         <label>Destination</label>
-        <input id="dest" type="text" placeholder="e.g. Zoo">
+        <input id="dest">
 
-        <label>Departure Time</label>
-        <input id="start" type="text" placeholder="10:00am">
+        <label>Leave</label>
+        <input id="start" placeholder="11:00am">
 
-        <label>Return Time</label>
-        <input id="end" type="text" placeholder="3:00pm">
+        <label>Return</label>
+        <input id="end" placeholder="2:00pm">
       `,
-      nextLabel: "Next Division",
-      onNext: () => {
-        const dest = val("dest");
-        const start = parseTime(val("start"));
-        const end = parseTime(val("end"));
+      next: () => {
+        const dest = wizardEl.querySelector('#dest').value;
+        const start = wizardEl.querySelector('#start').value;
+        const end = wizardEl.querySelector('#end').value;
 
-        if (!dest || start == null || end == null || end <= start) {
+        if (!dest || toMin(start) == null || toMin(end) == null || toMin(end) <= toMin(start)) {
           alert("Enter valid destination and times.");
           return;
         }
 
-        t.destination = dest;
-        t.startMin = start;
-        t.endMin = end;
+        tripManifest.forEach(t => {
+          t.destination = dest;
+          t.start = start;
+          t.end = end;
+        });
 
-        showDetailsStep(index + 1);
+        scanImpacts(0);
       }
     });
   }
 
-  // ---------------------------------------------------------------
-  // IMPACT ANALYSIS (CORE FIX)
-  // ---------------------------------------------------------------
-  function analyzeImpacts() {
-    const daily = window.loadCurrentDailyData?.() || {};
-    const skeleton = daily.manualSkeleton || [];
+  // ------------------------------------------------------------
+  // SCAN IMPACTS (DIVISION BY DIVISION)
+  // ------------------------------------------------------------
+  function scanImpacts(index) {
+    if (index >= tripManifest.length) {
+      preview();
+      return;
+    }
 
-    impactReports = tripManifest.map(trip => {
-      const impacts = [];
+    const trip = tripManifest[index];
+    const skeleton = window.loadCurrentDailyData?.().manualSkeleton || [];
 
-      // BLOCKING: outside day bounds
-      if (trip.startMin < DAY_START || trip.endMin > DAY_END) {
-        impacts.push(blocking("Trip outside division hours"));
-      }
+    const affected = skeleton.filter(b =>
+      b.division === trip.division &&
+      toMin(b.startTime) < toMin(trip.end) &&
+      toMin(b.endTime) > toMin(trip.start)
+    );
 
-      // Scan blocks
-      const blocks = skeleton.filter(b => b.division === trip.division);
-      let overlappedMinutes = 0;
+    handleNextImpact(trip, affected, index);
+  }
 
-      blocks.forEach(b => {
-        const bs = parseTime(b.startTime);
-        const be = parseTime(b.endTime);
-        if (bs == null || be == null) return;
+  // ------------------------------------------------------------
+  // HANDLE EACH DISTURBANCE
+  // ------------------------------------------------------------
+  function handleNextImpact(trip, blocks, idx) {
+    if (!blocks.length) {
+      plannedChanges.push({
+        division: trip.division,
+        type: "pinned",
+        event: `TRIP: ${trip.destination}`,
+        startTime: trip.start,
+        endTime: trip.end
+      });
+      scanImpacts(idx + 1);
+      return;
+    }
 
-        if (bs < trip.endMin && be > trip.startMin) {
-          overlappedMinutes += Math.min(be, trip.endMin) - Math.max(bs, trip.startMin);
+    const block = blocks.shift();
+    const evt = block.event.toLowerCase();
 
-          if (b.type === "league") {
-            impacts.push(critical("League removed", b));
-          }
-          if (b.type === "swim") {
-            impacts.push(critical("Swim removed", b));
-          }
-          if (b.type === "specialty_league") {
-            impacts.push(critical("Specialty league removed", b));
-          }
-          if (b.type === "lunch") {
-            impacts.push(critical("Lunch displaced", b));
-          }
+    // ---- LUNCH ----
+    if (evt.includes("lunch")) {
+      renderStep({
+        title: `${trip.division} – Lunch`,
+        text: "Looks like lunch would be missed. What do you want to do?",
+        body: `
+          <label>Eat when?</label>
+          <input id="lstart" placeholder="10:40am">
+          <input id="lend" placeholder="11:00am">
+        `,
+        next: () => {
+          const s = wizardEl.querySelector('#lstart').value;
+          const e = wizardEl.querySelector('#lend').value;
+          if (toMin(s) == null || toMin(e) == null) return alert("Invalid time.");
+          plannedChanges.push({
+            division: trip.division,
+            type: "lunch",
+            event: "Lunch",
+            startTime: s,
+            endTime: e,
+            note: "Moved due to trip"
+          });
+          handleNextImpact(trip, blocks, idx);
         }
       });
+      return;
+    }
 
-      // BLOCKING: entire day wiped
-      if ((trip.endMin - trip.startMin) >= (DAY_END - DAY_START - 30)) {
-        impacts.push(blocking("Trip removes entire day"));
-      }
+    // ---- SWIM ----
+    if (evt.includes("swim")) {
+      const suggestion = addMinutes(trip.end, 0);
 
-      // WARNING: capacity loss
-      if (overlappedMinutes > 0) {
-        impacts.push(warning(`Removes ${overlappedMinutes} minutes of activities`));
-      }
+      renderStep({
+        title: `${trip.division} – Swim`,
+        text: `They’ll miss swim. I’d suggest moving it after they get back.`,
+        body: `
+          <label>Suggested swim time</label>
+          <input id="sstart" value="${suggestion}">
+          <input id="send" value="${addMinutes(suggestion, 45)}">
+        `,
+        next: () => {
+          const s = wizardEl.querySelector('#sstart').value;
+          const e = wizardEl.querySelector('#send').value;
+          if (toMin(s) == null || toMin(e) == null) return alert("Invalid time.");
 
-      return { division: trip.division, impacts };
+          plannedChanges.push({
+            division: trip.division,
+            type: "swim",
+            event: "Swim",
+            startTime: s,
+            endTime: e,
+            note: "Rescheduled due to trip"
+          });
+
+          handleNextImpact(trip, blocks, idx);
+        }
+      });
+      return;
+    }
+
+    // ---- DEFAULT SKIP ----
+    renderStep({
+      title: `${trip.division}`,
+      text: `They’ll miss "${block.event}".`,
+      body: `<p>We’ll skip it for today.</p>`,
+      next: () => handleNextImpact(trip, blocks, idx)
     });
-
-    showImpactSummary(0);
   }
 
-  // ---------------------------------------------------------------
-  // IMPACT RESOLUTION
-  // ---------------------------------------------------------------
-  function showImpactSummary(index) {
-    if (index >= impactReports.length) {
-      finalize();
-      return;
-    }
-
-    const report = impactReports[index];
-
-    const blockingIssues = report.impacts.filter(i => i.severity === "blocking");
-    if (blockingIssues.length) {
-      alert(
-        `Trip cannot proceed for ${report.division}:\n\n` +
-        blockingIssues.map(i => `• ${i.message}`).join("\n")
-      );
-      cancelWizard();
-      return;
-    }
+  // ------------------------------------------------------------
+  // PREVIEW
+  // ------------------------------------------------------------
+  function preview() {
+    const html = plannedChanges.map(c => `
+      <div>
+        <strong>${c.division}</strong>: ${c.event}
+        (${c.startTime}–${c.endTime})
+      </div>
+    `).join("");
 
     renderStep({
-      title: `Impacts — ${report.division}`,
-      body: `
-        <ul>
-          ${report.impacts.map(i => `
-            <li><strong>${i.severity.toUpperCase()}</strong>: ${i.message}</li>
-          `).join("")}
-        </ul>
-        <p>Proceed with this trip?</p>
-      `,
-      nextLabel: "Proceed",
-      onNext: () => showImpactSummary(index + 1)
+      title: "Here’s what today would look like",
+      text: "Take a quick look before we apply anything.",
+      body: html,
+      nextText: "Apply Changes",
+      next: () => {
+        if (onComplete) onComplete(groupByDivision(plannedChanges));
+        close();
+      },
+      cancelText: "Cancel"
     });
   }
 
-  // ---------------------------------------------------------------
-  // FINALIZE
-  // ---------------------------------------------------------------
-  function finalize() {
-    tripManifest.forEach(trip => {
-      finalInstructions.push({
-        division: trip.division,
-        actions: [
-          { type: "wipe" },
-          {
-            type: "pinned",
-            event: `TRIP: ${trip.destination}`,
-            startTime: minsToTime(trip.startMin),
-            endTime: minsToTime(trip.endMin),
-            reservedFields: ["Trip"]
-          }
-        ]
-      });
+  // ------------------------------------------------------------
+  // UTIL
+  // ------------------------------------------------------------
+  function groupByDivision(changes) {
+    const out = {};
+    changes.forEach(c => {
+      out[c.division] ??= [];
+      out[c.division].push(c);
     });
-
-    closeModal();
-    if (onCompleteCallback) onCompleteCallback(finalInstructions);
+    return Object.keys(out).map(d => ({ division: d, actions: out[d] }));
   }
 
-  // ---------------------------------------------------------------
-  // MODAL + EXIT
-  // ---------------------------------------------------------------
-  function renderModalBase() {
-  const old = document.getElementById("tw-modal");
-  if (old) old.remove();
+  // ------------------------------------------------------------
+  // UI
+  // ------------------------------------------------------------
+  function renderBase() {
+    const old = document.getElementById("tw-overlay");
+    if (old) old.remove();
 
-  const overlay = document.createElement("div");
-  overlay.id = "tw-modal";
-  overlay.innerHTML = `
-    <div class="tw-box">
-      <button class="tw-cancel">✖ Cancel</button>
-      <div id="tw-content"></div>
-    </div>
-
-    <style>
-      #tw-modal {
-        position: fixed;
-        inset: 0;
-        background: rgba(0,0,0,0.55);
-        z-index: 99999;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-
-      .tw-box {
-        background: #ffffff;
-        width: 540px;
-        max-height: 85vh;
-        overflow-y: auto;
-        border-radius: 14px;
-        padding: 24px;
-        box-shadow: 0 25px 60px rgba(0,0,0,0.35);
-        position: relative;
-        font-family: system-ui, sans-serif;
-      }
-
-      .tw-cancel {
-        position: absolute;
-        top: 12px;
-        right: 12px;
-        border: none;
-        background: transparent;
-        font-size: 14px;
-        cursor: pointer;
-        color: #555;
-      }
-
-      .tw-cancel:hover {
-        color: #000;
-      }
-
-      .tw-next {
-        margin-top: 20px;
-        padding: 10px 18px;
-        background: #2563eb;
-        color: #fff;
-        border: none;
-        border-radius: 6px;
-        font-size: 1em;
-        cursor: pointer;
-      }
-
-      .tw-next:hover {
-        background: #1e40af;
-      }
-
-      .tw-checkbox-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 10px;
-        margin-top: 12px;
-      }
-
-      .tw-checkbox {
-        border: 1px solid #ddd;
-        border-radius: 6px;
-        padding: 8px;
-        cursor: pointer;
-        display: flex;
-        gap: 6px;
-        align-items: center;
-      }
-
-      .tw-checkbox:hover {
-        background: #f9fafb;
-      }
-    </style>
-  `;
-
-  document.body.appendChild(overlay);
-  wizardContainer = overlay.querySelector("#tw-content");
-
-  overlay.querySelector(".tw-cancel").onclick = cancelWizard;
-}
-
-
-  function cancelWizard() {
-    if (!confirm("Cancel trip setup? No changes will be saved.")) return;
-    closeModal();
-    resetState();
-  }
-
-  function closeModal() {
-    const el = document.getElementById("tw-modal");
-    if (el) el.remove();
-  }
-
-  // ---------------------------------------------------------------
-  // RENDER HELPERS
-  // ---------------------------------------------------------------
-  function renderStep({ title, body, nextLabel, onNext }) {
-    wizardContainer.innerHTML = `
-      <h2>${title}</h2>
-      ${body}
-      <button class="tw-next">${nextLabel}</button>
+    const o = document.createElement("div");
+    o.id = "tw-overlay";
+    o.innerHTML = `
+      <div class="tw-box">
+        <div id="tw-content"></div>
+      </div>
+      <style>
+        #tw-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:9999}
+        .tw-box{background:white;padding:25px;border-radius:12px;width:520px}
+        label{display:block;margin-top:10px}
+        input{width:100%;padding:8px;margin-top:4px}
+        button{margin-top:15px}
+      </style>
     `;
-    wizardContainer.querySelector(".tw-next").onclick = onNext;
+    document.body.appendChild(o);
+    wizardEl = document.getElementById("tw-content");
   }
 
-  // ---------------------------------------------------------------
-  // UTILS
-  // ---------------------------------------------------------------
-  function parseTime(str) {
-    if (!str) return null;
-    const d = new Date("1/1/2000 " + str);
-    if (isNaN(d)) return null;
-    return d.getHours() * 60 + d.getMinutes();
+  function renderStep({ title, text, body, next, nextText = "Next", cancelText }) {
+    wizardEl.innerHTML = `
+      <h3>${title}</h3>
+      <p>${text}</p>
+      ${body}
+      <div style="margin-top:15px">
+        <button id="tw-next">${nextText}</button>
+        ${cancelText ? `<button id="tw-cancel">${cancelText}</button>` : ""}
+      </div>
+    `;
+    wizardEl.querySelector('#tw-next').onclick = next;
+    if (cancelText) wizardEl.querySelector('#tw-cancel').onclick = close;
   }
 
-  function minsToTime(m) {
-    const h = Math.floor(m / 60);
-    const min = m % 60;
-    const ap = h >= 12 ? "pm" : "am";
-    const hh = h % 12 || 12;
-    return `${hh}:${min.toString().padStart(2, "0")}${ap}`;
-  }
-
-  function val(id) {
-    return wizardContainer.querySelector(`#${id}`)?.value.trim();
-  }
-
-  function blocking(msg) {
-    return { severity: "blocking", message: msg };
-  }
-  function critical(msg, block) {
-    return { severity: "critical", message: msg, block };
-  }
-  function warning(msg) {
-    return { severity: "warning", message: msg };
+  function close() {
+    document.getElementById("tw-overlay")?.remove();
   }
 
 })();
