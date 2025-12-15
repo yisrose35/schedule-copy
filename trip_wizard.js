@@ -242,19 +242,99 @@
   // MODAL + EXIT
   // ---------------------------------------------------------------
   function renderModalBase() {
-    const overlay = document.createElement("div");
-    overlay.id = "tw-modal";
-    overlay.innerHTML = `
-      <div class="tw-box">
-        <button class="tw-cancel">Cancel</button>
-        <div id="tw-content"></div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-    wizardContainer = overlay.querySelector("#tw-content");
+  const old = document.getElementById("tw-modal");
+  if (old) old.remove();
 
-    overlay.querySelector(".tw-cancel").onclick = cancelWizard;
-  }
+  const overlay = document.createElement("div");
+  overlay.id = "tw-modal";
+  overlay.innerHTML = `
+    <div class="tw-box">
+      <button class="tw-cancel">✖ Cancel</button>
+      <div id="tw-content"></div>
+    </div>
+
+    <style>
+      #tw-modal {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.55);
+        z-index: 99999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .tw-box {
+        background: #ffffff;
+        width: 540px;
+        max-height: 85vh;
+        overflow-y: auto;
+        border-radius: 14px;
+        padding: 24px;
+        box-shadow: 0 25px 60px rgba(0,0,0,0.35);
+        position: relative;
+        font-family: system-ui, sans-serif;
+      }
+
+      .tw-cancel {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        border: none;
+        background: transparent;
+        font-size: 14px;
+        cursor: pointer;
+        color: #555;
+      }
+
+      .tw-cancel:hover {
+        color: #000;
+      }
+
+      .tw-next {
+        margin-top: 20px;
+        padding: 10px 18px;
+        background: #2563eb;
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+        font-size: 1em;
+        cursor: pointer;
+      }
+
+      .tw-next:hover {
+        background: #1e40af;
+      }
+
+      .tw-checkbox-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .tw-checkbox {
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        padding: 8px;
+        cursor: pointer;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+
+      .tw-checkbox:hover {
+        background: #f9fafb;
+      }
+    </style>
+  `;
+
+  document.body.appendChild(overlay);
+  wizardContainer = overlay.querySelector("#tw-content");
+
+  overlay.querySelector(".tw-cancel").onclick = cancelWizard;
+}
+
 
   function cancelWizard() {
     if (!confirm("Cancel trip setup? No changes will be saved.")) return;
