@@ -1076,68 +1076,63 @@ function renderTripsForm() {
   addBtn.style.color = 'white';
   addBtn.style.marginTop = '15px';
 
+  // --- REPLACEMENT CODE START ---
   addBtn.onclick = () => {
-    const nameEl = form.querySelector('#tripName');
-    const startEl = form.querySelector('#tripStart');
-    const endEl = form.querySelector('#tripEnd');
-    if (!nameEl || !startEl || !endEl) return;
-
-    const name = nameEl.value.trim();
-    const start = startEl.value;
-    const end = endEl.value;
-    const selectedDivisions = Array.from(
-      divisionChipBox.querySelectorAll('.bunk-button.selected')
-    ).map(el => el.dataset.value);
-
-    if (!name || !start || !end) {
-      alert('Please enter a name, start time, and end time for the trip.');
-      return;
-    }
-    if (selectedDivisions.length === 0) {
-      alert('Please select at least one division for the trip.');
-      return;
+    // 1. Check if the Wizard file is loaded
+    if (!window.TripWizard) {
+        alert("Trip Wizard module (trip_wizard.js) is not loaded! Please check your index.html.");
+        return;
     }
 
-    const tripStartMin = parseTimeToMinutes(start);
-    const tripEndMin = parseTimeToMinutes(end);
-    if (tripStartMin == null || tripEndMin == null || tripEndMin <= tripStartMin) {
-      alert('Invalid time range. Please use formats like "9:00am" and ensure end is after start.');
-      return;
-    }
-
-    loadDailySkeleton();
-
-    dailyOverrideSkeleton = dailyOverrideSkeleton.filter(item => {
-      if (!selectedDivisions.includes(item.division)) return true;
-      const itemStartMin = parseTimeToMinutes(item.startTime);
-      const itemEndMin = parseTimeToMinutes(item.endTime);
-      if (itemStartMin == null || itemEndMin == null) return true;
-      const overlaps = (itemStartMin < tripEndMin) && (itemEndMin > tripStartMin);
-      return !overlaps;
+    // 2. Launch the Wizard
+    window.TripWizard.start((instructions) => {
+        console.log("Trip Wizard Instructions:", instructions);
+        applyTripInstructions(instructions);
     });
+  };
 
-    selectedDivisions.forEach(divName => {
-      dailyOverrideSkeleton.push({
-        id: `evt_${Math.random().toString(36).slice(2, 9)}`,
-        type: 'pinned',
-        event: name,
-        division: divName,
-        startTime: start,
-        endTime: end
+  // Helper function to execute the Wizard's plan
+  function applyTripInstructions(instructions) {
+    // Refresh current data
+    loadDailySkeleton(); 
+
+    instructions.forEach(instr => {
+      const divName = instr.division;
+      
+      // Wipe existing blocks for this division
+      dailyOverrideSkeleton = dailyOverrideSkeleton.filter(b => b.division !== divName);
+
+      // Add new blocks from the Wizard
+      instr.actions.forEach(act => {
+        if (act.type === 'wipe') return; // 'wipe' was implicit above
+
+        dailyOverrideSkeleton.push({
+          id: `trip_${Math.random().toString(36).slice(2)}`,
+          type: act.type, // e.g. 'pinned', 'league', 'lunch'
+          event: act.event,
+          division: divName,
+          startTime: act.startTime,
+          endTime: act.endTime,
+          reservedFields: act.reservedFields || []
+        });
       });
     });
 
+    // Save and Refresh
     saveDailySkeleton();
-
-    const gridContainer = skeletonContainer.querySelector('#daily-skeleton-grid');
-    if (gridContainer) renderGrid(gridContainer);
-
-    nameEl.value = "";
-    startEl.value = "";
-    endEl.value = "";
-    form.querySelectorAll('.bunk-button.selected').forEach(chip => chip.click());
-  };
-
+    
+    // Find the grid container to update the view
+    if (skeletonContainer) {
+        const gridEl = skeletonContainer.querySelector('#daily-skeleton-grid');
+        if (gridEl) renderGrid(gridEl);
+    }
+    
+    // Clear the form chips visually
+    form.querySelectorAll('.bunk-button.selected').forEach(chip => chip.classList.remove('selected'));
+    
+    alert("Trips applied successfully!");
+  }
+  // --- REPLACEMENT CODE END ---
   form.appendChild(addBtn);
   tripsFormContainer.appendChild(form);
 }
