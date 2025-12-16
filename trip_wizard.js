@@ -1,6 +1,6 @@
 // =================================================================
-// trip_wizard.js — COMPREHENSIVE TRIP PLANNER
-// Handles full-day impacts, cross-division coordination, and cascading conflicts
+// trip_wizard.js — COMPREHENSIVE TRIP PLANNER WITH LIVE SCHEDULE
+// Features: Live preview, cascade handling, skip questions, visual guidance
 // =================================================================
 
 (function () {
@@ -12,11 +12,14 @@
   let tripManifest = [];
   let plannedChanges = [];
   let fullDaySkeleton = {}; // Organized by division
-  let affectedActivities = {}; // Track what's affected across ALL divisions
+  let workingSkeleton = {}; // Live working copy with changes applied
+  let pendingQuestions = []; // Questions that were skipped
   let onComplete = null;
   let wizardEl = null;
+  let previewEl = null;
   let allDivisions = [];
   let travelingDivisions = [];
+  let currentQuestionId = null;
 
   // ------------------------------------------------------------
   // TIME UTILITIES
@@ -68,32 +71,166 @@
       tripManifest = [];
       plannedChanges = [];
       fullDaySkeleton = {};
-      affectedActivities = {};
+      workingSkeleton = {};
+      pendingQuestions = [];
       onComplete = cb;
       allDivisions = window.availableDivisions || [];
       travelingDivisions = [];
+      currentQuestionId = null;
 
-      // Load full day skeleton for ALL divisions
       loadFullDaySkeleton();
-
       renderBase();
       stepWho();
     }
   };
 
   // ------------------------------------------------------------
-  // LOAD FULL DAY SKELETON
+  // SKELETON MANAGEMENT
   // ------------------------------------------------------------
   function loadFullDaySkeleton() {
     const dailyData = window.loadCurrentDailyData?.() || {};
     const skeleton = dailyData.manualSkeleton || [];
 
-    // Organize by division
     allDivisions.forEach(div => {
       fullDaySkeleton[div] = skeleton.filter(b => b.division === div);
+      workingSkeleton[div] = JSON.parse(JSON.stringify(fullDaySkeleton[div]));
+    });
+  }
+
+  function applyChangeToWorkingSkeleton(change) {
+    const div = change.division;
+    
+    if (change.action === 'remove' && change.oldEvent) {
+      workingSkeleton[div] = workingSkeleton[div].filter(b => b.id !== change.oldEvent.id);
+    } else if (change.action === 'replace' && change.oldEvent) {
+      workingSkeleton[div] = workingSkeleton[div].filter(b => b.id !== change.oldEvent.id);
+      workingSkeleton[div].push({
+        id: `temp_${Math.random().toString(36).slice(2)}`,
+        type: change.type,
+        event: change.event,
+        division: div,
+        startTime: change.startTime,
+        endTime: change.endTime,
+        reservedFields: change.reservedFields || [],
+        isNew: true
+      });
+    } else if (change.action === 'add') {
+      workingSkeleton[div].push({
+        id: `temp_${Math.random().toString(36).slice(2)}`,
+        type: change.type,
+        event: change.event,
+        division: div,
+        startTime: change.startTime,
+        endTime: change.endTime,
+        reservedFields: change.reservedFields || [],
+        isNew: true
+      });
+    }
+
+    updateLivePreview();
+  }
+
+  // ------------------------------------------------------------
+  // LIVE SCHEDULE PREVIEW
+  // ------------------------------------------------------------
+  function updateLivePreview() {
+    if (!previewEl) return;
+
+    let html = '<div class="tw-live-schedule">';
+
+    // Show divisions in order: traveling first, then staying
+    const divisionsToShow = [...travelingDivisions, ...allDivisions.filter(d => !travelingDivisions.includes(d))];
+
+    divisionsToShow.forEach(div => {
+      const isTraveling = travelingDivisions.includes(div);
+      const blocks = workingSkeleton[div] || [];
+      
+      // Sort by time
+      const sorted = blocks.slice().sort((a, b) => {
+        const aMin = toMin(a.startTime);
+        const bMin = toMin(b.startTime);
+        return (aMin || 0) - (bMin || 0);
+      });
+
+      html += `
+        <div class="tw-schedule-division ${isTraveling ? 'tw-traveling' : ''}">
+          <div class="tw-schedule-div-header">
+            ${isTraveling ? '🚌' : '📍'} ${div}
+            ${isTraveling ? '<span class="tw-badge">On Trip</span>' : ''}
+          </div>
+          <div class="tw-schedule-blocks">
+      `;
+
+      if (sorted.length === 0) {
+        html += `<div class="tw-schedule-empty">No activities scheduled</div>`;
+      }
+
+      sorted.forEach(block => {
+        const isNew = block.isNew || false;
+        const isOriginal = !isNew;
+        const blockClass = isNew ? 'tw-block-new' : 'tw-block-original';
+        
+        let icon = '📌';
+        if (block.event?.includes('TRIP')) icon = '🚌';
+        else if (block.event?.includes('Lunch')) icon = '🍽️';
+        else if (block.event?.includes('Swim')) icon = '🏊';
+        else if (block.event?.includes('Snack')) icon = '🍎';
+        else if (block.event?.includes('League')) icon = '🏆';
+
+        html += `
+          <div class="${blockClass}">
+            <div class="tw-block-icon">${icon}</div>
+            <div class="tw-block-content">
+              <strong>${block.event}</strong>
+              <span class="tw-block-time">${block.startTime} – ${block.endTime}</span>
+            </div>
+            ${isNew ? '<span class="tw-block-badge">NEW</span>' : ''}
+          </div>
+        `;
+      });
+
+      html += `</div></div>`;
     });
 
-    console.log("Trip Wizard: Loaded full day skeleton", fullDaySkeleton);
+    html += '</div>';
+    previewEl.innerHTML = html;
+  }
+
+  // ------------------------------------------------------------
+  // CONFLICT DETECTION
+  // ------------------------------------------------------------
+  function detectConflicts(division, startTime, endTime, excludeId = null) {
+    const blocks = workingSkeleton[division] || [];
+    const conflicts = [];
+
+    blocks.forEach(block => {
+      if (excludeId && block.id === excludeId) return;
+      if (overlaps(block.startTime, block.endTime, startTime, endTime)) {
+        conflicts.push(block);
+      }
+    });
+
+    return conflicts;
+  }
+
+  function detectCrossDivisionConflicts(activity, startTime, endTime, excludeDivision) {
+    const conflicts = [];
+
+    allDivisions.forEach(div => {
+      if (div === excludeDivision) return;
+      
+      const blocks = workingSkeleton[div] || [];
+      blocks.forEach(block => {
+        // Check for same activity type (e.g., Swim)
+        if ((block.event || "").toLowerCase().includes(activity.toLowerCase())) {
+          if (overlaps(block.startTime, block.endTime, startTime, endTime)) {
+            conflicts.push({ division: div, block });
+          }
+        }
+      });
+    });
+
+    return conflicts;
   }
 
   // ------------------------------------------------------------
@@ -120,6 +257,7 @@
 
         travelingDivisions = chosen;
         tripManifest = chosen.map(d => ({ division: d }));
+        updateLivePreview();
         stepTripDetails();
       }
     });
@@ -151,7 +289,7 @@
         </div>
 
         <div class="tw-help-text">
-          💡 The wizard will scan the entire day's schedule and help you handle conflicts for all divisions.
+          💡 I'll guide you through any schedule conflicts and help coordinate with other divisions.
         </div>
       `,
       next: () => {
@@ -183,54 +321,28 @@
           t.end = end;
         });
 
-        // Analyze full day impact
-        analyzeFullDayImpact();
+        // Add trip blocks to working skeleton
+        tripManifest.forEach(t => {
+          const change = {
+            division: t.division,
+            action: 'add',
+            type: 'pinned',
+            event: `🚌 TRIP: ${t.destination}`,
+            startTime: t.start,
+            endTime: t.end,
+            reservedFields: []
+          };
+          plannedChanges.push(change);
+          applyChangeToWorkingSkeleton(change);
+        });
+
         startConflictResolution();
       }
     });
   }
 
   // ------------------------------------------------------------
-  // ANALYZE FULL DAY IMPACT
-  // ------------------------------------------------------------
-  function analyzeFullDayImpact() {
-    affectedActivities = {
-      travelingDivisions: {},
-      stayingDivisions: {}
-    };
-
-    // Analyze each traveling division
-    travelingDivisions.forEach(div => {
-      const blocks = fullDaySkeleton[div] || [];
-      const trip = tripManifest.find(t => t.division === div);
-
-      const conflicts = blocks.filter(b => 
-        overlaps(b.startTime, b.endTime, trip.start, trip.end)
-      );
-
-      affectedActivities.travelingDivisions[div] = conflicts.map(b => ({
-        ...b,
-        impact: 'missed',
-        reason: 'Division is off campus'
-      }));
-    });
-
-    // Analyze staying divisions for opportunities/constraints
-    const stayingDivs = allDivisions.filter(d => !travelingDivisions.includes(d));
-    
-    stayingDivs.forEach(div => {
-      affectedActivities.stayingDivisions[div] = {
-        opportunities: [],
-        constraints: []
-      };
-      // We'll populate this as we make decisions
-    });
-
-    console.log("Full Day Impact Analysis:", affectedActivities);
-  }
-
-  // ------------------------------------------------------------
-  // CONFLICT RESOLUTION - Division by Division
+  // CONFLICT RESOLUTION
   // ------------------------------------------------------------
   function startConflictResolution() {
     handleNextDivision(0);
@@ -238,24 +350,20 @@
 
   function handleNextDivision(index) {
     if (index >= tripManifest.length) {
-      checkForStayingDivisionImpacts();
+      // Done with traveling divisions, check for pending questions
+      handlePendingQuestions();
       return;
     }
 
     const trip = tripManifest[index];
-    const conflicts = affectedActivities.travelingDivisions[trip.division] || [];
+    const originalBlocks = fullDaySkeleton[trip.division] || [];
+    
+    // Find conflicts with the trip time
+    const conflicts = originalBlocks.filter(b => 
+      overlaps(b.startTime, b.endTime, trip.start, trip.end)
+    );
 
     if (conflicts.length === 0) {
-      // No conflicts - add trip and move on
-      plannedChanges.push({
-        division: trip.division,
-        action: 'add',
-        type: 'pinned',
-        event: `🚌 TRIP: ${trip.destination}`,
-        startTime: trip.start,
-        endTime: trip.end,
-        reservedFields: []
-      });
       handleNextDivision(index + 1);
       return;
     }
@@ -265,22 +373,14 @@
 
   function handleNextConflict(trip, remainingConflicts, divIndex) {
     if (remainingConflicts.length === 0) {
-      // All conflicts resolved - add the trip
-      plannedChanges.push({
-        division: trip.division,
-        action: 'add',
-        type: 'pinned',
-        event: `🚌 TRIP: ${trip.destination}`,
-        startTime: trip.start,
-        endTime: trip.end,
-        reservedFields: []
-      });
       handleNextDivision(divIndex + 1);
       return;
     }
 
     const conflict = remainingConflicts.shift();
     const evt = (conflict.event || "").toLowerCase();
+    const questionId = `${trip.division}_${conflict.id}`;
+    currentQuestionId = questionId;
 
     // Route to specific handlers
     if (evt.includes('lunch')) {
@@ -306,111 +406,146 @@
     }
   }
 
+  function handlePendingQuestions() {
+    if (pendingQuestions.length === 0) {
+      showFinalPreview();
+      return;
+    }
+
+    const pending = pendingQuestions.shift();
+    pending.handler();
+  }
+
   // ------------------------------------------------------------
-  // SPECIFIC CONFLICT HANDLERS
+  // CONFLICT HANDLERS
   // ------------------------------------------------------------
 
   function handleLunchConflict(trip, conflict, next) {
+    const suggestedBefore = addMinutes(trip.start, -30);
+    const suggestedAfter = trip.end;
+
     renderStep({
       title: `${trip.division} — 🍽️ Lunch`,
-      text: `Lunch (${conflict.startTime}–${conflict.endTime}) overlaps with the trip. When should ${trip.division} eat?`,
+      text: `Lunch is scheduled during the trip (${conflict.startTime}–${conflict.endTime}). Let's find a better time.`,
       body: `
-        <div class="tw-option-group">
-          <button class="tw-option-btn" data-choice="before">
-            <strong>Before Trip</strong>
-            <span>Eat early, then leave</span>
-          </button>
-          <button class="tw-option-btn" data-choice="during">
-            <strong>During Trip</strong>
-            <span>Pack lunch or eat at destination</span>
-          </button>
-          <button class="tw-option-btn" data-choice="after">
-            <strong>After Return</strong>
-            <span>Eat when they get back</span>
-          </button>
+        <div class="tw-suggestion-group">
+          <div class="tw-suggestion-card" data-choice="before">
+            <div class="tw-suggestion-icon">⏰</div>
+            <div class="tw-suggestion-content">
+              <strong>Early Lunch (Before Trip)</strong>
+              <p>Eat at ${suggestedBefore} - ${trip.start}</p>
+              <span class="tw-suggestion-note">Recommended: Gives time to settle before leaving</span>
+            </div>
+          </div>
+
+          <div class="tw-suggestion-card" data-choice="during">
+            <div class="tw-suggestion-icon">🎒</div>
+            <div class="tw-suggestion-content">
+              <strong>Lunch During Trip</strong>
+              <p>Pack lunch or eat at destination</p>
+              <span class="tw-suggestion-note">No schedule change needed</span>
+            </div>
+          </div>
+
+          <div class="tw-suggestion-card" data-choice="after">
+            <div class="tw-suggestion-icon">🍔</div>
+            <div class="tw-suggestion-content">
+              <strong>Late Lunch (After Return)</strong>
+              <p>Eat at ${suggestedAfter} - ${addMinutes(suggestedAfter, 30)}</p>
+              <span class="tw-suggestion-note">Kids might be hungry - bring snacks</span>
+            </div>
+          </div>
+
+          <div class="tw-suggestion-card" data-choice="custom">
+            <div class="tw-suggestion-icon">✏️</div>
+            <div class="tw-suggestion-content">
+              <strong>Custom Time</strong>
+              <p>I'll choose my own time</p>
+            </div>
+          </div>
         </div>
 
-        <div id="tw-lunch-time-input" style="display:none; margin-top:15px;">
-          <label>Lunch Time</label>
+        <div id="custom-time-input" style="display:none;">
           <div class="tw-time-row">
-            <input id="lunch-start" placeholder="11:00am" class="tw-input">
-            <span style="padding:0 8px;">to</span>
-            <input id="lunch-end" placeholder="11:30am" class="tw-input">
+            <div class="tw-form-group">
+              <label>Lunch Start</label>
+              <input id="lunch-start" placeholder="11:00am" class="tw-input">
+            </div>
+            <div class="tw-form-group">
+              <label>Lunch End</label>
+              <input id="lunch-end" placeholder="11:30am" class="tw-input">
+            </div>
           </div>
         </div>
       `,
       hideNext: true,
+      showSkip: true,
+      onSkip: () => {
+        pendingQuestions.push({
+          title: `Skipped: ${trip.division} Lunch`,
+          handler: () => handleLunchConflict(trip, conflict, next)
+        });
+        next();
+      },
       setup: () => {
-        wizardEl.querySelectorAll('.tw-option-btn').forEach(btn => {
-          btn.onclick = () => {
-            const choice = btn.dataset.choice;
+        wizardEl.querySelectorAll('.tw-suggestion-card').forEach(card => {
+          card.onclick = () => {
+            const choice = card.dataset.choice;
 
             if (choice === 'during') {
-              plannedChanges.push({
+              const change = {
                 division: trip.division,
-                action: 'note',
-                message: `${trip.division} will eat lunch during the trip (packed or at destination)`
-              });
+                action: 'remove',
+                oldEvent: conflict,
+                reason: 'Eating during trip'
+              };
+              plannedChanges.push(change);
+              applyChangeToWorkingSkeleton(change);
               next();
               return;
             }
 
-            // Show time input
-            wizardEl.querySelector('#tw-lunch-time-input').style.display = 'block';
-            
-            // Pre-fill suggestions
-            const startInput = wizardEl.querySelector('#lunch-start');
-            const endInput = wizardEl.querySelector('#lunch-end');
-            
+            if (choice === 'custom') {
+              document.getElementById('custom-time-input').style.display = 'block';
+              showContinueButton();
+              return;
+            }
+
+            // Before or After
+            let start, end;
             if (choice === 'before') {
-              const suggested = addMinutes(trip.start, -30);
-              startInput.value = suggested || '';
-              endInput.value = trip.start;
-            } else if (choice === 'after') {
-              startInput.value = trip.end;
-              endInput.value = addMinutes(trip.end, 30);
+              start = suggestedBefore;
+              end = trip.start;
+            } else {
+              start = suggestedAfter;
+              end = addMinutes(suggestedAfter, 30);
             }
 
-            // Show continue button
-            const continueBtn = document.createElement('button');
-            continueBtn.textContent = 'Continue';
-            continueBtn.className = 'tw-btn tw-btn-primary';
-            continueBtn.style.marginTop = '10px';
-            continueBtn.onclick = () => {
-              const start = startInput.value.trim();
-              const end = endInput.value.trim();
-
-              if (toMin(start) == null || toMin(end) == null || toMin(end) <= toMin(start)) {
-                alert("Please enter a valid lunch time window.");
-                return;
-              }
-
-              // Check for conflicts with this new time
-              const hasConflict = checkTimeConflict(trip.division, start, end);
-              if (hasConflict) {
-                if (!confirm(`This time conflicts with ${hasConflict}. Do you want to continue anyway? You'll need to resolve this conflict next.`)) {
-                  return;
-                }
-              }
-
-              plannedChanges.push({
-                division: trip.division,
-                action: 'replace',
-                oldEvent: conflict,
-                type: 'pinned',
-                event: 'Lunch',
-                startTime: start,
-                endTime: end
-              });
-
-              next();
-            };
-
-            if (!wizardEl.querySelector('.tw-btn-primary')) {
-              wizardEl.querySelector('#tw-lunch-time-input').appendChild(continueBtn);
-            }
+            applyTimeChange(trip.division, conflict, 'Lunch', start, end, next);
           };
         });
+
+        function showContinueButton() {
+          const continueBtn = document.createElement('button');
+          continueBtn.textContent = 'Apply Custom Time';
+          continueBtn.className = 'tw-btn tw-btn-primary';
+          continueBtn.style.marginTop = '15px';
+          continueBtn.onclick = () => {
+            const start = wizardEl.querySelector('#lunch-start').value.trim();
+            const end = wizardEl.querySelector('#lunch-end').value.trim();
+
+            if (toMin(start) == null || toMin(end) == null || toMin(end) <= toMin(start)) {
+              alert("Please enter valid times.");
+              return;
+            }
+
+            applyTimeChange(trip.division, conflict, 'Lunch', start, end, next);
+          };
+          const customDiv = document.getElementById('custom-time-input');
+          if (!customDiv.querySelector('.tw-btn-primary')) {
+            customDiv.appendChild(continueBtn);
+          }
+        }
       }
     });
   }
@@ -419,77 +554,148 @@
     const suggestedStart = trip.end;
     const suggestedEnd = addMinutes(trip.end, 45);
 
-    // Check if suggested time conflicts with other divisions
-    const conflictInfo = checkCrossDivisionConflict('Swim', suggestedStart, suggestedEnd, trip.division);
-
-    let conflictWarning = '';
-    if (conflictInfo) {
-      conflictWarning = `
-        <div class="tw-warning">
-          ⚠️ <strong>Note:</strong> ${conflictInfo.division} already has ${conflictInfo.activity} at this time. 
-          You may need to adjust their schedule too.
-        </div>
-      `;
-    }
+    // Check cross-division conflicts
+    const crossConflicts = detectCrossDivisionConflicts('Swim', suggestedStart, suggestedEnd, trip.division);
 
     renderStep({
       title: `${trip.division} — 🏊 Swim`,
-      text: `Swim (${conflict.startTime}–${conflict.endTime}) is missed during the trip. When should they swim instead?`,
+      text: `Swim is scheduled during the trip (${conflict.startTime}–${conflict.endTime}). When should they swim instead?`,
       body: `
-        <div class="tw-suggestion-box">
-          <strong>💡 Suggested Time: ${suggestedStart} – ${suggestedEnd}</strong>
-          <p>Right when they return from the trip, so the pool is free earlier for other divisions.</p>
-        </div>
+        <div class="tw-suggestion-group">
+          <div class="tw-suggestion-card" data-choice="suggested">
+            <div class="tw-suggestion-icon">⭐</div>
+            <div class="tw-suggestion-content">
+              <strong>Right After Trip</strong>
+              <p>${suggestedStart} - ${suggestedEnd}</p>
+              <span class="tw-suggestion-note">✓ Recommended: Frees pool earlier for other divisions</span>
+              ${crossConflicts.length > 0 ? `
+                <div class="tw-warning-inline">
+                  ⚠️ ${crossConflicts[0].division} has swim at this time
+                </div>
+              ` : ''}
+            </div>
+          </div>
 
-        ${conflictWarning}
+          <div class="tw-suggestion-card" data-choice="morning">
+            <div class="tw-suggestion-icon">🌅</div>
+            <div class="tw-suggestion-content">
+              <strong>Morning Swim</strong>
+              <p>Move to earlier in the day</p>
+              <span class="tw-suggestion-note">I'll help you pick a time</span>
+            </div>
+          </div>
 
-        <div class="tw-form-group">
-          <label>Swim Time</label>
-          <div class="tw-time-row">
-            <input id="swim-start" value="${suggestedStart}" class="tw-input">
-            <span style="padding:0 8px;">to</span>
-            <input id="swim-end" value="${suggestedEnd}" class="tw-input">
+          <div class="tw-suggestion-card" data-choice="custom">
+            <div class="tw-suggestion-icon">✏️</div>
+            <div class="tw-suggestion-content">
+              <strong>Custom Time</strong>
+              <p>I'll choose my own time</p>
+            </div>
+          </div>
+
+          <div class="tw-suggestion-card tw-suggestion-card-muted" data-choice="skip">
+            <div class="tw-suggestion-icon">❌</div>
+            <div class="tw-suggestion-content">
+              <strong>Skip Swim Today</strong>
+              <p>No swim for ${trip.division}</p>
+            </div>
           </div>
         </div>
 
-        <div class="tw-option-group" style="margin-top:15px;">
-          <button class="tw-option-btn-small" data-choice="skip">
-            Skip swim for today
-          </button>
+        <div id="custom-time-input" style="display:none;">
+          <div class="tw-time-row">
+            <div class="tw-form-group">
+              <label>Swim Start</label>
+              <input id="swim-start" placeholder="2:00pm" class="tw-input">
+            </div>
+            <div class="tw-form-group">
+              <label>Swim End</label>
+              <input id="swim-end" placeholder="2:45pm" class="tw-input">
+            </div>
+          </div>
         </div>
       `,
-      next: () => {
-        const start = wizardEl.querySelector('#swim-start').value.trim();
-        const end = wizardEl.querySelector('#swim-end').value.trim();
-
-        if (toMin(start) == null || toMin(end) == null || toMin(end) <= toMin(start)) {
-          alert("Please enter a valid swim time.");
-          return;
-        }
-
-        plannedChanges.push({
-          division: trip.division,
-          action: 'replace',
-          oldEvent: conflict,
-          type: 'pinned',
-          event: 'Swim',
-          startTime: start,
-          endTime: end,
-          reservedFields: ['Pool'] // Reserve the pool
+      hideNext: true,
+      showSkip: true,
+      onSkip: () => {
+        pendingQuestions.push({
+          title: `Skipped: ${trip.division} Swim`,
+          handler: () => handleSwimConflict(trip, conflict, next)
         });
-
         next();
       },
       setup: () => {
-        wizardEl.querySelector('[data-choice="skip"]').onclick = () => {
-          plannedChanges.push({
-            division: trip.division,
-            action: 'remove',
-            oldEvent: conflict,
-            reason: 'Skipped due to trip'
-          });
-          next();
-        };
+        wizardEl.querySelectorAll('.tw-suggestion-card').forEach(card => {
+          card.onclick = () => {
+            const choice = card.dataset.choice;
+
+            if (choice === 'skip') {
+              const change = {
+                division: trip.division,
+                action: 'remove',
+                oldEvent: conflict,
+                reason: 'Skipped for trip day'
+              };
+              plannedChanges.push(change);
+              applyChangeToWorkingSkeleton(change);
+              next();
+              return;
+            }
+
+            if (choice === 'suggested') {
+              // Check if this creates cross-division conflict
+              if (crossConflicts.length > 0) {
+                handleCrossDivisionSwimConflict(trip.division, suggestedStart, suggestedEnd, crossConflicts, conflict, next);
+              } else {
+                applyTimeChange(trip.division, conflict, 'Swim', suggestedStart, suggestedEnd, next, ['Pool']);
+              }
+              return;
+            }
+
+            if (choice === 'custom' || choice === 'morning') {
+              document.getElementById('custom-time-input').style.display = 'block';
+              if (choice === 'morning') {
+                wizardEl.querySelector('#swim-start').value = '9:00am';
+                wizardEl.querySelector('#swim-end').value = '9:45am';
+              }
+              showContinueButton();
+              return;
+            }
+          };
+        });
+
+        function showContinueButton() {
+          const continueBtn = document.createElement('button');
+          continueBtn.textContent = 'Apply Time';
+          continueBtn.className = 'tw-btn tw-btn-primary';
+          continueBtn.style.marginTop = '15px';
+          continueBtn.onclick = () => {
+            const start = wizardEl.querySelector('#swim-start').value.trim();
+            const end = wizardEl.querySelector('#swim-end').value.trim();
+
+            if (toMin(start) == null || toMin(end) == null || toMin(end) <= toMin(start)) {
+              alert("Please enter valid times.");
+              return;
+            }
+
+            // Check for conflicts with this new time
+            const newConflicts = detectConflicts(trip.division, start, end, conflict.id);
+            if (newConflicts.length > 0) {
+              handleNewPlacementConflict(trip.division, 'Swim', start, end, conflict, newConflicts, next, ['Pool']);
+            } else {
+              const crossConflicts = detectCrossDivisionConflicts('Swim', start, end, trip.division);
+              if (crossConflicts.length > 0) {
+                handleCrossDivisionSwimConflict(trip.division, start, end, crossConflicts, conflict, next);
+              } else {
+                applyTimeChange(trip.division, conflict, 'Swim', start, end, next, ['Pool']);
+              }
+            }
+          };
+          const customDiv = document.getElementById('custom-time-input');
+          if (!customDiv.querySelector('.tw-btn-primary')) {
+            customDiv.appendChild(continueBtn);
+          }
+        }
       }
     });
   }
@@ -497,100 +703,124 @@
   function handleSnackConflict(trip, conflict, next) {
     renderStep({
       title: `${trip.division} — 🍎 Snack`,
-      text: `Snack time (${conflict.startTime}–${conflict.endTime}) is missed during the trip.`,
+      text: `Snack time (${conflict.startTime}–${conflict.endTime}) is during the trip.`,
       body: `
-        <div class="tw-option-group">
-          <button class="tw-option-btn" data-choice="before">
-            <strong>Before Trip</strong>
-            <span>Quick snack before leaving</span>
-          </button>
-          <button class="tw-option-btn" data-choice="pack">
-            <strong>Pack Snacks</strong>
-            <span>Take snacks on the trip</span>
-          </button>
-          <button class="tw-option-btn" data-choice="after">
-            <strong>After Return</strong>
-            <span>Snack when they get back</span>
-          </button>
-          <button class="tw-option-btn" data-choice="skip">
-            <strong>Skip</strong>
-            <span>No snack today</span>
-          </button>
+        <div class="tw-suggestion-group">
+          <div class="tw-suggestion-card" data-choice="pack">
+            <div class="tw-suggestion-icon">🎒</div>
+            <div class="tw-suggestion-content">
+              <strong>Pack Snacks for Trip</strong>
+              <p>Bring snacks on the bus</p>
+              <span class="tw-suggestion-note">Recommended for trips</span>
+            </div>
+          </div>
+
+          <div class="tw-suggestion-card" data-choice="before">
+            <div class="tw-suggestion-icon">⏰</div>
+            <div class="tw-suggestion-content">
+              <strong>Snack Before Trip</strong>
+              <p>Quick snack before leaving</p>
+            </div>
+          </div>
+
+          <div class="tw-suggestion-card" data-choice="after">
+            <div class="tw-suggestion-icon">🍪</div>
+            <div class="tw-suggestion-content">
+              <strong>Snack After Return</strong>
+              <p>Snack when they get back</p>
+            </div>
+          </div>
+
+          <div class="tw-suggestion-card tw-suggestion-card-muted" data-choice="skip">
+            <div class="tw-suggestion-icon">❌</div>
+            <div class="tw-suggestion-content">
+              <strong>Skip Snack</strong>
+              <p>No snack today</p>
+            </div>
+          </div>
         </div>
 
-        <div id="tw-snack-time-input" style="display:none; margin-top:15px;">
-          <label>Snack Time</label>
+        <div id="custom-time-input" style="display:none;">
           <div class="tw-time-row">
-            <input id="snack-start" placeholder="2:00pm" class="tw-input">
-            <span style="padding:0 8px;">to</span>
-            <input id="snack-end" placeholder="2:15pm" class="tw-input">
+            <div class="tw-form-group">
+              <label>Snack Start</label>
+              <input id="snack-start" placeholder="2:00pm" class="tw-input">
+            </div>
+            <div class="tw-form-group">
+              <label>Snack End</label>
+              <input id="snack-end" placeholder="2:15pm" class="tw-input">
+            </div>
           </div>
         </div>
       `,
       hideNext: true,
+      showSkip: true,
+      onSkip: () => {
+        pendingQuestions.push({
+          title: `Skipped: ${trip.division} Snack`,
+          handler: () => handleSnackConflict(trip, conflict, next)
+        });
+        next();
+      },
       setup: () => {
-        wizardEl.querySelectorAll('.tw-option-btn').forEach(btn => {
-          btn.onclick = () => {
-            const choice = btn.dataset.choice;
+        wizardEl.querySelectorAll('.tw-suggestion-card').forEach(card => {
+          card.onclick = () => {
+            const choice = card.dataset.choice;
 
             if (choice === 'pack' || choice === 'skip') {
-              plannedChanges.push({
+              const change = {
                 division: trip.division,
-                action: 'note',
-                message: choice === 'pack' 
-                  ? `${trip.division} will have snacks during the trip` 
-                  : `${trip.division} will skip snacks today`
-              });
+                action: 'remove',
+                oldEvent: conflict,
+                reason: choice === 'pack' ? 'Packing snacks for trip' : 'Skipped'
+              };
+              plannedChanges.push(change);
+              applyChangeToWorkingSkeleton(change);
               next();
               return;
             }
 
-            // Show time input
-            wizardEl.querySelector('#tw-snack-time-input').style.display = 'block';
-            
-            const startInput = wizardEl.querySelector('#snack-start');
-            const endInput = wizardEl.querySelector('#snack-end');
+            document.getElementById('custom-time-input').style.display = 'block';
             
             if (choice === 'before') {
               const suggested = addMinutes(trip.start, -15);
-              startInput.value = suggested || '';
-              endInput.value = trip.start;
+              wizardEl.querySelector('#snack-start').value = suggested;
+              wizardEl.querySelector('#snack-end').value = trip.start;
             } else if (choice === 'after') {
-              startInput.value = trip.end;
-              endInput.value = addMinutes(trip.end, 15);
+              wizardEl.querySelector('#snack-start').value = trip.end;
+              wizardEl.querySelector('#snack-end').value = addMinutes(trip.end, 15);
             }
 
-            const continueBtn = document.createElement('button');
-            continueBtn.textContent = 'Continue';
-            continueBtn.className = 'tw-btn tw-btn-primary';
-            continueBtn.style.marginTop = '10px';
-            continueBtn.onclick = () => {
-              const start = startInput.value.trim();
-              const end = endInput.value.trim();
-
-              if (toMin(start) == null || toMin(end) == null || toMin(end) <= toMin(start)) {
-                alert("Please enter a valid snack time.");
-                return;
-              }
-
-              plannedChanges.push({
-                division: trip.division,
-                action: 'replace',
-                oldEvent: conflict,
-                type: 'pinned',
-                event: 'Snacks',
-                startTime: start,
-                endTime: end
-              });
-
-              next();
-            };
-
-            if (!wizardEl.querySelector('.tw-btn-primary')) {
-              wizardEl.querySelector('#tw-snack-time-input').appendChild(continueBtn);
-            }
+            showContinueButton();
           };
         });
+
+        function showContinueButton() {
+          const continueBtn = document.createElement('button');
+          continueBtn.textContent = 'Apply Time';
+          continueBtn.className = 'tw-btn tw-btn-primary';
+          continueBtn.style.marginTop = '15px';
+          continueBtn.onclick = () => {
+            const start = wizardEl.querySelector('#snack-start').value.trim();
+            const end = wizardEl.querySelector('#snack-end').value.trim();
+
+            if (toMin(start) == null || toMin(end) == null || toMin(end) <= toMin(start)) {
+              alert("Please enter valid times.");
+              return;
+            }
+
+            const newConflicts = detectConflicts(trip.division, start, end, conflict.id);
+            if (newConflicts.length > 0) {
+              handleNewPlacementConflict(trip.division, 'Snacks', start, end, conflict, newConflicts, next);
+            } else {
+              applyTimeChange(trip.division, conflict, 'Snacks', start, end, next);
+            }
+          };
+          const customDiv = document.getElementById('custom-time-input');
+          if (!customDiv.querySelector('.tw-btn-primary')) {
+            customDiv.appendChild(continueBtn);
+          }
+        }
       }
     });
   }
@@ -601,41 +831,138 @@
 
     renderStep({
       title: `${trip.division} — 🏆 ${leagueType}`,
-      text: `${trip.division} has a ${leagueType.toLowerCase()} scheduled during the trip (${conflict.startTime}–${conflict.endTime}). This game cannot happen.`,
+      text: `${trip.division} has a ${leagueType.toLowerCase()} during the trip (${conflict.startTime}–${conflict.endTime}). What would you like to do?`,
       body: `
         <div class="tw-info-box">
-          <p><strong>Impact:</strong> The opposing team(s) will also be affected. This game will need to be rescheduled for another day or marked as forfeit/cancelled.</p>
+          <strong>About This Game:</strong>
+          <p>The opposing team(s) will also be affected by this decision.</p>
         </div>
 
-        <div class="tw-option-group">
-          <button class="tw-option-btn" data-choice="reschedule">
-            <strong>Reschedule for Another Day</strong>
-            <span>Manually reschedule this game later</span>
-          </button>
-          <button class="tw-option-btn" data-choice="cancel">
-            <strong>Cancel This Game</strong>
-            <span>Game won't be played</span>
-          </button>
+        <div class="tw-suggestion-group">
+          <div class="tw-suggestion-card" data-choice="reschedule">
+            <div class="tw-suggestion-icon">📅</div>
+            <div class="tw-suggestion-content">
+              <strong>Reschedule for Another Day</strong>
+              <p>Mark this game to be rescheduled</p>
+              <span class="tw-suggestion-note">You'll coordinate with other teams later</span>
+            </div>
+          </div>
+
+          <div class="tw-suggestion-card" data-choice="earlier">
+            <div class="tw-suggestion-icon">⏰</div>
+            <div class="tw-suggestion-content">
+              <strong>Move Earlier Today</strong>
+              <p>Try to fit the game before the trip</p>
+              <span class="tw-suggestion-note">I'll help find a time</span>
+            </div>
+          </div>
+
+          <div class="tw-suggestion-card" data-choice="later">
+            <div class="tw-suggestion-icon">🕒</div>
+            <div class="tw-suggestion-content">
+              <strong>Move Later Today</strong>
+              <p>Play after returning from trip</p>
+              <span class="tw-suggestion-note">I'll help find a time</span>
+            </div>
+          </div>
+
+          <div class="tw-suggestion-card tw-suggestion-card-muted" data-choice="cancel">
+            <div class="tw-suggestion-icon">❌</div>
+            <div class="tw-suggestion-content">
+              <strong>Cancel This Game</strong>
+              <p>Game won't be played this season</p>
+            </div>
+          </div>
+        </div>
+
+        <div id="custom-time-input" style="display:none;">
+          <div class="tw-time-row">
+            <div class="tw-form-group">
+              <label>Game Start</label>
+              <input id="league-start" placeholder="2:00pm" class="tw-input">
+            </div>
+            <div class="tw-form-group">
+              <label>Game End</label>
+              <input id="league-end" placeholder="3:00pm" class="tw-input">
+            </div>
+          </div>
         </div>
       `,
       hideNext: true,
+      showSkip: true,
+      onSkip: () => {
+        pendingQuestions.push({
+          title: `Skipped: ${trip.division} ${leagueType}`,
+          handler: () => handleLeagueConflict(trip, conflict, next)
+        });
+        next();
+      },
       setup: () => {
-        wizardEl.querySelectorAll('.tw-option-btn').forEach(btn => {
-          btn.onclick = () => {
-            const choice = btn.dataset.choice;
-            
-            plannedChanges.push({
-              division: trip.division,
-              action: 'remove',
-              oldEvent: conflict,
-              reason: choice === 'reschedule' 
-                ? `${leagueType} to be rescheduled manually for another day`
-                : `${leagueType} cancelled for today`
-            });
+        wizardEl.querySelectorAll('.tw-suggestion-card').forEach(card => {
+          card.onclick = () => {
+            const choice = card.dataset.choice;
 
-            next();
+            if (choice === 'reschedule' || choice === 'cancel') {
+              const change = {
+                division: trip.division,
+                action: 'remove',
+                oldEvent: conflict,
+                reason: choice === 'reschedule' 
+                  ? `${leagueType} to be rescheduled for another day`
+                  : `${leagueType} cancelled`
+              };
+              plannedChanges.push(change);
+              applyChangeToWorkingSkeleton(change);
+              next();
+              return;
+            }
+
+            document.getElementById('custom-time-input').style.display = 'block';
+            
+            if (choice === 'earlier') {
+              const duration = toMin(conflict.endTime) - toMin(conflict.startTime);
+              const newEnd = trip.start;
+              const newStart = toTime(toMin(newEnd) - duration);
+              wizardEl.querySelector('#league-start').value = newStart;
+              wizardEl.querySelector('#league-end').value = newEnd;
+            } else if (choice === 'later') {
+              const duration = toMin(conflict.endTime) - toMin(conflict.startTime);
+              const newStart = trip.end;
+              const newEnd = toTime(toMin(newStart) + duration);
+              wizardEl.querySelector('#league-start').value = newStart;
+              wizardEl.querySelector('#league-end').value = newEnd;
+            }
+
+            showContinueButton();
           };
         });
+
+        function showContinueButton() {
+          const continueBtn = document.createElement('button');
+          continueBtn.textContent = 'Apply Time';
+          continueBtn.className = 'tw-btn tw-btn-primary';
+          continueBtn.style.marginTop = '15px';
+          continueBtn.onclick = () => {
+            const start = wizardEl.querySelector('#league-start').value.trim();
+            const end = wizardEl.querySelector('#league-end').value.trim();
+
+            if (toMin(start) == null || toMin(end) == null || toMin(end) <= toMin(start)) {
+              alert("Please enter valid times.");
+              return;
+            }
+
+            const newConflicts = detectConflicts(trip.division, start, end, conflict.id);
+            if (newConflicts.length > 0) {
+              handleNewPlacementConflict(trip.division, conflict.event, start, end, conflict, newConflicts, next);
+            } else {
+              applyTimeChange(trip.division, conflict, conflict.event, start, end, next);
+            }
+          };
+          const customDiv = document.getElementById('custom-time-input');
+          if (!customDiv.querySelector('.tw-btn-primary')) {
+            customDiv.appendChild(continueBtn);
+          }
+        }
       }
     });
   }
@@ -643,200 +970,536 @@
   function handleGenericConflict(trip, conflict, next) {
     renderStep({
       title: `${trip.division} — ${conflict.event}`,
-      text: `"${conflict.event}" (${conflict.startTime}–${conflict.endTime}) will be skipped because of the trip.`,
+      text: `"${conflict.event}" (${conflict.startTime}–${conflict.endTime}) overlaps with the trip. What would you like to do?`,
       body: `
-        <div class="tw-info-box">
-          <p>This activity cannot happen while ${trip.division} is off campus. It will be removed from today's schedule.</p>
+        <div class="tw-suggestion-group">
+          <div class="tw-suggestion-card" data-choice="skip">
+            <div class="tw-suggestion-icon">❌</div>
+            <div class="tw-suggestion-content">
+              <strong>Skip for Today</strong>
+              <p>This activity won't happen</p>
+              <span class="tw-suggestion-note">Can be rescheduled another day</span>
+            </div>
+          </div>
+
+          <div class="tw-suggestion-card" data-choice="reschedule">
+            <div class="tw-suggestion-icon">🔄</div>
+            <div class="tw-suggestion-content">
+              <strong>Reschedule for Today</strong>
+              <p>Find a different time today</p>
+              <span class="tw-suggestion-note">I'll help you pick a time</span>
+            </div>
+          </div>
         </div>
 
-        <div class="tw-option-group">
-          <button class="tw-option-btn" data-choice="proceed">
-            <strong>Continue</strong>
-            <span>Remove this activity for today</span>
-          </button>
+        <div id="custom-time-input" style="display:none;">
+          <div class="tw-time-row">
+            <div class="tw-form-group">
+              <label>New Start Time</label>
+              <input id="generic-start" placeholder="2:00pm" class="tw-input">
+            </div>
+            <div class="tw-form-group">
+              <label>New End Time</label>
+              <input id="generic-end" placeholder="3:00pm" class="tw-input">
+            </div>
+          </div>
+        </div>
+      `,
+      hideNext: true,
+      showSkip: true,
+      onSkip: () => {
+        pendingQuestions.push({
+          title: `Skipped: ${trip.division} ${conflict.event}`,
+          handler: () => handleGenericConflict(trip, conflict, next)
+        });
+        next();
+      },
+      setup: () => {
+        wizardEl.querySelectorAll('.tw-suggestion-card').forEach(card => {
+          card.onclick = () => {
+            const choice = card.dataset.choice;
+
+            if (choice === 'skip') {
+              const change = {
+                division: trip.division,
+                action: 'remove',
+                oldEvent: conflict,
+                reason: 'Skipped for trip day'
+              };
+              plannedChanges.push(change);
+              applyChangeToWorkingSkeleton(change);
+              next();
+              return;
+            }
+
+            document.getElementById('custom-time-input').style.display = 'block';
+            
+            // Suggest after trip
+            const duration = toMin(conflict.endTime) - toMin(conflict.startTime);
+            const newStart = trip.end;
+            const newEnd = toTime(toMin(newStart) + duration);
+            wizardEl.querySelector('#generic-start').value = newStart;
+            wizardEl.querySelector('#generic-end').value = newEnd;
+
+            showContinueButton();
+          };
+        });
+
+        function showContinueButton() {
+          const continueBtn = document.createElement('button');
+          continueBtn.textContent = 'Apply Time';
+          continueBtn.className = 'tw-btn tw-btn-primary';
+          continueBtn.style.marginTop = '15px';
+          continueBtn.onclick = () => {
+            const start = wizardEl.querySelector('#generic-start').value.trim();
+            const end = wizardEl.querySelector('#generic-end').value.trim();
+
+            if (toMin(start) == null || toMin(end) == null || toMin(end) <= toMin(start)) {
+              alert("Please enter valid times.");
+              return;
+            }
+
+            const newConflicts = detectConflicts(trip.division, start, end, conflict.id);
+            if (newConflicts.length > 0) {
+              handleNewPlacementConflict(trip.division, conflict.event, start, end, conflict, newConflicts, next);
+            } else {
+              applyTimeChange(trip.division, conflict, conflict.event, start, end, next);
+            }
+          };
+          const customDiv = document.getElementById('custom-time-input');
+          if (!customDiv.querySelector('.tw-btn-primary')) {
+            customDiv.appendChild(continueBtn);
+          }
+        }
+      }
+    });
+  }
+
+  // ------------------------------------------------------------
+  // CASCADE CONFLICT HANDLERS
+  // ------------------------------------------------------------
+
+  function handleNewPlacementConflict(division, activityName, startTime, endTime, originalConflict, newConflicts, afterResolve, reservedFields = []) {
+    const conflictBlock = newConflicts[0];
+
+    renderStep({
+      title: `⚠️ Schedule Conflict Detected`,
+      text: `Placing ${activityName} at ${startTime}–${endTime} would overlap with "${conflictBlock.event}" (${conflictBlock.startTime}–${conflictBlock.endTime}).`,
+      body: `
+        <div class="tw-warning-box">
+          <strong>What would you like to do?</strong>
+        </div>
+
+        <div class="tw-suggestion-group">
+          <div class="tw-suggestion-card" data-choice="move-new">
+            <div class="tw-suggestion-icon">↩️</div>
+            <div class="tw-suggestion-content">
+              <strong>Choose Different Time for ${activityName}</strong>
+              <p>Go back and pick a different time</p>
+            </div>
+          </div>
+
+          <div class="tw-suggestion-card" data-choice="move-existing">
+            <div class="tw-suggestion-icon">🔄</div>
+            <div class="tw-suggestion-content">
+              <strong>Move ${conflictBlock.event}</strong>
+              <p>Keep ${activityName} at ${startTime}, move ${conflictBlock.event} elsewhere</p>
+            </div>
+          </div>
+
+          <div class="tw-suggestion-card tw-suggestion-card-muted" data-choice="remove-existing">
+            <div class="tw-suggestion-icon">❌</div>
+            <div class="tw-suggestion-content">
+              <strong>Skip ${conflictBlock.event} Today</strong>
+              <p>Remove it to make room for ${activityName}</p>
+            </div>
+          </div>
         </div>
       `,
       hideNext: true,
       setup: () => {
-        wizardEl.querySelector('[data-choice="proceed"]').onclick = () => {
-          plannedChanges.push({
-            division: trip.division,
-            action: 'remove',
-            oldEvent: conflict,
-            reason: 'Division is off campus for trip'
-          });
-          next();
-        };
+        wizardEl.querySelectorAll('.tw-suggestion-card').forEach(card => {
+          card.onclick = () => {
+            const choice = card.dataset.choice;
+
+            if (choice === 'move-new') {
+              // Go back to original handler
+              if (activityName.toLowerCase().includes('swim')) {
+                const trip = tripManifest.find(t => t.division === division);
+                handleSwimConflict(trip, originalConflict, afterResolve);
+              } else if (activityName.toLowerCase().includes('lunch')) {
+                const trip = tripManifest.find(t => t.division === division);
+                handleLunchConflict(trip, originalConflict, afterResolve);
+              } else if (activityName.toLowerCase().includes('snack')) {
+                const trip = tripManifest.find(t => t.division === division);
+                handleSnackConflict(trip, originalConflict, afterResolve);
+              } else {
+                const trip = tripManifest.find(t => t.division === division);
+                handleGenericConflict(trip, originalConflict, afterResolve);
+              }
+            } else if (choice === 'remove-existing') {
+              // Remove the conflicting block
+              const removeChange = {
+                division: division,
+                action: 'remove',
+                oldEvent: conflictBlock,
+                reason: `Removed to make room for ${activityName}`
+              };
+              plannedChanges.push(removeChange);
+              applyChangeToWorkingSkeleton(removeChange);
+
+              // Now apply the new time
+              applyTimeChange(division, originalConflict, activityName, startTime, endTime, afterResolve, reservedFields);
+            } else if (choice === 'move-existing') {
+              // Prompt to move the existing block
+              promptMoveExistingBlock(division, conflictBlock, () => {
+                // After moving the existing block, apply new time
+                applyTimeChange(division, originalConflict, activityName, startTime, endTime, afterResolve, reservedFields);
+              });
+            }
+          };
+        });
+      }
+    });
+  }
+
+  function promptMoveExistingBlock(division, block, afterMove) {
+    renderStep({
+      title: `Move ${block.event}`,
+      text: `Where should we move "${block.event}" (originally ${block.startTime}–${block.endTime})?`,
+      body: `
+        <div class="tw-time-row">
+          <div class="tw-form-group">
+            <label>New Start Time</label>
+            <input id="move-start" placeholder="3:00pm" class="tw-input">
+          </div>
+          <div class="tw-form-group">
+            <label>New End Time</label>
+            <input id="move-end" placeholder="4:00pm" class="tw-input">
+          </div>
+        </div>
+      `,
+      next: () => {
+        const start = wizardEl.querySelector('#move-start').value.trim();
+        const end = wizardEl.querySelector('#move-end').value.trim();
+
+        if (toMin(start) == null || toMin(end) == null || toMin(end) <= toMin(start)) {
+          alert("Please enter valid times.");
+          return;
+        }
+
+        // Check if this new time creates more conflicts
+        const moreConflicts = detectConflicts(division, start, end, block.id);
+        if (moreConflicts.length > 0) {
+          alert(`That time also conflicts with "${moreConflicts[0].event}". Please choose another time.`);
+          return;
+        }
+
+        // Apply the move
+        applyTimeChange(division, block, block.event, start, end, afterMove);
+      }
+    });
+  }
+
+  function handleCrossDivisionSwimConflict(sourceDivision, startTime, endTime, crossConflicts, originalConflict, afterResolve) {
+    const targetDivision = crossConflicts[0].division;
+    const targetBlock = crossConflicts[0].block;
+
+    renderStep({
+      title: `⚠️ Pool Conflict with ${targetDivision}`,
+      text: `${targetDivision} already has swim at ${startTime}–${endTime}. The pool can only handle one division at a time.`,
+      body: `
+        <div class="tw-warning-box">
+          <strong>Let's coordinate both divisions:</strong>
+        </div>
+
+        <div class="tw-suggestion-group">
+          <div class="tw-suggestion-card" data-choice="move-source">
+            <div class="tw-suggestion-icon">🔄</div>
+            <div class="tw-suggestion-content">
+              <strong>Change ${sourceDivision}'s Swim Time</strong>
+              <p>Pick a different time that doesn't conflict</p>
+            </div>
+          </div>
+
+          <div class="tw-suggestion-card" data-choice="move-target">
+            <div class="tw-suggestion-icon">🔄</div>
+            <div class="tw-suggestion-content">
+              <strong>Move ${targetDivision}'s Swim</strong>
+              <p>Keep ${sourceDivision} at ${startTime}, move ${targetDivision}</p>
+              <span class="tw-suggestion-note">I'll help you find a new time for ${targetDivision}</span>
+            </div>
+          </div>
+
+          <div class="tw-suggestion-card" data-choice="swap">
+            <div class="tw-suggestion-icon">↔️</div>
+            <div class="tw-suggestion-content">
+              <strong>Swap Times</strong>
+              <p>${sourceDivision} gets ${targetBlock.startTime}–${targetBlock.endTime}</p>
+              <p>${targetDivision} gets ${startTime}–${endTime}</p>
+            </div>
+          </div>
+        </div>
+      `,
+      hideNext: true,
+      setup: () => {
+        wizardEl.querySelectorAll('.tw-suggestion-card').forEach(card => {
+          card.onclick = () => {
+            const choice = card.dataset.choice;
+
+            if (choice === 'move-source') {
+              // Go back to swim handler
+              const trip = tripManifest.find(t => t.division === sourceDivision);
+              handleSwimConflict(trip, originalConflict, afterResolve);
+            } else if (choice === 'swap') {
+              // Apply swap
+              applyTimeChange(sourceDivision, originalConflict, 'Swim', targetBlock.startTime, targetBlock.endTime, () => {}, ['Pool']);
+              applyTimeChange(targetDivision, targetBlock, 'Swim', startTime, endTime, afterResolve, ['Pool']);
+            } else if (choice === 'move-target') {
+              // Prompt for new time for target division
+              promptMoveTargetDivisionSwim(targetDivision, targetBlock, () => {
+                // Then apply source division's swim
+                applyTimeChange(sourceDivision, originalConflict, 'Swim', startTime, endTime, afterResolve, ['Pool']);
+              });
+            }
+          };
+        });
+      }
+    });
+  }
+
+  function promptMoveTargetDivisionSwim(division, block, afterMove) {
+    renderStep({
+      title: `Move ${division}'s Swim`,
+      text: `Let's find a new time for ${division}'s swim (currently ${block.startTime}–${block.endTime}).`,
+      body: `
+        <div class="tw-form-group">
+          <label>Suggested times for ${division}:</label>
+        </div>
+
+        <div class="tw-suggestion-group">
+          <div class="tw-suggestion-card" data-choice="morning">
+            <div class="tw-suggestion-icon">🌅</div>
+            <div class="tw-suggestion-content">
+              <strong>Morning (9:00am)</strong>
+              <p>9:00am - 9:45am</p>
+            </div>
+          </div>
+
+          <div class="tw-suggestion-card" data-choice="late">
+            <div class="tw-suggestion-icon">🌆</div>
+            <div class="tw-suggestion-content">
+              <strong>Late Afternoon (3:30pm)</strong>
+              <p>3:30pm - 4:15pm</p>
+            </div>
+          </div>
+
+          <div class="tw-suggestion-card" data-choice="custom">
+            <div class="tw-suggestion-icon">✏️</div>
+            <div class="tw-suggestion-content">
+              <strong>Custom Time</strong>
+              <p>I'll choose manually</p>
+            </div>
+          </div>
+        </div>
+
+        <div id="custom-time-input" style="display:none;">
+          <div class="tw-time-row">
+            <div class="tw-form-group">
+              <label>Swim Start</label>
+              <input id="target-swim-start" placeholder="10:00am" class="tw-input">
+            </div>
+            <div class="tw-form-group">
+              <label>Swim End</label>
+              <input id="target-swim-end" placeholder="10:45am" class="tw-input">
+            </div>
+          </div>
+        </div>
+      `,
+      hideNext: true,
+      setup: () => {
+        wizardEl.querySelectorAll('.tw-suggestion-card').forEach(card => {
+          card.onclick = () => {
+            const choice = card.dataset.choice;
+
+            let start, end;
+            if (choice === 'morning') {
+              start = '9:00am';
+              end = '9:45am';
+            } else if (choice === 'late') {
+              start = '3:30pm';
+              end = '4:15pm';
+            } else if (choice === 'custom') {
+              document.getElementById('custom-time-input').style.display = 'block';
+              showContinueButton();
+              return;
+            }
+
+            // Check for conflicts
+            const conflicts = detectConflicts(division, start, end, block.id);
+            if (conflicts.length > 0) {
+              alert(`That time conflicts with "${conflicts[0].event}". Please choose another.`);
+              return;
+            }
+
+            applyTimeChange(division, block, 'Swim', start, end, afterMove, ['Pool']);
+          };
+        });
+
+        function showContinueButton() {
+          const continueBtn = document.createElement('button');
+          continueBtn.textContent = 'Apply Time';
+          continueBtn.className = 'tw-btn tw-btn-primary';
+          continueBtn.style.marginTop = '15px';
+          continueBtn.onclick = () => {
+            const start = wizardEl.querySelector('#target-swim-start').value.trim();
+            const end = wizardEl.querySelector('#target-swim-end').value.trim();
+
+            if (toMin(start) == null || toMin(end) == null || toMin(end) <= toMin(start)) {
+              alert("Please enter valid times.");
+              return;
+            }
+
+            const conflicts = detectConflicts(division, start, end, block.id);
+            if (conflicts.length > 0) {
+              alert(`That time conflicts with "${conflicts[0].event}". Please choose another.`);
+              return;
+            }
+
+            applyTimeChange(division, block, 'Swim', start, end, afterMove, ['Pool']);
+          };
+          const customDiv = document.getElementById('custom-time-input');
+          if (!customDiv.querySelector('.tw-btn-primary')) {
+            customDiv.appendChild(continueBtn);
+          }
+        }
       }
     });
   }
 
   // ------------------------------------------------------------
-  // CHECK FOR STAYING DIVISION IMPACTS
+  // HELPER: APPLY TIME CHANGE
   // ------------------------------------------------------------
-  function checkForStayingDivisionImpacts() {
-    // TODO: In a full implementation, we'd check if any of our changes
-    // create opportunities or problems for staying divisions
-    // For now, proceed to preview
-    showPreview();
+  function applyTimeChange(division, oldBlock, eventName, startTime, endTime, next, reservedFields = []) {
+    const change = {
+      division: division,
+      action: 'replace',
+      oldEvent: oldBlock,
+      type: oldBlock.type || 'pinned',
+      event: eventName,
+      startTime: startTime,
+      endTime: endTime,
+      reservedFields: reservedFields
+    };
+    
+    plannedChanges.push(change);
+    applyChangeToWorkingSkeleton(change);
+    next();
   }
 
   // ------------------------------------------------------------
-  // CONFLICT DETECTION HELPERS
+  // FINAL PREVIEW
   // ------------------------------------------------------------
-  function checkTimeConflict(division, startTime, endTime) {
-    const divisionSkeleton = fullDaySkeleton[division] || [];
-    
-    for (const block of divisionSkeleton) {
-      if (overlaps(block.startTime, block.endTime, startTime, endTime)) {
-        return block.event;
-      }
-    }
-    
-    // Also check against planned changes
-    for (const change of plannedChanges) {
-      if (change.division === division && change.action === 'add' || change.action === 'replace') {
-        if (overlaps(change.startTime, change.endTime, startTime, endTime)) {
-          return change.event;
-        }
-      }
-    }
-    
-    return null;
-  }
-
-  function checkCrossDivisionConflict(activity, startTime, endTime, excludeDivision) {
-    for (const div of allDivisions) {
-      if (div === excludeDivision) continue;
-      
-      const divisionSkeleton = fullDaySkeleton[div] || [];
-      
-      for (const block of divisionSkeleton) {
-        if (overlaps(block.startTime, block.endTime, startTime, endTime)) {
-          // Check if it's the same type of activity
-          if ((block.event || "").toLowerCase().includes(activity.toLowerCase())) {
-            return { division: div, activity: block.event };
-          }
-        }
-      }
-    }
-    
-    return null;
-  }
-
-  // ------------------------------------------------------------
-  // PREVIEW & FINALIZE
-  // ------------------------------------------------------------
-  function showPreview() {
-    // Group changes by division
+  function showFinalPreview() {
     const changesByDivision = {};
     allDivisions.forEach(d => { changesByDivision[d] = []; });
     
     plannedChanges.forEach(change => {
+      if (!changesByDivision[change.division]) {
+        changesByDivision[change.division] = [];
+      }
       changesByDivision[change.division].push(change);
     });
 
-    let previewHtml = '<div class="tw-preview-container">';
+    let previewHtml = '<div class="tw-final-preview">';
 
-    // Show traveling divisions first
     travelingDivisions.forEach(div => {
       const changes = changesByDivision[div];
       previewHtml += `
         <div class="tw-preview-division">
-          <h4>🚌 ${div} (Going on Trip)</h4>
-          <div class="tw-preview-items">
+          <h4>🚌 ${div} (Trip Day)</h4>
       `;
 
-      changes.forEach(change => {
-        if (change.action === 'add') {
-          previewHtml += `
-            <div class="tw-preview-item tw-preview-add">
-              <strong>+ ${change.event}</strong>
-              <span>${change.startTime} – ${change.endTime}</span>
-            </div>
-          `;
-        } else if (change.action === 'replace') {
-          previewHtml += `
-            <div class="tw-preview-item tw-preview-replace">
-              <strong>↻ ${change.event}</strong>
-              <span>Moved to ${change.startTime} – ${change.endTime}</span>
-              <small>Was: ${change.oldEvent.startTime} – ${change.oldEvent.endTime}</small>
-            </div>
-          `;
-        } else if (change.action === 'remove') {
-          previewHtml += `
-            <div class="tw-preview-item tw-preview-remove">
-              <strong>− ${change.oldEvent.event}</strong>
-              <small>${change.reason}</small>
-            </div>
-          `;
-        } else if (change.action === 'note') {
-          previewHtml += `
-            <div class="tw-preview-item tw-preview-note">
-              <strong>ℹ️ Note</strong>
-              <span>${change.message}</span>
-            </div>
-          `;
-        }
-      });
+      if (changes.length === 0) {
+        previewHtml += `<div class="tw-preview-item tw-preview-note">Only the trip was added</div>`;
+      } else {
+        changes.forEach(change => {
+          previewHtml += formatChangeForPreview(change);
+        });
+      }
 
-      previewHtml += `</div></div>`;
+      previewHtml += `</div>`;
     });
 
-    // Show staying divisions if affected
     const stayingDivs = allDivisions.filter(d => !travelingDivisions.includes(d));
     const affectedStaying = stayingDivs.filter(d => changesByDivision[d].length > 0);
     
     if (affectedStaying.length > 0) {
-      previewHtml += '<div class="tw-preview-section-header">📍 Divisions Staying at Camp (Affected)</div>';
+      previewHtml += '<div class="tw-preview-section-header">📍 Other Divisions (Adjusted)</div>';
       
       affectedStaying.forEach(div => {
         const changes = changesByDivision[div];
         previewHtml += `
           <div class="tw-preview-division">
             <h4>${div}</h4>
-            <div class="tw-preview-items">
         `;
 
         changes.forEach(change => {
-          // Same rendering as above
-          if (change.action === 'add') {
-            previewHtml += `
-              <div class="tw-preview-item tw-preview-add">
-                <strong>+ ${change.event}</strong>
-                <span>${change.startTime} – ${change.endTime}</span>
-              </div>
-            `;
-          } else if (change.action === 'replace') {
-            previewHtml += `
-              <div class="tw-preview-item tw-preview-replace">
-                <strong>↻ ${change.event}</strong>
-                <span>Moved to ${change.startTime} – ${change.endTime}</span>
-              </div>
-            `;
-          }
+          previewHtml += formatChangeForPreview(change);
         });
 
-        previewHtml += `</div></div>`;
+        previewHtml += `</div>`;
       });
     }
 
     previewHtml += '</div>';
 
     renderStep({
-      title: "📋 Review Changes",
-      text: "Here's how the day will be adjusted. Review carefully before applying.",
+      title: "✅ Review Final Schedule",
+      text: "Here's the complete plan. Review carefully before applying.",
       body: previewHtml,
-      nextText: "✓ Apply Changes",
+      nextText: "✓ Apply All Changes",
       cancelText: "✗ Cancel",
       next: () => {
-        applyChanges();
+        applyAllChanges();
       }
     });
   }
 
-  function applyChanges() {
-    // Convert plannedChanges into the format expected by daily_adjustments.js
+  function formatChangeForPreview(change) {
+    if (change.action === 'add') {
+      return `
+        <div class="tw-preview-item tw-preview-add">
+          <strong>+ ${change.event}</strong>
+          <span>${change.startTime} – ${change.endTime}</span>
+        </div>
+      `;
+    } else if (change.action === 'replace') {
+      return `
+        <div class="tw-preview-item tw-preview-replace">
+          <strong>↻ ${change.event}</strong>
+          <span>Moved to ${change.startTime} – ${change.endTime}</span>
+          <small>Was: ${change.oldEvent.startTime} – ${change.oldEvent.endTime}</small>
+        </div>
+      `;
+    } else if (change.action === 'remove') {
+      return `
+        <div class="tw-preview-item tw-preview-remove">
+          <strong>− ${change.oldEvent.event}</strong>
+          <small>${change.reason}</small>
+        </div>
+      `;
+    } else if (change.action === 'note') {
+      return `
+        <div class="tw-preview-item tw-preview-note">
+          <strong>ℹ️ ${change.message}</strong>
+        </div>
+      `;
+    }
+    return '';
+  }
+
+  function applyAllChanges() {
     const instructions = {};
 
     plannedChanges.forEach(change => {
@@ -853,7 +1516,6 @@
           reservedFields: change.reservedFields || []
         });
       } else if (change.action === 'replace') {
-        // Remove old, add new
         instructions[change.division].actions.push({
           type: 'remove',
           eventId: change.oldEvent.id
@@ -873,7 +1535,6 @@
       }
     });
 
-    // Call the callback with instructions
     const instructionArray = Object.values(instructions);
     onComplete?.(instructionArray);
     close();
@@ -888,22 +1549,94 @@
     const overlay = document.createElement("div");
     overlay.id = "tw-overlay";
     overlay.innerHTML = `
-      <div class="tw-modal">
-        <div class="tw-header">
-          <div>
-            <strong class="tw-title">Trip Planner Wizard</strong>
-            <div class="tw-subtitle">Smart scheduling for off-campus trips</div>
+      <div class="tw-container">
+        <div class="tw-wizard-panel">
+          <div class="tw-header">
+            <div>
+              <strong class="tw-title">Trip Planner</strong>
+              <div class="tw-subtitle">Guided scheduling</div>
+            </div>
+            <button id="tw-close" class="tw-close-btn">✖</button>
           </div>
-          <button id="tw-close" class="tw-close-btn" title="Close">✖</button>
+          <div id="tw-content" class="tw-content"></div>
         </div>
-        <div id="tw-content" class="tw-content"></div>
+
+        <div class="tw-preview-panel">
+          <div class="tw-preview-header">
+            <strong>📅 Live Schedule</strong>
+            <span>Updates as you make decisions</span>
+          </div>
+          <div id="tw-live-preview" class="tw-live-preview"></div>
+        </div>
       </div>
-      
+
+      ${getStyles()}
+    `;
+
+    document.body.appendChild(overlay);
+    wizardEl = document.getElementById("tw-content");
+    previewEl = document.getElementById("tw-live-preview");
+
+    document.getElementById("tw-close").onclick = () => {
+      if (confirm("Exit trip planner? All progress will be lost.")) {
+        close();
+      }
+    };
+
+    updateLivePreview();
+  }
+
+  function renderStep({ title, text, body, next, nextText = "Continue →", cancelText, hideNext = false, showSkip = false, onSkip, setup }) {
+    let html = `
+      <h2 class="tw-step-title">${title}</h2>
+      <p class="tw-step-text">${text}</p>
+      <div class="tw-step-body">${body}</div>
+    `;
+
+    if (!hideNext || showSkip) {
+      html += `<div class="tw-btn-group">`;
+      if (showSkip) {
+        html += `<button id="tw-skip" class="tw-btn tw-btn-skip">Skip for Now</button>`;
+      }
+      if (cancelText) {
+        html += `<button id="tw-cancel" class="tw-btn tw-btn-secondary">${cancelText}</button>`;
+      }
+      if (!hideNext) {
+        html += `<button id="tw-next" class="tw-btn tw-btn-primary">${nextText}</button>`;
+      }
+      html += `</div>`;
+    }
+
+    wizardEl.innerHTML = html;
+
+    if (!hideNext && next) {
+      wizardEl.querySelector('#tw-next')?.addEventListener('click', next);
+    }
+
+    if (cancelText) {
+      wizardEl.querySelector('#tw-cancel')?.addEventListener('click', close);
+    }
+
+    if (showSkip && onSkip) {
+      wizardEl.querySelector('#tw-skip')?.addEventListener('click', onSkip);
+    }
+
+    if (setup) {
+      setup();
+    }
+  }
+
+  function close() {
+    document.getElementById("tw-overlay")?.remove();
+  }
+
+  function getStyles() {
+    return `
       <style>
         #tw-overlay {
           position: fixed;
           inset: 0;
-          background: rgba(0, 0, 0, 0.6);
+          background: rgba(0, 0, 0, 0.7);
           display: flex;
           align-items: center;
           justify-content: center;
@@ -912,15 +1645,32 @@
           backdrop-filter: blur(4px);
         }
 
-        .tw-modal {
+        .tw-container {
+          display: flex;
+          gap: 20px;
+          width: 100%;
+          max-width: 1400px;
+          height: 90vh;
+          max-height: 900px;
+        }
+
+        .tw-wizard-panel {
+          flex: 1;
           background: white;
           border-radius: 16px;
-          width: 100%;
-          max-width: 650px;
-          max-height: 90vh;
           display: flex;
           flex-direction: column;
           box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+
+        .tw-preview-panel {
+          flex: 1;
+          background: white;
+          border-radius: 16px;
+          display: flex;
+          flex-direction: column;
+          box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+          overflow: hidden;
         }
 
         .tw-header {
@@ -959,7 +1709,6 @@
 
         .tw-close-btn:hover {
           background: rgba(255,255,255,0.3);
-          transform: scale(1.1);
         }
 
         .tw-content {
@@ -998,17 +1747,10 @@
           background: #f9fafb;
         }
 
-        .tw-check input[type="checkbox"] {
+        .tw-check input {
           width: 20px;
           height: 20px;
           margin-right: 12px;
-          cursor: pointer;
-        }
-
-        .tw-check-label {
-          font-size: 1rem;
-          color: #374151;
-          font-weight: 500;
         }
 
         .tw-form-group {
@@ -1020,7 +1762,6 @@
           font-weight: 500;
           color: #374151;
           margin-bottom: 6px;
-          font-size: 0.95rem;
         }
 
         .tw-input {
@@ -1040,13 +1781,11 @@
 
         .tw-time-row {
           display: flex;
-          align-items: center;
-          gap: 8px;
+          gap: 12px;
         }
 
         .tw-time-row .tw-form-group {
           flex: 1;
-          margin-bottom: 0;
         }
 
         .tw-help-text {
@@ -1059,85 +1798,76 @@
           margin-top: 16px;
         }
 
-        .tw-option-group {
+        .tw-suggestion-group {
           display: flex;
           flex-direction: column;
-          gap: 10px;
+          gap: 12px;
         }
 
-        .tw-option-btn {
+        .tw-suggestion-card {
           background: white;
           border: 2px solid #e5e7eb;
-          border-radius: 10px;
-          padding: 14px 18px;
-          text-align: left;
+          border-radius: 12px;
+          padding: 16px;
           cursor: pointer;
           transition: all 0.2s;
           display: flex;
-          flex-direction: column;
-          gap: 4px;
+          gap: 16px;
+          align-items: flex-start;
         }
 
-        .tw-option-btn:hover {
+        .tw-suggestion-card:hover {
           border-color: #667eea;
           background: #f9fafb;
           transform: translateY(-2px);
           box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
         }
 
-        .tw-option-btn strong {
+        .tw-suggestion-card-muted {
+          opacity: 0.7;
+        }
+
+        .tw-suggestion-icon {
+          font-size: 2rem;
+          flex-shrink: 0;
+        }
+
+        .tw-suggestion-content {
+          flex: 1;
+        }
+
+        .tw-suggestion-content strong {
+          display: block;
           color: #1f2937;
-          font-size: 1rem;
+          font-size: 1.05rem;
+          margin-bottom: 4px;
         }
 
-        .tw-option-btn span {
+        .tw-suggestion-content p {
           color: #6b7280;
-          font-size: 0.875rem;
+          font-size: 0.95rem;
+          margin: 0 0 4px 0;
         }
 
-        .tw-option-btn-small {
-          background: #f3f4f6;
-          border: 1px solid #d1d5db;
-          border-radius: 6px;
-          padding: 8px 14px;
-          font-size: 0.9rem;
-          cursor: pointer;
-          transition: all 0.2s;
+        .tw-suggestion-note {
+          display: block;
+          color: #10b981;
+          font-size: 0.85rem;
+          font-weight: 500;
         }
 
-        .tw-option-btn-small:hover {
-          background: #e5e7eb;
-        }
-
-        .tw-suggestion-box {
-          background: #f0fdf4;
-          border: 2px solid #86efac;
-          border-radius: 10px;
-          padding: 14px;
-          margin-bottom: 16px;
-        }
-
-        .tw-suggestion-box strong {
-          color: #15803d;
-          font-size: 1rem;
-        }
-
-        .tw-suggestion-box p {
-          color: #166534;
-          margin: 4px 0 0 0;
-          font-size: 0.9rem;
-        }
-
-        .tw-warning {
+        .tw-warning-inline {
           background: #fef3c7;
-          border: 2px solid #fbbf24;
-          border-radius: 10px;
-          padding: 14px;
-          margin-bottom: 16px;
+          border-left: 3px solid #f59e0b;
+          padding: 8px 12px;
+          margin-top: 8px;
+          border-radius: 4px;
+          font-size: 0.9rem;
           color: #92400e;
         }
 
-        .tw-info-box {
+        .tw-info-box,
+        .tw-warning-box {
           background: #eff6ff;
           border: 1px solid #bfdbfe;
           border-radius: 8px;
@@ -1146,9 +1876,10 @@
           color: #1e40af;
         }
 
-        .tw-info-box p {
-          margin: 0;
-          font-size: 0.95rem;
+        .tw-warning-box {
+          background: #fef3c7;
+          border-color: #fbbf24;
+          color: #92400e;
         }
 
         .tw-btn-group {
@@ -1185,26 +1916,153 @@
           color: #374151;
         }
 
-        .tw-btn-secondary:hover {
-          background: #e5e7eb;
+        .tw-btn-skip {
+          background: #fef3c7;
+          color: #92400e;
         }
 
-        .tw-preview-container {
-          max-height: 400px;
+        .tw-preview-header {
+          padding: 16px 20px;
+          border-bottom: 1px solid #e5e7eb;
+          background: #f9fafb;
+        }
+
+        .tw-preview-header strong {
+          display: block;
+          font-size: 1.1rem;
+          color: #1f2937;
+          margin-bottom: 2px;
+        }
+
+        .tw-preview-header span {
+          font-size: 0.85rem;
+          color: #6b7280;
+        }
+
+        .tw-live-preview {
+          flex: 1;
           overflow-y: auto;
-          border: 1px solid #e5e7eb;
-          border-radius: 10px;
           padding: 16px;
           background: #fafafa;
+        }
+
+        .tw-live-schedule {
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+        }
+
+        .tw-schedule-division {
+          background: white;
+          border-radius: 10px;
+          border: 1px solid #e5e7eb;
+          overflow: hidden;
+        }
+
+        .tw-schedule-division.tw-traveling {
+          border-color: #fbbf24;
+          box-shadow: 0 0 0 2px #fef3c7;
+        }
+
+        .tw-schedule-div-header {
+          padding: 12px 16px;
+          background: linear-gradient(to right, #f9fafb, white);
+          font-weight: 600;
+          color: #1f2937;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          border-bottom: 1px solid #e5e7eb;
+        }
+
+        .tw-badge {
+          background: #fbbf24;
+          color: #78350f;
+          padding: 2px 8px;
+          border-radius: 12px;
+          font-size: 0.75rem;
+          font-weight: 600;
+          text-transform: uppercase;
+        }
+
+        .tw-schedule-blocks {
+          padding: 12px;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .tw-schedule-empty {
+          color: #9ca3af;
+          font-style: italic;
+          text-align: center;
+          padding: 20px;
+        }
+
+        .tw-block-original,
+        .tw-block-new {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 10px 12px;
+          border-radius: 6px;
+          transition: all 0.2s;
+        }
+
+        .tw-block-original {
+          background: #f3f4f6;
+          border: 1px solid #e5e7eb;
+        }
+
+        .tw-block-new {
+          background: #d1fae5;
+          border: 1px solid #34d399;
+        }
+
+        .tw-block-icon {
+          font-size: 1.5rem;
+          flex-shrink: 0;
+        }
+
+        .tw-block-content {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .tw-block-content strong {
+          display: block;
+          color: #1f2937;
+          font-size: 0.95rem;
+          margin-bottom: 2px;
+        }
+
+        .tw-block-time {
+          display: block;
+          color: #6b7280;
+          font-size: 0.85rem;
+        }
+
+        .tw-block-badge {
+          background: #10b981;
+          color: white;
+          padding: 2px 8px;
+          border-radius: 10px;
+          font-size: 0.7rem;
+          font-weight: 600;
+          text-transform: uppercase;
+        }
+
+        .tw-final-preview {
+          max-height: 400px;
+          overflow-y: auto;
         }
 
         .tw-preview-section-header {
           font-weight: 600;
           color: #374151;
-          margin: 16px 0 12px 0;
+          margin: 20px 0 12px 0;
           padding-bottom: 8px;
           border-bottom: 2px solid #e5e7eb;
-          font-size: 1rem;
         }
 
         .tw-preview-division {
@@ -1214,22 +2072,12 @@
         .tw-preview-division h4 {
           margin: 0 0 10px 0;
           color: #1f2937;
-          font-size: 1.1rem;
-        }
-
-        .tw-preview-items {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
         }
 
         .tw-preview-item {
           padding: 10px 12px;
           border-radius: 6px;
-          display: flex;
-          flex-direction: column;
-          gap: 2px;
-          font-size: 0.9rem;
+          margin-bottom: 8px;
         }
 
         .tw-preview-add {
@@ -1262,51 +2110,6 @@
         }
       </style>
     `;
-
-    document.body.appendChild(overlay);
-    wizardEl = document.getElementById("tw-content");
-
-    document.getElementById("tw-close").onclick = () => {
-      if (confirm("Are you sure you want to exit? All progress will be lost.")) {
-        close();
-      }
-    };
-  }
-
-  function renderStep({ title, text, body, next, nextText = "Next →", cancelText, hideNext = false, setup }) {
-    let html = `
-      <h2 class="tw-step-title">${title}</h2>
-      <p class="tw-step-text">${text}</p>
-      <div class="tw-step-body">${body}</div>
-    `;
-
-    if (!hideNext) {
-      html += `
-        <div class="tw-btn-group">
-          ${cancelText ? `<button id="tw-cancel" class="tw-btn tw-btn-secondary">${cancelText}</button>` : ''}
-          <button id="tw-next" class="tw-btn tw-btn-primary">${nextText}</button>
-        </div>
-      `;
-    }
-
-    wizardEl.innerHTML = html;
-
-    if (!hideNext && next) {
-      wizardEl.querySelector('#tw-next').onclick = next;
-    }
-
-    if (cancelText) {
-      wizardEl.querySelector('#tw-cancel').onclick = close;
-    }
-
-    // Run custom setup if provided
-    if (setup) {
-      setup();
-    }
-  }
-
-  function close() {
-    document.getElementById("tw-overlay")?.remove();
   }
 
 })();
