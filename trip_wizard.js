@@ -1,6 +1,6 @@
 // =================================================================
-// trip_wizard.js — COMPREHENSIVE TRIP PLANNER WITH LIVE SCHEDULE
-// Features: Live preview, cascade handling, skip questions, visual guidance
+// trip_wizard.js — PROFESSIONAL TRIP PLANNER
+// Apple-inspired UI, robust conflict detection, matches app design system
 // =================================================================
 
 (function () {
@@ -11,15 +11,14 @@
   // ------------------------------------------------------------
   let tripManifest = [];
   let plannedChanges = [];
-  let fullDaySkeleton = {}; // Organized by division
-  let workingSkeleton = {}; // Live working copy with changes applied
-  let pendingQuestions = []; // Questions that were skipped
+  let fullDaySkeleton = {};
+  let workingSkeleton = {};
+  let pendingQuestions = [];
   let onComplete = null;
   let wizardEl = null;
   let previewEl = null;
   let allDivisions = [];
   let travelingDivisions = [];
-  let currentQuestionId = null;
 
   // ------------------------------------------------------------
   // TIME UTILITIES
@@ -76,7 +75,6 @@
       onComplete = cb;
       allDivisions = window.availableDivisions || [];
       travelingDivisions = [];
-      currentQuestionId = null;
 
       loadFullDaySkeleton();
       renderBase();
@@ -136,16 +134,14 @@
   function updateLivePreview() {
     if (!previewEl) return;
 
-    let html = '<div class="tw-live-schedule">';
+    let html = '';
 
-    // Show divisions in order: traveling first, then staying
     const divisionsToShow = [...travelingDivisions, ...allDivisions.filter(d => !travelingDivisions.includes(d))];
 
     divisionsToShow.forEach(div => {
       const isTraveling = travelingDivisions.includes(div);
       const blocks = workingSkeleton[div] || [];
       
-      // Sort by time
       const sorted = blocks.slice().sort((a, b) => {
         const aMin = toMin(a.startTime);
         const bMin = toMin(b.startTime);
@@ -153,38 +149,30 @@
       });
 
       html += `
-        <div class="tw-schedule-division ${isTraveling ? 'tw-traveling' : ''}">
-          <div class="tw-schedule-div-header">
-            ${isTraveling ? '🚌' : '📍'} ${div}
-            ${isTraveling ? '<span class="tw-badge">On Trip</span>' : ''}
+        <div class="tw-schedule-division ${isTraveling ? 'traveling' : ''}">
+          <div class="tw-schedule-header">
+            <span class="tw-schedule-title">${div}</span>
+            ${isTraveling ? '<span class="tw-badge-trip">On Trip</span>' : '<span class="tw-badge-camp">At Camp</span>'}
           </div>
-          <div class="tw-schedule-blocks">
+          <div class="tw-schedule-timeline">
       `;
 
       if (sorted.length === 0) {
-        html += `<div class="tw-schedule-empty">No activities scheduled</div>`;
+        html += `<div class="tw-schedule-empty">No activities</div>`;
       }
 
       sorted.forEach(block => {
         const isNew = block.isNew || false;
-        const isOriginal = !isNew;
-        const blockClass = isNew ? 'tw-block-new' : 'tw-block-original';
+        const label = getLabelForEvent(block.event);
         
-        let icon = '📌';
-        if (block.event?.includes('TRIP')) icon = '🚌';
-        else if (block.event?.includes('Lunch')) icon = '🍽️';
-        else if (block.event?.includes('Swim')) icon = '🏊';
-        else if (block.event?.includes('Snack')) icon = '🍎';
-        else if (block.event?.includes('League')) icon = '🏆';
-
         html += `
-          <div class="${blockClass}">
-            <div class="tw-block-icon">${icon}</div>
-            <div class="tw-block-content">
-              <strong>${block.event}</strong>
-              <span class="tw-block-time">${block.startTime} – ${block.endTime}</span>
+          <div class="tw-timeline-item ${isNew ? 'new' : 'existing'}">
+            <div class="tw-timeline-time">${block.startTime}</div>
+            <div class="tw-timeline-content">
+              <div class="tw-timeline-title">${label}</div>
+              <div class="tw-timeline-duration">${block.startTime} – ${block.endTime}</div>
             </div>
-            ${isNew ? '<span class="tw-block-badge">NEW</span>' : ''}
+            ${isNew ? '<span class="tw-timeline-badge">New</span>' : ''}
           </div>
         `;
       });
@@ -192,8 +180,18 @@
       html += `</div></div>`;
     });
 
-    html += '</div>';
     previewEl.innerHTML = html;
+  }
+
+  function getLabelForEvent(eventName) {
+    if (!eventName) return 'Activity';
+    if (eventName.includes('TRIP')) return 'Trip';
+    if (eventName.toLowerCase().includes('lunch')) return 'Lunch';
+    if (eventName.toLowerCase().includes('swim')) return 'Swim';
+    if (eventName.toLowerCase().includes('snack')) return 'Snack';
+    if (eventName.toLowerCase().includes('league')) return 'League Game';
+    if (eventName.toLowerCase().includes('specialty')) return 'Specialty League';
+    return eventName;
   }
 
   // ------------------------------------------------------------
@@ -221,7 +219,6 @@
       
       const blocks = workingSkeleton[div] || [];
       blocks.forEach(block => {
-        // Check for same activity type (e.g., Swim)
         if ((block.event || "").toLowerCase().includes(activity.toLowerCase())) {
           if (overlaps(block.startTime, block.endTime, startTime, endTime)) {
             conflicts.push({ division: div, block });
@@ -238,14 +235,18 @@
   // ------------------------------------------------------------
   function stepWho() {
     renderStep({
-      title: "📍 Plan a Trip",
-      text: "Which divisions are going on the trip?",
-      body: allDivisions.map(d => `
-        <label class="tw-check">
-          <input type="checkbox" value="${d}"> 
-          <span class="tw-check-label">${d}</span>
-        </label>
-      `).join(""),
+      title: "Select Divisions",
+      subtitle: "Which divisions are going on this trip?",
+      body: `
+        <div class="tw-checkbox-group">
+          ${allDivisions.map(d => `
+            <label class="tw-checkbox-item">
+              <input type="checkbox" value="${d}">
+              <span>${d}</span>
+            </label>
+          `).join('')}
+        </div>
+      `,
       next: () => {
         const chosen = [...wizardEl.querySelectorAll('input[type=checkbox]:checked')]
           .map(i => i.value);
@@ -268,28 +269,24 @@
   // ------------------------------------------------------------
   function stepTripDetails() {
     renderStep({
-      title: "🚌 Trip Details",
-      text: "Where are they going and when?",
+      title: "Trip Details",
+      subtitle: "Where are they going and when will they leave and return?",
       body: `
-        <div class="tw-form-group">
-          <label>Destination</label>
-          <input id="tw-dest" placeholder="e.g., Zoo, Museum, Water Park" class="tw-input">
+        <div class="tw-form-section">
+          <label class="tw-label">Destination</label>
+          <input type="text" id="tw-dest" placeholder="Zoo, Museum, etc." class="tw-input">
         </div>
 
-        <div class="tw-time-row">
-          <div class="tw-form-group">
-            <label>Leave Camp</label>
-            <input id="tw-start" placeholder="10:00am" class="tw-input">
+        <div class="tw-form-row">
+          <div class="tw-form-section">
+            <label class="tw-label">Departure Time</label>
+            <input type="text" id="tw-start" placeholder="10:00am" class="tw-input">
           </div>
 
-          <div class="tw-form-group">
-            <label>Return to Camp</label>
-            <input id="tw-end" placeholder="2:30pm" class="tw-input">
+          <div class="tw-form-section">
+            <label class="tw-label">Return Time</label>
+            <input type="text" id="tw-end" placeholder="2:30pm" class="tw-input">
           </div>
-        </div>
-
-        <div class="tw-help-text">
-          💡 I'll guide you through any schedule conflicts and help coordinate with other divisions.
         </div>
       `,
       next: () => {
@@ -306,7 +303,7 @@
         }
 
         if (sMin == null || eMin == null) {
-          alert("Please enter valid times using format like '10:00am' or '2:30pm'.");
+          alert("Please enter valid times (e.g., '10:00am').");
           return;
         }
 
@@ -321,13 +318,12 @@
           t.end = end;
         });
 
-        // Add trip blocks to working skeleton
         tripManifest.forEach(t => {
           const change = {
             division: t.division,
             action: 'add',
             type: 'pinned',
-            event: `🚌 TRIP: ${t.destination}`,
+            event: `Trip: ${t.destination}`,
             startTime: t.start,
             endTime: t.end,
             reservedFields: []
@@ -350,7 +346,6 @@
 
   function handleNextDivision(index) {
     if (index >= tripManifest.length) {
-      // Done with traveling divisions, check for pending questions
       handlePendingQuestions();
       return;
     }
@@ -358,7 +353,6 @@
     const trip = tripManifest[index];
     const originalBlocks = fullDaySkeleton[trip.division] || [];
     
-    // Find conflicts with the trip time
     const conflicts = originalBlocks.filter(b => 
       overlaps(b.startTime, b.endTime, trip.start, trip.end)
     );
@@ -379,10 +373,7 @@
 
     const conflict = remainingConflicts.shift();
     const evt = (conflict.event || "").toLowerCase();
-    const questionId = `${trip.division}_${conflict.id}`;
-    currentQuestionId = questionId;
 
-    // Route to specific handlers
     if (evt.includes('lunch')) {
       handleLunchConflict(trip, conflict, () => {
         handleNextConflict(trip, remainingConflicts, divIndex);
@@ -425,72 +416,57 @@
     const suggestedAfter = trip.end;
 
     renderStep({
-      title: `${trip.division} — 🍽️ Lunch`,
-      text: `Lunch is scheduled during the trip (${conflict.startTime}–${conflict.endTime}). Let's find a better time.`,
+      title: `${trip.division} — Lunch Timing`,
+      subtitle: `Lunch (${conflict.startTime}–${conflict.endTime}) conflicts with the trip.`,
       body: `
-        <div class="tw-suggestion-group">
-          <div class="tw-suggestion-card" data-choice="before">
-            <div class="tw-suggestion-icon">⏰</div>
-            <div class="tw-suggestion-content">
-              <strong>Early Lunch (Before Trip)</strong>
-              <p>Eat at ${suggestedBefore} - ${trip.start}</p>
-              <span class="tw-suggestion-note">Recommended: Gives time to settle before leaving</span>
-            </div>
-          </div>
+        <div class="tw-options">
+          <button class="tw-option" data-choice="before">
+            <div class="tw-option-title">Before Trip</div>
+            <div class="tw-option-subtitle">Suggested: ${suggestedBefore} – ${trip.start}</div>
+          </button>
 
-          <div class="tw-suggestion-card" data-choice="during">
-            <div class="tw-suggestion-icon">🎒</div>
-            <div class="tw-suggestion-content">
-              <strong>Lunch During Trip</strong>
-              <p>Pack lunch or eat at destination</p>
-              <span class="tw-suggestion-note">No schedule change needed</span>
-            </div>
-          </div>
+          <button class="tw-option" data-choice="during">
+            <div class="tw-option-title">During Trip</div>
+            <div class="tw-option-subtitle">Pack lunch or eat at destination</div>
+          </button>
 
-          <div class="tw-suggestion-card" data-choice="after">
-            <div class="tw-suggestion-icon">🍔</div>
-            <div class="tw-suggestion-content">
-              <strong>Late Lunch (After Return)</strong>
-              <p>Eat at ${suggestedAfter} - ${addMinutes(suggestedAfter, 30)}</p>
-              <span class="tw-suggestion-note">Kids might be hungry - bring snacks</span>
-            </div>
-          </div>
+          <button class="tw-option" data-choice="after">
+            <div class="tw-option-title">After Return</div>
+            <div class="tw-option-subtitle">Suggested: ${suggestedAfter} – ${addMinutes(suggestedAfter, 30)}</div>
+          </button>
 
-          <div class="tw-suggestion-card" data-choice="custom">
-            <div class="tw-suggestion-icon">✏️</div>
-            <div class="tw-suggestion-content">
-              <strong>Custom Time</strong>
-              <p>I'll choose my own time</p>
-            </div>
-          </div>
+          <button class="tw-option secondary" data-choice="custom">
+            <div class="tw-option-title">Custom Time</div>
+          </button>
         </div>
 
-        <div id="custom-time-input" style="display:none;">
-          <div class="tw-time-row">
-            <div class="tw-form-group">
-              <label>Lunch Start</label>
-              <input id="lunch-start" placeholder="11:00am" class="tw-input">
+        <div id="custom-time" style="display:none;" class="tw-custom-time">
+          <div class="tw-form-row">
+            <div class="tw-form-section">
+              <label class="tw-label">Start</label>
+              <input type="text" id="lunch-start" placeholder="11:00am" class="tw-input">
             </div>
-            <div class="tw-form-group">
-              <label>Lunch End</label>
-              <input id="lunch-end" placeholder="11:30am" class="tw-input">
+            <div class="tw-form-section">
+              <label class="tw-label">End</label>
+              <input type="text" id="lunch-end" placeholder="11:30am" class="tw-input">
             </div>
           </div>
+          <button id="apply-custom" class="tw-btn-primary" style="margin-top:12px;">Apply Time</button>
         </div>
       `,
       hideNext: true,
       showSkip: true,
       onSkip: () => {
         pendingQuestions.push({
-          title: `Skipped: ${trip.division} Lunch`,
+          title: `${trip.division} Lunch`,
           handler: () => handleLunchConflict(trip, conflict, next)
         });
         next();
       },
       setup: () => {
-        wizardEl.querySelectorAll('.tw-suggestion-card').forEach(card => {
-          card.onclick = () => {
-            const choice = card.dataset.choice;
+        wizardEl.querySelectorAll('.tw-option').forEach(btn => {
+          btn.onclick = () => {
+            const choice = btn.dataset.choice;
 
             if (choice === 'during') {
               const change = {
@@ -506,12 +482,10 @@
             }
 
             if (choice === 'custom') {
-              document.getElementById('custom-time-input').style.display = 'block';
-              showContinueButton();
+              document.getElementById('custom-time').style.display = 'block';
               return;
             }
 
-            // Before or After
             let start, end;
             if (choice === 'before') {
               start = suggestedBefore;
@@ -521,16 +495,13 @@
               end = addMinutes(suggestedAfter, 30);
             }
 
-            applyTimeChange(trip.division, conflict, 'Lunch', start, end, next);
+            applyTimeWithConflictCheck(trip.division, conflict, 'Lunch', start, end, next);
           };
         });
 
-        function showContinueButton() {
-          const continueBtn = document.createElement('button');
-          continueBtn.textContent = 'Apply Custom Time';
-          continueBtn.className = 'tw-btn tw-btn-primary';
-          continueBtn.style.marginTop = '15px';
-          continueBtn.onclick = () => {
+        const applyBtn = wizardEl.querySelector('#apply-custom');
+        if (applyBtn) {
+          applyBtn.onclick = () => {
             const start = wizardEl.querySelector('#lunch-start').value.trim();
             const end = wizardEl.querySelector('#lunch-end').value.trim();
 
@@ -539,12 +510,8 @@
               return;
             }
 
-            applyTimeChange(trip.division, conflict, 'Lunch', start, end, next);
+            applyTimeWithConflictCheck(trip.division, conflict, 'Lunch', start, end, next);
           };
-          const customDiv = document.getElementById('custom-time-input');
-          if (!customDiv.querySelector('.tw-btn-primary')) {
-            customDiv.appendChild(continueBtn);
-          }
         }
       }
     });
@@ -554,87 +521,64 @@
     const suggestedStart = trip.end;
     const suggestedEnd = addMinutes(trip.end, 45);
 
-    // Check cross-division conflicts
-    const crossConflicts = detectCrossDivisionConflicts('Swim', suggestedStart, suggestedEnd, trip.division);
-
     renderStep({
-      title: `${trip.division} — 🏊 Swim`,
-      text: `Swim is scheduled during the trip (${conflict.startTime}–${conflict.endTime}). When should they swim instead?`,
+      title: `${trip.division} — Swim Time`,
+      subtitle: `Swim (${conflict.startTime}–${conflict.endTime}) conflicts with the trip.`,
       body: `
-        <div class="tw-suggestion-group">
-          <div class="tw-suggestion-card" data-choice="suggested">
-            <div class="tw-suggestion-icon">⭐</div>
-            <div class="tw-suggestion-content">
-              <strong>Right After Trip</strong>
-              <p>${suggestedStart} - ${suggestedEnd}</p>
-              <span class="tw-suggestion-note">✓ Recommended: Frees pool earlier for other divisions</span>
-              ${crossConflicts.length > 0 ? `
-                <div class="tw-warning-inline">
-                  ⚠️ ${crossConflicts[0].division} has swim at this time
-                </div>
-              ` : ''}
-            </div>
-          </div>
+        <div class="tw-options">
+          <button class="tw-option" data-choice="suggested">
+            <div class="tw-option-title">After Trip</div>
+            <div class="tw-option-subtitle">Suggested: ${suggestedStart} – ${suggestedEnd}</div>
+          </button>
 
-          <div class="tw-suggestion-card" data-choice="morning">
-            <div class="tw-suggestion-icon">🌅</div>
-            <div class="tw-suggestion-content">
-              <strong>Morning Swim</strong>
-              <p>Move to earlier in the day</p>
-              <span class="tw-suggestion-note">I'll help you pick a time</span>
-            </div>
-          </div>
+          <button class="tw-option" data-choice="morning">
+            <div class="tw-option-title">Morning Swim</div>
+            <div class="tw-option-subtitle">Move to earlier in the day</div>
+          </button>
 
-          <div class="tw-suggestion-card" data-choice="custom">
-            <div class="tw-suggestion-icon">✏️</div>
-            <div class="tw-suggestion-content">
-              <strong>Custom Time</strong>
-              <p>I'll choose my own time</p>
-            </div>
-          </div>
+          <button class="tw-option" data-choice="custom">
+            <div class="tw-option-title">Custom Time</div>
+          </button>
 
-          <div class="tw-suggestion-card tw-suggestion-card-muted" data-choice="skip">
-            <div class="tw-suggestion-icon">❌</div>
-            <div class="tw-suggestion-content">
-              <strong>Skip Swim Today</strong>
-              <p>No swim for ${trip.division}</p>
-            </div>
-          </div>
+          <button class="tw-option secondary" data-choice="skip">
+            <div class="tw-option-title">Skip Swim Today</div>
+          </button>
         </div>
 
-        <div id="custom-time-input" style="display:none;">
-          <div class="tw-time-row">
-            <div class="tw-form-group">
-              <label>Swim Start</label>
-              <input id="swim-start" placeholder="2:00pm" class="tw-input">
+        <div id="custom-time" style="display:none;" class="tw-custom-time">
+          <div class="tw-form-row">
+            <div class="tw-form-section">
+              <label class="tw-label">Start</label>
+              <input type="text" id="swim-start" placeholder="2:00pm" class="tw-input">
             </div>
-            <div class="tw-form-group">
-              <label>Swim End</label>
-              <input id="swim-end" placeholder="2:45pm" class="tw-input">
+            <div class="tw-form-section">
+              <label class="tw-label">End</label>
+              <input type="text" id="swim-end" placeholder="2:45pm" class="tw-input">
             </div>
           </div>
+          <button id="apply-custom" class="tw-btn-primary" style="margin-top:12px;">Apply Time</button>
         </div>
       `,
       hideNext: true,
       showSkip: true,
       onSkip: () => {
         pendingQuestions.push({
-          title: `Skipped: ${trip.division} Swim`,
+          title: `${trip.division} Swim`,
           handler: () => handleSwimConflict(trip, conflict, next)
         });
         next();
       },
       setup: () => {
-        wizardEl.querySelectorAll('.tw-suggestion-card').forEach(card => {
-          card.onclick = () => {
-            const choice = card.dataset.choice;
+        wizardEl.querySelectorAll('.tw-option').forEach(btn => {
+          btn.onclick = () => {
+            const choice = btn.dataset.choice;
 
             if (choice === 'skip') {
               const change = {
                 division: trip.division,
                 action: 'remove',
                 oldEvent: conflict,
-                reason: 'Skipped for trip day'
+                reason: 'Skipped'
               };
               plannedChanges.push(change);
               applyChangeToWorkingSkeleton(change);
@@ -642,34 +586,22 @@
               return;
             }
 
-            if (choice === 'suggested') {
-              // Check if this creates cross-division conflict
-              if (crossConflicts.length > 0) {
-                handleCrossDivisionSwimConflict(trip.division, suggestedStart, suggestedEnd, crossConflicts, conflict, next);
-              } else {
-                applyTimeChange(trip.division, conflict, 'Swim', suggestedStart, suggestedEnd, next, ['Pool']);
-              }
-              return;
-            }
-
             if (choice === 'custom' || choice === 'morning') {
-              document.getElementById('custom-time-input').style.display = 'block';
+              document.getElementById('custom-time').style.display = 'block';
               if (choice === 'morning') {
                 wizardEl.querySelector('#swim-start').value = '9:00am';
                 wizardEl.querySelector('#swim-end').value = '9:45am';
               }
-              showContinueButton();
               return;
             }
+
+            applyTimeWithConflictCheck(trip.division, conflict, 'Swim', suggestedStart, suggestedEnd, next, ['Pool']);
           };
         });
 
-        function showContinueButton() {
-          const continueBtn = document.createElement('button');
-          continueBtn.textContent = 'Apply Time';
-          continueBtn.className = 'tw-btn tw-btn-primary';
-          continueBtn.style.marginTop = '15px';
-          continueBtn.onclick = () => {
+        const applyBtn = wizardEl.querySelector('#apply-custom');
+        if (applyBtn) {
+          applyBtn.onclick = () => {
             const start = wizardEl.querySelector('#swim-start').value.trim();
             const end = wizardEl.querySelector('#swim-end').value.trim();
 
@@ -678,23 +610,8 @@
               return;
             }
 
-            // Check for conflicts with this new time
-            const newConflicts = detectConflicts(trip.division, start, end, conflict.id);
-            if (newConflicts.length > 0) {
-              handleNewPlacementConflict(trip.division, 'Swim', start, end, conflict, newConflicts, next, ['Pool']);
-            } else {
-              const crossConflicts = detectCrossDivisionConflicts('Swim', start, end, trip.division);
-              if (crossConflicts.length > 0) {
-                handleCrossDivisionSwimConflict(trip.division, start, end, crossConflicts, conflict, next);
-              } else {
-                applyTimeChange(trip.division, conflict, 'Swim', start, end, next, ['Pool']);
-              }
-            }
+            applyTimeWithConflictCheck(trip.division, conflict, 'Swim', start, end, next, ['Pool']);
           };
-          const customDiv = document.getElementById('custom-time-input');
-          if (!customDiv.querySelector('.tw-btn-primary')) {
-            customDiv.appendChild(continueBtn);
-          }
         }
       }
     });
@@ -702,77 +619,62 @@
 
   function handleSnackConflict(trip, conflict, next) {
     renderStep({
-      title: `${trip.division} — 🍎 Snack`,
-      text: `Snack time (${conflict.startTime}–${conflict.endTime}) is during the trip.`,
+      title: `${trip.division} — Snack Time`,
+      subtitle: `Snack (${conflict.startTime}–${conflict.endTime}) conflicts with the trip.`,
       body: `
-        <div class="tw-suggestion-group">
-          <div class="tw-suggestion-card" data-choice="pack">
-            <div class="tw-suggestion-icon">🎒</div>
-            <div class="tw-suggestion-content">
-              <strong>Pack Snacks for Trip</strong>
-              <p>Bring snacks on the bus</p>
-              <span class="tw-suggestion-note">Recommended for trips</span>
-            </div>
-          </div>
+        <div class="tw-options">
+          <button class="tw-option" data-choice="pack">
+            <div class="tw-option-title">Pack Snacks</div>
+            <div class="tw-option-subtitle">Bring snacks on the trip</div>
+          </button>
 
-          <div class="tw-suggestion-card" data-choice="before">
-            <div class="tw-suggestion-icon">⏰</div>
-            <div class="tw-suggestion-content">
-              <strong>Snack Before Trip</strong>
-              <p>Quick snack before leaving</p>
-            </div>
-          </div>
+          <button class="tw-option" data-choice="before">
+            <div class="tw-option-title">Before Trip</div>
+          </button>
 
-          <div class="tw-suggestion-card" data-choice="after">
-            <div class="tw-suggestion-icon">🍪</div>
-            <div class="tw-suggestion-content">
-              <strong>Snack After Return</strong>
-              <p>Snack when they get back</p>
-            </div>
-          </div>
+          <button class="tw-option" data-choice="after">
+            <div class="tw-option-title">After Return</div>
+          </button>
 
-          <div class="tw-suggestion-card tw-suggestion-card-muted" data-choice="skip">
-            <div class="tw-suggestion-icon">❌</div>
-            <div class="tw-suggestion-content">
-              <strong>Skip Snack</strong>
-              <p>No snack today</p>
-            </div>
-          </div>
+          <button class="tw-option secondary" data-choice="skip">
+            <div class="tw-option-title">Skip Snack</div>
+          </button>
         </div>
 
-        <div id="custom-time-input" style="display:none;">
-          <div class="tw-time-row">
-            <div class="tw-form-group">
-              <label>Snack Start</label>
-              <input id="snack-start" placeholder="2:00pm" class="tw-input">
+        <div id="custom-time" style="display:none;" class="tw-custom-time">
+          <div class="tw-form-row">
+            <div class="tw-form-section">
+              <label class="tw-label">Start</label>
+              <input type="text" id="snack-start" placeholder="2:00pm" class="tw-input">
             </div>
-            <div class="tw-form-group">
-              <label>Snack End</label>
-              <input id="snack-end" placeholder="2:15pm" class="tw-input">
+            <div class="tw-form-section">
+              <label class="tw-label">End</label>
+              <input type="text" id="snack-end" placeholder="2:15pm" class="tw-input">
             </div>
           </div>
+          <button id="apply-custom" class="tw-btn-primary" style="margin-top:12px;">Apply Time</button>
         </div>
       `,
       hideNext: true,
       showSkip: true,
       onSkip: () => {
         pendingQuestions.push({
-          title: `Skipped: ${trip.division} Snack`,
+          title: `${trip.division} Snack`,
           handler: () => handleSnackConflict(trip, conflict, next)
         });
         next();
       },
       setup: () => {
-        wizardEl.querySelectorAll('.tw-suggestion-card').forEach(card => {
-          card.onclick = () => {
-            const choice = card.dataset.choice;
+        wizardEl.querySelectorAll('.tw-option').forEach(btn => {
+          btn.onclick = () => {
+            const choice = btn.dataset.choice;
 
             if (choice === 'pack' || choice === 'skip') {
               const change = {
                 division: trip.division,
                 action: 'remove',
                 oldEvent: conflict,
-                reason: choice === 'pack' ? 'Packing snacks for trip' : 'Skipped'
+                reason: choice === 'pack' ? 'Packing snacks' : 'Skipped'
               };
               plannedChanges.push(change);
               applyChangeToWorkingSkeleton(change);
@@ -780,7 +682,7 @@
               return;
             }
 
-            document.getElementById('custom-time-input').style.display = 'block';
+            document.getElementById('custom-time').style.display = 'block';
             
             if (choice === 'before') {
               const suggested = addMinutes(trip.start, -15);
@@ -790,17 +692,12 @@
               wizardEl.querySelector('#snack-start').value = trip.end;
               wizardEl.querySelector('#snack-end').value = addMinutes(trip.end, 15);
             }
-
-            showContinueButton();
           };
         });
 
-        function showContinueButton() {
-          const continueBtn = document.createElement('button');
-          continueBtn.textContent = 'Apply Time';
-          continueBtn.className = 'tw-btn tw-btn-primary';
-          continueBtn.style.marginTop = '15px';
-          continueBtn.onclick = () => {
+        const applyBtn = wizardEl.querySelector('#apply-custom');
+        if (applyBtn) {
+          applyBtn.onclick = () => {
             const start = wizardEl.querySelector('#snack-start').value.trim();
             const end = wizardEl.querySelector('#snack-end').value.trim();
 
@@ -809,107 +706,77 @@
               return;
             }
 
-            const newConflicts = detectConflicts(trip.division, start, end, conflict.id);
-            if (newConflicts.length > 0) {
-              handleNewPlacementConflict(trip.division, 'Snacks', start, end, conflict, newConflicts, next);
-            } else {
-              applyTimeChange(trip.division, conflict, 'Snacks', start, end, next);
-            }
+            applyTimeWithConflictCheck(trip.division, conflict, 'Snacks', start, end, next);
           };
-          const customDiv = document.getElementById('custom-time-input');
-          if (!customDiv.querySelector('.tw-btn-primary')) {
-            customDiv.appendChild(continueBtn);
-          }
         }
       }
     });
   }
 
   function handleLeagueConflict(trip, conflict, next) {
-    const isSpecialty = (conflict.event || "").toLowerCase().includes('specialty');
-    const leagueType = isSpecialty ? 'Specialty League' : 'League Game';
-
     renderStep({
-      title: `${trip.division} — 🏆 ${leagueType}`,
-      text: `${trip.division} has a ${leagueType.toLowerCase()} during the trip (${conflict.startTime}–${conflict.endTime}). What would you like to do?`,
+      title: `${trip.division} — League Game`,
+      subtitle: `League game (${conflict.startTime}–${conflict.endTime}) conflicts with the trip.`,
       body: `
         <div class="tw-info-box">
-          <strong>About This Game:</strong>
-          <p>The opposing team(s) will also be affected by this decision.</p>
+          The opposing team will also be affected by this decision.
         </div>
 
-        <div class="tw-suggestion-group">
-          <div class="tw-suggestion-card" data-choice="reschedule">
-            <div class="tw-suggestion-icon">📅</div>
-            <div class="tw-suggestion-content">
-              <strong>Reschedule for Another Day</strong>
-              <p>Mark this game to be rescheduled</p>
-              <span class="tw-suggestion-note">You'll coordinate with other teams later</span>
-            </div>
-          </div>
+        <div class="tw-options">
+          <button class="tw-option" data-choice="reschedule">
+            <div class="tw-option-title">Reschedule for Another Day</div>
+            <div class="tw-option-subtitle">Coordinate with other teams later</div>
+          </button>
 
-          <div class="tw-suggestion-card" data-choice="earlier">
-            <div class="tw-suggestion-icon">⏰</div>
-            <div class="tw-suggestion-content">
-              <strong>Move Earlier Today</strong>
-              <p>Try to fit the game before the trip</p>
-              <span class="tw-suggestion-note">I'll help find a time</span>
-            </div>
-          </div>
+          <button class="tw-option" data-choice="earlier">
+            <div class="tw-option-title">Move Earlier Today</div>
+            <div class="tw-option-subtitle">Play before the trip</div>
+          </button>
 
-          <div class="tw-suggestion-card" data-choice="later">
-            <div class="tw-suggestion-icon">🕒</div>
-            <div class="tw-suggestion-content">
-              <strong>Move Later Today</strong>
-              <p>Play after returning from trip</p>
-              <span class="tw-suggestion-note">I'll help find a time</span>
-            </div>
-          </div>
+          <button class="tw-option" data-choice="later">
+            <div class="tw-option-title">Move Later Today</div>
+            <div class="tw-option-subtitle">Play after returning</div>
+          </button>
 
-          <div class="tw-suggestion-card tw-suggestion-card-muted" data-choice="cancel">
-            <div class="tw-suggestion-icon">❌</div>
-            <div class="tw-suggestion-content">
-              <strong>Cancel This Game</strong>
-              <p>Game won't be played this season</p>
-            </div>
-          </div>
+          <button class="tw-option secondary" data-choice="cancel">
+            <div class="tw-option-title">Cancel Game</div>
+          </button>
         </div>
 
-        <div id="custom-time-input" style="display:none;">
-          <div class="tw-time-row">
-            <div class="tw-form-group">
-              <label>Game Start</label>
-              <input id="league-start" placeholder="2:00pm" class="tw-input">
+        <div id="custom-time" style="display:none;" class="tw-custom-time">
+          <div class="tw-form-row">
+            <div class="tw-form-section">
+              <label class="tw-label">Start</label>
+              <input type="text" id="league-start" placeholder="2:00pm" class="tw-input">
             </div>
-            <div class="tw-form-group">
-              <label>Game End</label>
-              <input id="league-end" placeholder="3:00pm" class="tw-input">
+            <div class="tw-form-section">
+              <label class="tw-label">End</label>
+              <input type="text" id="league-end" placeholder="3:00pm" class="tw-input">
             </div>
           </div>
+          <button id="apply-custom" class="tw-btn-primary" style="margin-top:12px;">Apply Time</button>
         </div>
       `,
       hideNext: true,
       showSkip: true,
       onSkip: () => {
         pendingQuestions.push({
-          title: `Skipped: ${trip.division} ${leagueType}`,
+          title: `${trip.division} League`,
           handler: () => handleLeagueConflict(trip, conflict, next)
         });
         next();
       },
       setup: () => {
-        wizardEl.querySelectorAll('.tw-suggestion-card').forEach(card => {
-          card.onclick = () => {
-            const choice = card.dataset.choice;
+        wizardEl.querySelectorAll('.tw-option').forEach(btn => {
+          btn.onclick = () => {
+            const choice = btn.dataset.choice;
 
             if (choice === 'reschedule' || choice === 'cancel') {
               const change = {
                 division: trip.division,
                 action: 'remove',
                 oldEvent: conflict,
-                reason: choice === 'reschedule' 
-                  ? `${leagueType} to be rescheduled for another day`
-                  : `${leagueType} cancelled`
+                reason: choice === 'reschedule' ? 'Rescheduled' : 'Cancelled'
               };
               plannedChanges.push(change);
               applyChangeToWorkingSkeleton(change);
@@ -917,32 +784,26 @@
               return;
             }
 
-            document.getElementById('custom-time-input').style.display = 'block';
+            document.getElementById('custom-time').style.display = 'block';
             
+            const duration = toMin(conflict.endTime) - toMin(conflict.startTime);
             if (choice === 'earlier') {
-              const duration = toMin(conflict.endTime) - toMin(conflict.startTime);
               const newEnd = trip.start;
               const newStart = toTime(toMin(newEnd) - duration);
               wizardEl.querySelector('#league-start').value = newStart;
               wizardEl.querySelector('#league-end').value = newEnd;
             } else if (choice === 'later') {
-              const duration = toMin(conflict.endTime) - toMin(conflict.startTime);
               const newStart = trip.end;
               const newEnd = toTime(toMin(newStart) + duration);
               wizardEl.querySelector('#league-start').value = newStart;
               wizardEl.querySelector('#league-end').value = newEnd;
             }
-
-            showContinueButton();
           };
         });
 
-        function showContinueButton() {
-          const continueBtn = document.createElement('button');
-          continueBtn.textContent = 'Apply Time';
-          continueBtn.className = 'tw-btn tw-btn-primary';
-          continueBtn.style.marginTop = '15px';
-          continueBtn.onclick = () => {
+        const applyBtn = wizardEl.querySelector('#apply-custom');
+        if (applyBtn) {
+          applyBtn.onclick = () => {
             const start = wizardEl.querySelector('#league-start').value.trim();
             const end = wizardEl.querySelector('#league-end').value.trim();
 
@@ -951,17 +812,8 @@
               return;
             }
 
-            const newConflicts = detectConflicts(trip.division, start, end, conflict.id);
-            if (newConflicts.length > 0) {
-              handleNewPlacementConflict(trip.division, conflict.event, start, end, conflict, newConflicts, next);
-            } else {
-              applyTimeChange(trip.division, conflict, conflict.event, start, end, next);
-            }
+            applyTimeWithConflictCheck(trip.division, conflict, conflict.event, start, end, next);
           };
-          const customDiv = document.getElementById('custom-time-input');
-          if (!customDiv.querySelector('.tw-btn-primary')) {
-            customDiv.appendChild(continueBtn);
-          }
         }
       }
     });
@@ -970,61 +822,52 @@
   function handleGenericConflict(trip, conflict, next) {
     renderStep({
       title: `${trip.division} — ${conflict.event}`,
-      text: `"${conflict.event}" (${conflict.startTime}–${conflict.endTime}) overlaps with the trip. What would you like to do?`,
+      subtitle: `"${conflict.event}" (${conflict.startTime}–${conflict.endTime}) conflicts with the trip.`,
       body: `
-        <div class="tw-suggestion-group">
-          <div class="tw-suggestion-card" data-choice="skip">
-            <div class="tw-suggestion-icon">❌</div>
-            <div class="tw-suggestion-content">
-              <strong>Skip for Today</strong>
-              <p>This activity won't happen</p>
-              <span class="tw-suggestion-note">Can be rescheduled another day</span>
-            </div>
-          </div>
+        <div class="tw-options">
+          <button class="tw-option" data-choice="skip">
+            <div class="tw-option-title">Skip for Today</div>
+          </button>
 
-          <div class="tw-suggestion-card" data-choice="reschedule">
-            <div class="tw-suggestion-icon">🔄</div>
-            <div class="tw-suggestion-content">
-              <strong>Reschedule for Today</strong>
-              <p>Find a different time today</p>
-              <span class="tw-suggestion-note">I'll help you pick a time</span>
-            </div>
-          </div>
+          <button class="tw-option" data-choice="reschedule">
+            <div class="tw-option-title">Move to Different Time</div>
+          </button>
         </div>
 
-        <div id="custom-time-input" style="display:none;">
-          <div class="tw-time-row">
-            <div class="tw-form-group">
-              <label>New Start Time</label>
-              <input id="generic-start" placeholder="2:00pm" class="tw-input">
+        <div id="custom-time" style="display:none;" class="tw-custom-time">
+          <div class="tw-form-row">
+            <div class="tw-form-section">
+              <label class="tw-label">Start</label>
+              <input type="text" id="generic-start" placeholder="2:00pm" class="tw-input">
             </div>
-            <div class="tw-form-group">
-              <label>New End Time</label>
-              <input id="generic-end" placeholder="3:00pm" class="tw-input">
+            <div class="tw-form-section">
+              <label class="tw-label">End</label>
+              <input type="text" id="generic-end" placeholder="3:00pm" class="tw-input">
             </div>
           </div>
+          <button id="apply-custom" class="tw-btn-primary" style="margin-top:12px;">Apply Time</button>
         </div>
       `,
       hideNext: true,
       showSkip: true,
       onSkip: () => {
         pendingQuestions.push({
-          title: `Skipped: ${trip.division} ${conflict.event}`,
+          title: `${trip.division} ${conflict.event}`,
           handler: () => handleGenericConflict(trip, conflict, next)
         });
         next();
       },
       setup: () => {
-        wizardEl.querySelectorAll('.tw-suggestion-card').forEach(card => {
-          card.onclick = () => {
-            const choice = card.dataset.choice;
+        wizardEl.querySelectorAll('.tw-option').forEach(btn => {
+          btn.onclick = () => {
+            const choice = btn.dataset.choice;
 
             if (choice === 'skip') {
               const change = {
                 division: trip.division,
                 action: 'remove',
                 oldEvent: conflict,
-                reason: 'Skipped for trip day'
+                reason: 'Skipped'
               };
               plannedChanges.push(change);
               applyChangeToWorkingSkeleton(change);
@@ -1032,25 +875,19 @@
               return;
             }
 
-            document.getElementById('custom-time-input').style.display = 'block';
+            document.getElementById('custom-time').style.display = 'block';
             
-            // Suggest after trip
             const duration = toMin(conflict.endTime) - toMin(conflict.startTime);
             const newStart = trip.end;
             const newEnd = toTime(toMin(newStart) + duration);
             wizardEl.querySelector('#generic-start').value = newStart;
             wizardEl.querySelector('#generic-end').value = newEnd;
-
-            showContinueButton();
           };
         });
 
-        function showContinueButton() {
-          const continueBtn = document.createElement('button');
-          continueBtn.textContent = 'Apply Time';
-          continueBtn.className = 'tw-btn tw-btn-primary';
-          continueBtn.style.marginTop = '15px';
-          continueBtn.onclick = () => {
+        const applyBtn = wizardEl.querySelector('#apply-custom');
+        if (applyBtn) {
+          applyBtn.onclick = () => {
             const start = wizardEl.querySelector('#generic-start').value.trim();
             const end = wizardEl.querySelector('#generic-end').value.trim();
 
@@ -1059,327 +896,224 @@
               return;
             }
 
-            const newConflicts = detectConflicts(trip.division, start, end, conflict.id);
-            if (newConflicts.length > 0) {
-              handleNewPlacementConflict(trip.division, conflict.event, start, end, conflict, newConflicts, next);
-            } else {
-              applyTimeChange(trip.division, conflict, conflict.event, start, end, next);
-            }
+            applyTimeWithConflictCheck(trip.division, conflict, conflict.event, start, end, next);
           };
-          const customDiv = document.getElementById('custom-time-input');
-          if (!customDiv.querySelector('.tw-btn-primary')) {
-            customDiv.appendChild(continueBtn);
-          }
         }
       }
     });
   }
 
   // ------------------------------------------------------------
-  // CASCADE CONFLICT HANDLERS
+  // CONFLICT CHECKING ON PLACEMENT
   // ------------------------------------------------------------
+  function applyTimeWithConflictCheck(division, oldBlock, eventName, startTime, endTime, afterResolve, reservedFields = []) {
+    // Check for conflicts with this new time WITHIN the division
+    const sameDivConflicts = detectConflicts(division, startTime, endTime, oldBlock.id);
+    
+    // Check for conflicts with other divisions (for Swim)
+    let crossDivConflicts = [];
+    if (eventName.toLowerCase().includes('swim')) {
+      crossDivConflicts = detectCrossDivisionConflicts('Swim', startTime, endTime, division);
+    }
 
-  function handleNewPlacementConflict(division, activityName, startTime, endTime, originalConflict, newConflicts, afterResolve, reservedFields = []) {
-    const conflictBlock = newConflicts[0];
+    // If there are conflicts, handle them
+    if (sameDivConflicts.length > 0) {
+      handleSameDivisionConflict(division, eventName, startTime, endTime, oldBlock, sameDivConflicts[0], afterResolve, reservedFields);
+    } else if (crossDivConflicts.length > 0) {
+      handleCrossDivisionConflict(division, eventName, startTime, endTime, oldBlock, crossDivConflicts[0], afterResolve, reservedFields);
+    } else {
+      // No conflicts, apply the change
+      applyTimeChange(division, oldBlock, eventName, startTime, endTime, afterResolve, reservedFields);
+    }
+  }
 
+  function handleSameDivisionConflict(division, newActivityName, startTime, endTime, originalBlock, conflictBlock, afterResolve, reservedFields) {
     renderStep({
-      title: `⚠️ Schedule Conflict Detected`,
-      text: `Placing ${activityName} at ${startTime}–${endTime} would overlap with "${conflictBlock.event}" (${conflictBlock.startTime}–${conflictBlock.endTime}).`,
+      title: "Schedule Conflict",
+      subtitle: `${newActivityName} at ${startTime}–${endTime} overlaps with "${conflictBlock.event}" (${conflictBlock.startTime}–${conflictBlock.endTime}).`,
       body: `
-        <div class="tw-warning-box">
-          <strong>What would you like to do?</strong>
+        <div class="tw-options">
+          <button class="tw-option" data-choice="change-new">
+            <div class="tw-option-title">Choose Different Time for ${newActivityName}</div>
+          </button>
+
+          <button class="tw-option" data-choice="move-existing">
+            <div class="tw-option-title">Move ${conflictBlock.event}</div>
+            <div class="tw-option-subtitle">Keep ${newActivityName} at ${startTime}</div>
+          </button>
+
+          <button class="tw-option secondary" data-choice="remove-existing">
+            <div class="tw-option-title">Skip ${conflictBlock.event} Today</div>
+          </button>
         </div>
 
-        <div class="tw-suggestion-group">
-          <div class="tw-suggestion-card" data-choice="move-new">
-            <div class="tw-suggestion-icon">↩️</div>
-            <div class="tw-suggestion-content">
-              <strong>Choose Different Time for ${activityName}</strong>
-              <p>Go back and pick a different time</p>
+        <div id="move-existing-time" style="display:none;" class="tw-custom-time">
+          <div class="tw-form-row">
+            <div class="tw-form-section">
+              <label class="tw-label">New time for ${conflictBlock.event}</label>
+              <input type="text" id="move-start" placeholder="3:00pm" class="tw-input">
+            </div>
+            <div class="tw-form-section">
+              <label class="tw-label">End</label>
+              <input type="text" id="move-end" placeholder="4:00pm" class="tw-input">
             </div>
           </div>
-
-          <div class="tw-suggestion-card" data-choice="move-existing">
-            <div class="tw-suggestion-icon">🔄</div>
-            <div class="tw-suggestion-content">
-              <strong>Move ${conflictBlock.event}</strong>
-              <p>Keep ${activityName} at ${startTime}, move ${conflictBlock.event} elsewhere</p>
-            </div>
-          </div>
-
-          <div class="tw-suggestion-card tw-suggestion-card-muted" data-choice="remove-existing">
-            <div class="tw-suggestion-icon">❌</div>
-            <div class="tw-suggestion-content">
-              <strong>Skip ${conflictBlock.event} Today</strong>
-              <p>Remove it to make room for ${activityName}</p>
-            </div>
-          </div>
+          <button id="apply-move" class="tw-btn-primary" style="margin-top:12px;">Apply</button>
         </div>
       `,
       hideNext: true,
       setup: () => {
-        wizardEl.querySelectorAll('.tw-suggestion-card').forEach(card => {
-          card.onclick = () => {
-            const choice = card.dataset.choice;
+        wizardEl.querySelectorAll('.tw-option').forEach(btn => {
+          btn.onclick = () => {
+            const choice = btn.dataset.choice;
 
-            if (choice === 'move-new') {
+            if (choice === 'change-new') {
               // Go back to original handler
-              if (activityName.toLowerCase().includes('swim')) {
-                const trip = tripManifest.find(t => t.division === division);
-                handleSwimConflict(trip, originalConflict, afterResolve);
-              } else if (activityName.toLowerCase().includes('lunch')) {
-                const trip = tripManifest.find(t => t.division === division);
-                handleLunchConflict(trip, originalConflict, afterResolve);
-              } else if (activityName.toLowerCase().includes('snack')) {
-                const trip = tripManifest.find(t => t.division === division);
-                handleSnackConflict(trip, originalConflict, afterResolve);
+              const trip = tripManifest.find(t => t.division === division);
+              if (newActivityName.toLowerCase().includes('swim')) {
+                handleSwimConflict(trip, originalBlock, afterResolve);
+              } else if (newActivityName.toLowerCase().includes('lunch')) {
+                handleLunchConflict(trip, originalBlock, afterResolve);
+              } else if (newActivityName.toLowerCase().includes('snack')) {
+                handleSnackConflict(trip, originalBlock, afterResolve);
               } else {
-                const trip = tripManifest.find(t => t.division === division);
-                handleGenericConflict(trip, originalConflict, afterResolve);
+                handleGenericConflict(trip, originalBlock, afterResolve);
               }
             } else if (choice === 'remove-existing') {
-              // Remove the conflicting block
               const removeChange = {
                 division: division,
                 action: 'remove',
                 oldEvent: conflictBlock,
-                reason: `Removed to make room for ${activityName}`
+                reason: `Removed to make room for ${newActivityName}`
               };
               plannedChanges.push(removeChange);
               applyChangeToWorkingSkeleton(removeChange);
 
-              // Now apply the new time
-              applyTimeChange(division, originalConflict, activityName, startTime, endTime, afterResolve, reservedFields);
+              applyTimeChange(division, originalBlock, newActivityName, startTime, endTime, afterResolve, reservedFields);
             } else if (choice === 'move-existing') {
-              // Prompt to move the existing block
-              promptMoveExistingBlock(division, conflictBlock, () => {
-                // After moving the existing block, apply new time
-                applyTimeChange(division, originalConflict, activityName, startTime, endTime, afterResolve, reservedFields);
-              });
+              document.getElementById('move-existing-time').style.display = 'block';
             }
           };
         });
-      }
-    });
-  }
 
-  function promptMoveExistingBlock(division, block, afterMove) {
-    renderStep({
-      title: `Move ${block.event}`,
-      text: `Where should we move "${block.event}" (originally ${block.startTime}–${block.endTime})?`,
-      body: `
-        <div class="tw-time-row">
-          <div class="tw-form-group">
-            <label>New Start Time</label>
-            <input id="move-start" placeholder="3:00pm" class="tw-input">
-          </div>
-          <div class="tw-form-group">
-            <label>New End Time</label>
-            <input id="move-end" placeholder="4:00pm" class="tw-input">
-          </div>
-        </div>
-      `,
-      next: () => {
-        const start = wizardEl.querySelector('#move-start').value.trim();
-        const end = wizardEl.querySelector('#move-end').value.trim();
+        const applyBtn = wizardEl.querySelector('#apply-move');
+        if (applyBtn) {
+          applyBtn.onclick = () => {
+            const moveStart = wizardEl.querySelector('#move-start').value.trim();
+            const moveEnd = wizardEl.querySelector('#move-end').value.trim();
 
-        if (toMin(start) == null || toMin(end) == null || toMin(end) <= toMin(start)) {
-          alert("Please enter valid times.");
-          return;
-        }
-
-        // Check if this new time creates more conflicts
-        const moreConflicts = detectConflicts(division, start, end, block.id);
-        if (moreConflicts.length > 0) {
-          alert(`That time also conflicts with "${moreConflicts[0].event}". Please choose another time.`);
-          return;
-        }
-
-        // Apply the move
-        applyTimeChange(division, block, block.event, start, end, afterMove);
-      }
-    });
-  }
-
-  function handleCrossDivisionSwimConflict(sourceDivision, startTime, endTime, crossConflicts, originalConflict, afterResolve) {
-    const targetDivision = crossConflicts[0].division;
-    const targetBlock = crossConflicts[0].block;
-
-    renderStep({
-      title: `⚠️ Pool Conflict with ${targetDivision}`,
-      text: `${targetDivision} already has swim at ${startTime}–${endTime}. The pool can only handle one division at a time.`,
-      body: `
-        <div class="tw-warning-box">
-          <strong>Let's coordinate both divisions:</strong>
-        </div>
-
-        <div class="tw-suggestion-group">
-          <div class="tw-suggestion-card" data-choice="move-source">
-            <div class="tw-suggestion-icon">🔄</div>
-            <div class="tw-suggestion-content">
-              <strong>Change ${sourceDivision}'s Swim Time</strong>
-              <p>Pick a different time that doesn't conflict</p>
-            </div>
-          </div>
-
-          <div class="tw-suggestion-card" data-choice="move-target">
-            <div class="tw-suggestion-icon">🔄</div>
-            <div class="tw-suggestion-content">
-              <strong>Move ${targetDivision}'s Swim</strong>
-              <p>Keep ${sourceDivision} at ${startTime}, move ${targetDivision}</p>
-              <span class="tw-suggestion-note">I'll help you find a new time for ${targetDivision}</span>
-            </div>
-          </div>
-
-          <div class="tw-suggestion-card" data-choice="swap">
-            <div class="tw-suggestion-icon">↔️</div>
-            <div class="tw-suggestion-content">
-              <strong>Swap Times</strong>
-              <p>${sourceDivision} gets ${targetBlock.startTime}–${targetBlock.endTime}</p>
-              <p>${targetDivision} gets ${startTime}–${endTime}</p>
-            </div>
-          </div>
-        </div>
-      `,
-      hideNext: true,
-      setup: () => {
-        wizardEl.querySelectorAll('.tw-suggestion-card').forEach(card => {
-          card.onclick = () => {
-            const choice = card.dataset.choice;
-
-            if (choice === 'move-source') {
-              // Go back to swim handler
-              const trip = tripManifest.find(t => t.division === sourceDivision);
-              handleSwimConflict(trip, originalConflict, afterResolve);
-            } else if (choice === 'swap') {
-              // Apply swap
-              applyTimeChange(sourceDivision, originalConflict, 'Swim', targetBlock.startTime, targetBlock.endTime, () => {}, ['Pool']);
-              applyTimeChange(targetDivision, targetBlock, 'Swim', startTime, endTime, afterResolve, ['Pool']);
-            } else if (choice === 'move-target') {
-              // Prompt for new time for target division
-              promptMoveTargetDivisionSwim(targetDivision, targetBlock, () => {
-                // Then apply source division's swim
-                applyTimeChange(sourceDivision, originalConflict, 'Swim', startTime, endTime, afterResolve, ['Pool']);
-              });
-            }
-          };
-        });
-      }
-    });
-  }
-
-  function promptMoveTargetDivisionSwim(division, block, afterMove) {
-    renderStep({
-      title: `Move ${division}'s Swim`,
-      text: `Let's find a new time for ${division}'s swim (currently ${block.startTime}–${block.endTime}).`,
-      body: `
-        <div class="tw-form-group">
-          <label>Suggested times for ${division}:</label>
-        </div>
-
-        <div class="tw-suggestion-group">
-          <div class="tw-suggestion-card" data-choice="morning">
-            <div class="tw-suggestion-icon">🌅</div>
-            <div class="tw-suggestion-content">
-              <strong>Morning (9:00am)</strong>
-              <p>9:00am - 9:45am</p>
-            </div>
-          </div>
-
-          <div class="tw-suggestion-card" data-choice="late">
-            <div class="tw-suggestion-icon">🌆</div>
-            <div class="tw-suggestion-content">
-              <strong>Late Afternoon (3:30pm)</strong>
-              <p>3:30pm - 4:15pm</p>
-            </div>
-          </div>
-
-          <div class="tw-suggestion-card" data-choice="custom">
-            <div class="tw-suggestion-icon">✏️</div>
-            <div class="tw-suggestion-content">
-              <strong>Custom Time</strong>
-              <p>I'll choose manually</p>
-            </div>
-          </div>
-        </div>
-
-        <div id="custom-time-input" style="display:none;">
-          <div class="tw-time-row">
-            <div class="tw-form-group">
-              <label>Swim Start</label>
-              <input id="target-swim-start" placeholder="10:00am" class="tw-input">
-            </div>
-            <div class="tw-form-group">
-              <label>Swim End</label>
-              <input id="target-swim-end" placeholder="10:45am" class="tw-input">
-            </div>
-          </div>
-        </div>
-      `,
-      hideNext: true,
-      setup: () => {
-        wizardEl.querySelectorAll('.tw-suggestion-card').forEach(card => {
-          card.onclick = () => {
-            const choice = card.dataset.choice;
-
-            let start, end;
-            if (choice === 'morning') {
-              start = '9:00am';
-              end = '9:45am';
-            } else if (choice === 'late') {
-              start = '3:30pm';
-              end = '4:15pm';
-            } else if (choice === 'custom') {
-              document.getElementById('custom-time-input').style.display = 'block';
-              showContinueButton();
-              return;
-            }
-
-            // Check for conflicts
-            const conflicts = detectConflicts(division, start, end, block.id);
-            if (conflicts.length > 0) {
-              alert(`That time conflicts with "${conflicts[0].event}". Please choose another.`);
-              return;
-            }
-
-            applyTimeChange(division, block, 'Swim', start, end, afterMove, ['Pool']);
-          };
-        });
-
-        function showContinueButton() {
-          const continueBtn = document.createElement('button');
-          continueBtn.textContent = 'Apply Time';
-          continueBtn.className = 'tw-btn tw-btn-primary';
-          continueBtn.style.marginTop = '15px';
-          continueBtn.onclick = () => {
-            const start = wizardEl.querySelector('#target-swim-start').value.trim();
-            const end = wizardEl.querySelector('#target-swim-end').value.trim();
-
-            if (toMin(start) == null || toMin(end) == null || toMin(end) <= toMin(start)) {
+            if (toMin(moveStart) == null || toMin(moveEnd) == null || toMin(moveEnd) <= toMin(moveStart)) {
               alert("Please enter valid times.");
               return;
             }
 
-            const conflicts = detectConflicts(division, start, end, block.id);
-            if (conflicts.length > 0) {
-              alert(`That time conflicts with "${conflicts[0].event}". Please choose another.`);
+            // Check if THIS move creates more conflicts
+            const moreConflicts = detectConflicts(division, moveStart, moveEnd, conflictBlock.id);
+            if (moreConflicts.length > 0) {
+              alert(`That time conflicts with "${moreConflicts[0].event}". Please choose another time.`);
               return;
             }
 
-            applyTimeChange(division, block, 'Swim', start, end, afterMove, ['Pool']);
+            // Apply the move for the existing block
+            applyTimeChange(division, conflictBlock, conflictBlock.event, moveStart, moveEnd, () => {
+              // Then apply the new activity
+              applyTimeChange(division, originalBlock, newActivityName, startTime, endTime, afterResolve, reservedFields);
+            });
           };
-          const customDiv = document.getElementById('custom-time-input');
-          if (!customDiv.querySelector('.tw-btn-primary')) {
-            customDiv.appendChild(continueBtn);
-          }
         }
       }
     });
   }
 
-  // ------------------------------------------------------------
-  // HELPER: APPLY TIME CHANGE
-  // ------------------------------------------------------------
+  function handleCrossDivisionConflict(sourceDivision, newActivityName, startTime, endTime, originalBlock, crossConflict, afterResolve, reservedFields) {
+    const targetDivision = crossConflict.division;
+    const targetBlock = crossConflict.block;
+
+    renderStep({
+      title: "Cross-Division Conflict",
+      subtitle: `${targetDivision} already has ${targetBlock.event} at ${startTime}–${endTime}.`,
+      body: `
+        <div class="tw-info-box">
+          The pool can only accommodate one division at a time.
+        </div>
+
+        <div class="tw-options">
+          <button class="tw-option" data-choice="change-source">
+            <div class="tw-option-title">Choose Different Time for ${sourceDivision}</div>
+          </button>
+
+          <button class="tw-option" data-choice="move-target">
+            <div class="tw-option-title">Move ${targetDivision}'s Swim</div>
+            <div class="tw-option-subtitle">Keep ${sourceDivision} at ${startTime}</div>
+          </button>
+
+          <button class="tw-option" data-choice="swap">
+            <div class="tw-option-title">Swap Times</div>
+            <div class="tw-option-subtitle">${sourceDivision} gets ${targetBlock.startTime}, ${targetDivision} gets ${startTime}</div>
+          </button>
+        </div>
+
+        <div id="move-target-time" style="display:none;" class="tw-custom-time">
+          <div class="tw-form-row">
+            <div class="tw-form-section">
+              <label class="tw-label">New time for ${targetDivision}</label>
+              <input type="text" id="target-start" placeholder="10:00am" class="tw-input">
+            </div>
+            <div class="tw-form-section">
+              <label class="tw-label">End</label>
+              <input type="text" id="target-end" placeholder="10:45am" class="tw-input">
+            </div>
+          </div>
+          <button id="apply-target-move" class="tw-btn-primary" style="margin-top:12px;">Apply</button>
+        </div>
+      `,
+      hideNext: true,
+      setup: () => {
+        wizardEl.querySelectorAll('.tw-option').forEach(btn => {
+          btn.onclick = () => {
+            const choice = btn.dataset.choice;
+
+            if (choice === 'change-source') {
+              const trip = tripManifest.find(t => t.division === sourceDivision);
+              handleSwimConflict(trip, originalBlock, afterResolve);
+            } else if (choice === 'swap') {
+              applyTimeChange(sourceDivision, originalBlock, 'Swim', targetBlock.startTime, targetBlock.endTime, () => {}, ['Pool']);
+              applyTimeChange(targetDivision, targetBlock, 'Swim', startTime, endTime, afterResolve, ['Pool']);
+            } else if (choice === 'move-target') {
+              document.getElementById('move-target-time').style.display = 'block';
+            }
+          };
+        });
+
+        const applyBtn = wizardEl.querySelector('#apply-target-move');
+        if (applyBtn) {
+          applyBtn.onclick = () => {
+            const moveStart = wizardEl.querySelector('#target-start').value.trim();
+            const moveEnd = wizardEl.querySelector('#target-end').value.trim();
+
+            if (toMin(moveStart) == null || toMin(moveEnd) == null || toMin(moveEnd) <= toMin(moveStart)) {
+              alert("Please enter valid times.");
+              return;
+            }
+
+            // Check for conflicts
+            const moreConflicts = detectConflicts(targetDivision, moveStart, moveEnd, targetBlock.id);
+            if (moreConflicts.length > 0) {
+              alert(`That time conflicts with "${moreConflicts[0].event}" in ${targetDivision}.`);
+              return;
+            }
+
+            // Apply move for target division
+            applyTimeChange(targetDivision, targetBlock, 'Swim', moveStart, moveEnd, () => {
+              // Then apply source division's swim
+              applyTimeChange(sourceDivision, originalBlock, 'Swim', startTime, endTime, afterResolve, ['Pool']);
+            });
+          };
+        }
+      }
+    });
+  }
+
   function applyTimeChange(division, oldBlock, eventName, startTime, endTime, next, reservedFields = []) {
     const change = {
       division: division,
@@ -1411,88 +1145,85 @@
       changesByDivision[change.division].push(change);
     });
 
-    let previewHtml = '<div class="tw-final-preview">';
+    let previewHtml = '<div class="tw-final-summary">';
 
     travelingDivisions.forEach(div => {
       const changes = changesByDivision[div];
       previewHtml += `
-        <div class="tw-preview-division">
-          <h4>🚌 ${div} (Trip Day)</h4>
+        <div class="tw-summary-section">
+          <div class="tw-summary-header">${div} <span class="tw-badge-trip">Trip Day</span></div>
+          <div class="tw-summary-list">
       `;
 
       if (changes.length === 0) {
-        previewHtml += `<div class="tw-preview-item tw-preview-note">Only the trip was added</div>`;
+        previewHtml += `<div class="tw-summary-item note">Only the trip was added</div>`;
       } else {
         changes.forEach(change => {
-          previewHtml += formatChangeForPreview(change);
+          previewHtml += formatChangeSummary(change);
         });
       }
 
-      previewHtml += `</div>`;
+      previewHtml += `</div></div>`;
     });
 
     const stayingDivs = allDivisions.filter(d => !travelingDivisions.includes(d));
     const affectedStaying = stayingDivs.filter(d => changesByDivision[d].length > 0);
     
     if (affectedStaying.length > 0) {
-      previewHtml += '<div class="tw-preview-section-header">📍 Other Divisions (Adjusted)</div>';
-      
       affectedStaying.forEach(div => {
         const changes = changesByDivision[div];
         previewHtml += `
-          <div class="tw-preview-division">
-            <h4>${div}</h4>
+          <div class="tw-summary-section">
+            <div class="tw-summary-header">${div} <span class="tw-badge-camp">At Camp</span></div>
+            <div class="tw-summary-list">
         `;
 
         changes.forEach(change => {
-          previewHtml += formatChangeForPreview(change);
+          previewHtml += formatChangeSummary(change);
         });
 
-        previewHtml += `</div>`;
+        previewHtml += `</div></div>`;
       });
     }
 
     previewHtml += '</div>';
 
     renderStep({
-      title: "✅ Review Final Schedule",
-      text: "Here's the complete plan. Review carefully before applying.",
+      title: "Review Changes",
+      subtitle: "Confirm these changes before applying to the schedule.",
       body: previewHtml,
-      nextText: "✓ Apply All Changes",
-      cancelText: "✗ Cancel",
+      nextText: "Apply Changes",
+      cancelText: "Cancel",
       next: () => {
         applyAllChanges();
       }
     });
   }
 
-  function formatChangeForPreview(change) {
+  function formatChangeSummary(change) {
     if (change.action === 'add') {
       return `
-        <div class="tw-preview-item tw-preview-add">
-          <strong>+ ${change.event}</strong>
-          <span>${change.startTime} – ${change.endTime}</span>
+        <div class="tw-summary-item add">
+          <span class="tw-summary-label">Added</span>
+          <strong>${change.event}</strong>
+          <span class="tw-summary-time">${change.startTime} – ${change.endTime}</span>
         </div>
       `;
     } else if (change.action === 'replace') {
       return `
-        <div class="tw-preview-item tw-preview-replace">
-          <strong>↻ ${change.event}</strong>
-          <span>Moved to ${change.startTime} – ${change.endTime}</span>
-          <small>Was: ${change.oldEvent.startTime} – ${change.oldEvent.endTime}</small>
+        <div class="tw-summary-item replace">
+          <span class="tw-summary-label">Moved</span>
+          <strong>${change.event}</strong>
+          <span class="tw-summary-time">${change.startTime} – ${change.endTime}</span>
+          <span class="tw-summary-note">Was: ${change.oldEvent.startTime} – ${change.oldEvent.endTime}</span>
         </div>
       `;
     } else if (change.action === 'remove') {
       return `
-        <div class="tw-preview-item tw-preview-remove">
-          <strong>− ${change.oldEvent.event}</strong>
-          <small>${change.reason}</small>
-        </div>
-      `;
-    } else if (change.action === 'note') {
-      return `
-        <div class="tw-preview-item tw-preview-note">
-          <strong>ℹ️ ${change.message}</strong>
+        <div class="tw-summary-item remove">
+          <span class="tw-summary-label">Removed</span>
+          <strong>${change.oldEvent.event}</strong>
+          <span class="tw-summary-note">${change.reason}</span>
         </div>
       `;
     }
@@ -1549,24 +1280,21 @@
     const overlay = document.createElement("div");
     overlay.id = "tw-overlay";
     overlay.innerHTML = `
-      <div class="tw-container">
-        <div class="tw-wizard-panel">
-          <div class="tw-header">
-            <div>
-              <strong class="tw-title">Trip Planner</strong>
-              <div class="tw-subtitle">Guided scheduling</div>
-            </div>
-            <button id="tw-close" class="tw-close-btn">✖</button>
+      <div class="tw-app">
+        <div class="tw-wizard">
+          <div class="tw-wizard-header">
+            <div class="tw-wizard-title">Trip Planner</div>
+            <button id="tw-close" class="tw-btn-close">×</button>
           </div>
-          <div id="tw-content" class="tw-content"></div>
+          <div id="tw-content" class="tw-wizard-content"></div>
         </div>
 
-        <div class="tw-preview-panel">
+        <div class="tw-preview">
           <div class="tw-preview-header">
-            <strong>📅 Live Schedule</strong>
-            <span>Updates as you make decisions</span>
+            <div class="tw-preview-title">Live Schedule</div>
+            <div class="tw-preview-subtitle">Updates as you make decisions</div>
           </div>
-          <div id="tw-live-preview" class="tw-live-preview"></div>
+          <div id="tw-preview-content" class="tw-preview-content"></div>
         </div>
       </div>
 
@@ -1575,10 +1303,10 @@
 
     document.body.appendChild(overlay);
     wizardEl = document.getElementById("tw-content");
-    previewEl = document.getElementById("tw-live-preview");
+    previewEl = document.getElementById("tw-preview-content");
 
     document.getElementById("tw-close").onclick = () => {
-      if (confirm("Exit trip planner? All progress will be lost.")) {
+      if (confirm("Exit trip planner? Progress will be lost.")) {
         close();
       }
     };
@@ -1586,23 +1314,25 @@
     updateLivePreview();
   }
 
-  function renderStep({ title, text, body, next, nextText = "Continue →", cancelText, hideNext = false, showSkip = false, onSkip, setup }) {
+  function renderStep({ title, subtitle, body, next, nextText = "Continue", cancelText, hideNext = false, showSkip = false, onSkip, setup }) {
     let html = `
-      <h2 class="tw-step-title">${title}</h2>
-      <p class="tw-step-text">${text}</p>
+      <div class="tw-step-header">
+        <h2 class="tw-step-title">${title}</h2>
+        ${subtitle ? `<p class="tw-step-subtitle">${subtitle}</p>` : ''}
+      </div>
       <div class="tw-step-body">${body}</div>
     `;
 
-    if (!hideNext || showSkip) {
-      html += `<div class="tw-btn-group">`;
+    if (!hideNext || showSkip || cancelText) {
+      html += `<div class="tw-step-footer">`;
       if (showSkip) {
-        html += `<button id="tw-skip" class="tw-btn tw-btn-skip">Skip for Now</button>`;
+        html += `<button id="tw-skip" class="tw-btn-skip">Skip for Now</button>`;
       }
       if (cancelText) {
-        html += `<button id="tw-cancel" class="tw-btn tw-btn-secondary">${cancelText}</button>`;
+        html += `<button id="tw-cancel" class="tw-btn-secondary">${cancelText}</button>`;
       }
       if (!hideNext) {
-        html += `<button id="tw-next" class="tw-btn tw-btn-primary">${nextText}</button>`;
+        html += `<button id="tw-next" class="tw-btn-primary">${nextText}</button>`;
       }
       html += `</div>`;
     }
@@ -1633,10 +1363,11 @@
   function getStyles() {
     return `
       <style>
+        /* Match app design system */
         #tw-overlay {
           position: fixed;
           inset: 0;
-          background: rgba(0, 0, 0, 0.7);
+          background: rgba(15, 23, 42, 0.7);
           display: flex;
           align-items: center;
           justify-content: center;
@@ -1645,7 +1376,7 @@
           backdrop-filter: blur(4px);
         }
 
-        .tw-container {
+        .tw-app {
           display: flex;
           gap: 20px;
           width: 100%;
@@ -1654,271 +1385,64 @@
           max-height: 900px;
         }
 
-        .tw-wizard-panel {
+        /* Wizard Panel */
+        .tw-wizard {
           flex: 1;
-          background: white;
-          border-radius: 16px;
+          background: #ffffff;
+          border-radius: 12px;
+          border: 1px solid #e5e7eb;
           display: flex;
           flex-direction: column;
-          box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+          box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
         }
 
-        .tw-preview-panel {
-          flex: 1;
-          background: white;
-          border-radius: 16px;
-          display: flex;
-          flex-direction: column;
-          box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-          overflow: hidden;
-        }
-
-        .tw-header {
-          padding: 20px 24px;
+        .tw-wizard-header {
+          padding: 16px 20px;
           border-bottom: 1px solid #e5e7eb;
           display: flex;
           justify-content: space-between;
           align-items: center;
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-          color: white;
-          border-radius: 16px 16px 0 0;
         }
 
-        .tw-title {
-          font-size: 1.25rem;
+        .tw-wizard-title {
+          font-size: 1.15rem;
           font-weight: 600;
+          color: #111827;
         }
 
-        .tw-subtitle {
-          font-size: 0.875rem;
-          opacity: 0.9;
-          margin-top: 2px;
-        }
-
-        .tw-close-btn {
-          background: rgba(255,255,255,0.2);
-          border: none;
+        .tw-btn-close {
           width: 32px;
           height: 32px;
-          border-radius: 8px;
-          color: white;
-          font-size: 18px;
-          cursor: pointer;
-          transition: all 0.2s;
-        }
-
-        .tw-close-btn:hover {
-          background: rgba(255,255,255,0.3);
-        }
-
-        .tw-content {
-          padding: 24px;
-          overflow-y: auto;
-          flex: 1;
-        }
-
-        .tw-step-title {
-          font-size: 1.5rem;
-          font-weight: 600;
-          margin: 0 0 8px 0;
-          color: #1f2937;
-        }
-
-        .tw-step-text {
+          border-radius: 999px;
+          border: 1px solid #d1d5db;
+          background: #f3f4f6;
           color: #6b7280;
-          margin: 0 0 24px 0;
-          font-size: 1rem;
-          line-height: 1.5;
-        }
-
-        .tw-check {
-          display: flex;
-          align-items: center;
-          padding: 12px 16px;
-          border: 2px solid #e5e7eb;
-          border-radius: 8px;
-          margin-bottom: 8px;
+          font-size: 24px;
+          line-height: 1;
           cursor: pointer;
-          transition: all 0.2s;
+          transition: all 0.15s ease;
         }
 
-        .tw-check:hover {
-          border-color: #667eea;
-          background: #f9fafb;
+        .tw-btn-close:hover {
+          background: #e5e7eb;
+          border-color: #9ca3af;
         }
 
-        .tw-check input {
-          width: 20px;
-          height: 20px;
-          margin-right: 12px;
-        }
-
-        .tw-form-group {
-          margin-bottom: 16px;
-        }
-
-        .tw-form-group label {
-          display: block;
-          font-weight: 500;
-          color: #374151;
-          margin-bottom: 6px;
-        }
-
-        .tw-input {
-          width: 100%;
-          padding: 10px 14px;
-          border: 2px solid #e5e7eb;
-          border-radius: 8px;
-          font-size: 1rem;
-          transition: all 0.2s;
-        }
-
-        .tw-input:focus {
-          outline: none;
-          border-color: #667eea;
-          box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-        }
-
-        .tw-time-row {
-          display: flex;
-          gap: 12px;
-        }
-
-        .tw-time-row .tw-form-group {
+        .tw-wizard-content {
           flex: 1;
+          overflow-y: auto;
+          padding: 24px;
         }
 
-        .tw-help-text {
-          background: #f0f9ff;
-          border: 1px solid #bae6fd;
-          border-radius: 8px;
-          padding: 12px;
-          color: #0369a1;
-          font-size: 0.9rem;
-          margin-top: 16px;
-        }
-
-        .tw-suggestion-group {
+        /* Preview Panel */
+        .tw-preview {
+          flex: 1;
+          background: #ffffff;
+          border-radius: 12px;
+          border: 1px solid #e5e7eb;
           display: flex;
           flex-direction: column;
-          gap: 12px;
-        }
-
-        .tw-suggestion-card {
-          background: white;
-          border: 2px solid #e5e7eb;
-          border-radius: 12px;
-          padding: 16px;
-          cursor: pointer;
-          transition: all 0.2s;
-          display: flex;
-          gap: 16px;
-          align-items: flex-start;
-        }
-
-        .tw-suggestion-card:hover {
-          border-color: #667eea;
-          background: #f9fafb;
-          transform: translateY(-2px);
-          box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
-        }
-
-        .tw-suggestion-card-muted {
-          opacity: 0.7;
-        }
-
-        .tw-suggestion-icon {
-          font-size: 2rem;
-          flex-shrink: 0;
-        }
-
-        .tw-suggestion-content {
-          flex: 1;
-        }
-
-        .tw-suggestion-content strong {
-          display: block;
-          color: #1f2937;
-          font-size: 1.05rem;
-          margin-bottom: 4px;
-        }
-
-        .tw-suggestion-content p {
-          color: #6b7280;
-          font-size: 0.95rem;
-          margin: 0 0 4px 0;
-        }
-
-        .tw-suggestion-note {
-          display: block;
-          color: #10b981;
-          font-size: 0.85rem;
-          font-weight: 500;
-        }
-
-        .tw-warning-inline {
-          background: #fef3c7;
-          border-left: 3px solid #f59e0b;
-          padding: 8px 12px;
-          margin-top: 8px;
-          border-radius: 4px;
-          font-size: 0.9rem;
-          color: #92400e;
-        }
-
-        .tw-info-box,
-        .tw-warning-box {
-          background: #eff6ff;
-          border: 1px solid #bfdbfe;
-          border-radius: 8px;
-          padding: 14px;
-          margin-bottom: 16px;
-          color: #1e40af;
-        }
-
-        .tw-warning-box {
-          background: #fef3c7;
-          border-color: #fbbf24;
-          color: #92400e;
-        }
-
-        .tw-btn-group {
-          display: flex;
-          gap: 10px;
-          margin-top: 24px;
-          padding-top: 20px;
-          border-top: 1px solid #e5e7eb;
-        }
-
-        .tw-btn {
-          padding: 12px 24px;
-          border-radius: 8px;
-          font-size: 1rem;
-          font-weight: 500;
-          cursor: pointer;
-          transition: all 0.2s;
-          border: none;
-        }
-
-        .tw-btn-primary {
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-          color: white;
-          flex: 1;
-        }
-
-        .tw-btn-primary:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-        }
-
-        .tw-btn-secondary {
-          background: #f3f4f6;
-          color: #374151;
-        }
-
-        .tw-btn-skip {
-          background: #fef3c7;
-          color: #92400e;
+          box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
         }
 
         .tw-preview-header {
@@ -1927,186 +1451,437 @@
           background: #f9fafb;
         }
 
-        .tw-preview-header strong {
-          display: block;
-          font-size: 1.1rem;
-          color: #1f2937;
+        .tw-preview-title {
+          font-size: 0.95rem;
+          font-weight: 600;
+          color: #111827;
           margin-bottom: 2px;
         }
 
-        .tw-preview-header span {
-          font-size: 0.85rem;
+        .tw-preview-subtitle {
+          font-size: 0.8rem;
           color: #6b7280;
         }
 
-        .tw-live-preview {
+        .tw-preview-content {
           flex: 1;
           overflow-y: auto;
           padding: 16px;
+        }
+
+        /* Step Header */
+        .tw-step-header {
+          margin-bottom: 24px;
+        }
+
+        .tw-step-title {
+          font-size: 1.4rem;
+          font-weight: 600;
+          color: #111827;
+          margin: 0 0 6px 0;
+        }
+
+        .tw-step-subtitle {
+          font-size: 0.9rem;
+          color: #6b7280;
+          margin: 0;
+        }
+
+        .tw-step-body {
+          margin-bottom: 20px;
+        }
+
+        .tw-step-footer {
+          display: flex;
+          gap: 10px;
+          padding-top: 20px;
+          border-top: 1px solid #e5e7eb;
+        }
+
+        /* Buttons - Match app design */
+        .tw-btn-primary {
+          flex: 1;
+          font-family: inherit;
+          font-size: 0.9rem;
+          font-weight: 500;
+          border-radius: 999px;
+          border: 1px solid #2563eb;
+          padding: 10px 20px;
+          background: #2563eb;
+          color: #ffffff;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+
+        .tw-btn-primary:hover {
+          background: #1d4ed8;
+          border-color: #1d4ed8;
+          box-shadow: 0 4px 8px rgba(37, 99, 235, 0.25);
+          transform: translateY(-0.5px);
+        }
+
+        .tw-btn-secondary {
+          font-family: inherit;
+          font-size: 0.85rem;
+          border-radius: 999px;
+          border: 1px solid #d1d5db;
+          padding: 10px 20px;
+          background: #ffffff;
+          color: #111827;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+
+        .tw-btn-secondary:hover {
+          background: #f3f4f6;
+          border-color: #9ca3af;
+        }
+
+        .tw-btn-skip {
+          font-family: inherit;
+          font-size: 0.85rem;
+          border-radius: 999px;
+          border: 1px solid #fbbf24;
+          padding: 10px 20px;
+          background: #fef3c7;
+          color: #92400e;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+
+        .tw-btn-skip:hover {
+          background: #fde68a;
+        }
+
+        /* Form Elements - Match app design */
+        .tw-label {
+          display: block;
+          font-size: 0.85rem;
+          font-weight: 500;
+          color: #374151;
+          margin-bottom: 6px;
+        }
+
+        .tw-input {
+          font-family: inherit;
+          font-size: 0.9rem;
+          padding: 10px 14px;
+          border-radius: 999px;
+          border: 1px solid #d1d5db;
+          background: #ffffff;
+          color: #111827;
+          width: 100%;
+          box-sizing: border-box;
+          transition: all 0.15s ease;
+        }
+
+        .tw-input:focus {
+          outline: none;
+          border-color: #2563eb;
+          box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.35);
+        }
+
+        .tw-form-section {
+          margin-bottom: 16px;
+        }
+
+        .tw-form-row {
+          display: flex;
+          gap: 12px;
+        }
+
+        .tw-form-row .tw-form-section {
+          flex: 1;
+          margin-bottom: 0;
+        }
+
+        /* Checkbox Group */
+        .tw-checkbox-group {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+
+        .tw-checkbox-item {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 12px 16px;
+          border: 1px solid #e5e7eb;
+          border-radius: 8px;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+
+        .tw-checkbox-item:hover {
+          background: #f9fafb;
+          border-color: #2563eb;
+        }
+
+        .tw-checkbox-item input {
+          width: 18px;
+          height: 18px;
+          cursor: pointer;
+        }
+
+        .tw-checkbox-item span {
+          font-size: 0.95rem;
+          color: #111827;
+          font-weight: 500;
+        }
+
+        /* Options */
+        .tw-options {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          margin-bottom: 16px;
+        }
+
+        .tw-option {
+          width: 100%;
+          text-align: left;
+          padding: 14px 16px;
+          border: 1px solid #e5e7eb;
+          border-radius: 8px;
+          background: #ffffff;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+
+        .tw-option:hover {
+          background: #f9fafb;
+          border-color: #2563eb;
+          box-shadow: 0 4px 8px rgba(37, 99, 235, 0.08);
+          transform: translateY(-0.5px);
+        }
+
+        .tw-option.secondary {
           background: #fafafa;
         }
 
-        .tw-live-schedule {
-          display: flex;
-          flex-direction: column;
-          gap: 16px;
+        .tw-option-title {
+          font-size: 0.95rem;
+          font-weight: 500;
+          color: #111827;
+          margin-bottom: 2px;
         }
 
-        .tw-schedule-division {
-          background: white;
-          border-radius: 10px;
+        .tw-option-subtitle {
+          font-size: 0.8rem;
+          color: #6b7280;
+        }
+
+        .tw-custom-time {
+          padding: 16px;
+          background: #f9fafb;
           border: 1px solid #e5e7eb;
+          border-radius: 8px;
+          margin-top: 12px;
+        }
+
+        .tw-info-box {
+          padding: 12px 16px;
+          background: #eff6ff;
+          border: 1px solid #bfdbfe;
+          border-radius: 8px;
+          color: #1e40af;
+          font-size: 0.9rem;
+          margin-bottom: 16px;
+        }
+
+        /* Schedule Preview */
+        .tw-schedule-division {
+          background: #ffffff;
+          border: 1px solid #e5e7eb;
+          border-radius: 10px;
+          margin-bottom: 12px;
           overflow: hidden;
         }
 
-        .tw-schedule-division.tw-traveling {
+        .tw-schedule-division.traveling {
           border-color: #fbbf24;
-          box-shadow: 0 0 0 2px #fef3c7;
+          box-shadow: 0 0 0 1px #fef3c7;
         }
 
-        .tw-schedule-div-header {
-          padding: 12px 16px;
-          background: linear-gradient(to right, #f9fafb, white);
-          font-weight: 600;
-          color: #1f2937;
+        .tw-schedule-header {
           display: flex;
+          justify-content: space-between;
           align-items: center;
-          gap: 8px;
+          padding: 12px 16px;
+          background: #f9fafb;
           border-bottom: 1px solid #e5e7eb;
         }
 
-        .tw-badge {
-          background: #fbbf24;
-          color: #78350f;
-          padding: 2px 8px;
-          border-radius: 12px;
-          font-size: 0.75rem;
+        .tw-schedule-title {
+          font-size: 0.95rem;
           font-weight: 600;
-          text-transform: uppercase;
+          color: #111827;
         }
 
-        .tw-schedule-blocks {
+        .tw-badge-trip {
+          padding: 3px 10px;
+          background: #fef3c7;
+          color: #92400e;
+          border-radius: 999px;
+          font-size: 0.7rem;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.02em;
+        }
+
+        .tw-badge-camp {
+          padding: 3px 10px;
+          background: #e5e7eb;
+          color: #4b5563;
+          border-radius: 999px;
+          font-size: 0.7rem;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.02em;
+        }
+
+        .tw-schedule-timeline {
           padding: 12px;
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
         }
 
         .tw-schedule-empty {
-          color: #9ca3af;
-          font-style: italic;
-          text-align: center;
           padding: 20px;
+          text-align: center;
+          color: #9ca3af;
+          font-size: 0.85rem;
+          font-style: italic;
         }
 
-        .tw-block-original,
-        .tw-block-new {
+        .tw-timeline-item {
           display: flex;
-          align-items: center;
           gap: 12px;
           padding: 10px 12px;
           border-radius: 6px;
-          transition: all 0.2s;
-        }
-
-        .tw-block-original {
-          background: #f3f4f6;
+          margin-bottom: 6px;
+          background: #f9fafb;
           border: 1px solid #e5e7eb;
         }
 
-        .tw-block-new {
+        .tw-timeline-item.new {
           background: #d1fae5;
-          border: 1px solid #34d399;
+          border-color: #34d399;
         }
 
-        .tw-block-icon {
-          font-size: 1.5rem;
-          flex-shrink: 0;
+        .tw-timeline-time {
+          font-size: 0.75rem;
+          font-weight: 600;
+          color: #6b7280;
+          text-align: right;
+          min-width: 50px;
+          padding-top: 2px;
         }
 
-        .tw-block-content {
+        .tw-timeline-content {
           flex: 1;
           min-width: 0;
         }
 
-        .tw-block-content strong {
-          display: block;
-          color: #1f2937;
-          font-size: 0.95rem;
+        .tw-timeline-title {
+          font-size: 0.9rem;
+          font-weight: 500;
+          color: #111827;
           margin-bottom: 2px;
         }
 
-        .tw-block-time {
-          display: block;
+        .tw-timeline-duration {
+          font-size: 0.75rem;
           color: #6b7280;
-          font-size: 0.85rem;
         }
 
-        .tw-block-badge {
+        .tw-timeline-badge {
+          align-self: flex-start;
+          padding: 2px 8px;
           background: #10b981;
           color: white;
-          padding: 2px 8px;
-          border-radius: 10px;
-          font-size: 0.7rem;
+          border-radius: 999px;
+          font-size: 0.65rem;
           font-weight: 600;
           text-transform: uppercase;
         }
 
-        .tw-final-preview {
-          max-height: 400px;
+        /* Final Summary */
+        .tw-final-summary {
+          max-height: 500px;
           overflow-y: auto;
         }
 
-        .tw-preview-section-header {
-          font-weight: 600;
-          color: #374151;
-          margin: 20px 0 12px 0;
-          padding-bottom: 8px;
-          border-bottom: 2px solid #e5e7eb;
-        }
-
-        .tw-preview-division {
+        .tw-summary-section {
           margin-bottom: 20px;
         }
 
-        .tw-preview-division h4 {
-          margin: 0 0 10px 0;
-          color: #1f2937;
+        .tw-summary-header {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          font-size: 1rem;
+          font-weight: 600;
+          color: #111827;
+          margin-bottom: 12px;
+          padding-bottom: 8px;
+          border-bottom: 1px solid #e5e7eb;
         }
 
-        .tw-preview-item {
-          padding: 10px 12px;
+        .tw-summary-list {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .tw-summary-item {
+          padding: 12px 14px;
           border-radius: 6px;
-          margin-bottom: 8px;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
         }
 
-        .tw-preview-add {
+        .tw-summary-item.add {
           background: #d1fae5;
           border-left: 3px solid #10b981;
         }
 
-        .tw-preview-replace {
+        .tw-summary-item.replace {
           background: #dbeafe;
           border-left: 3px solid #3b82f6;
         }
 
-        .tw-preview-remove {
+        .tw-summary-item.remove {
           background: #fee2e2;
           border-left: 3px solid #ef4444;
         }
 
-        .tw-preview-note {
+        .tw-summary-item.note {
           background: #fef3c7;
           border-left: 3px solid #f59e0b;
         }
 
-        .tw-preview-item strong {
+        .tw-summary-label {
+          font-size: 0.7rem;
           font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+          color: #6b7280;
         }
 
-        .tw-preview-item small {
-          color: #6b7280;
+        .tw-summary-item strong {
+          font-size: 0.95rem;
+          color: #111827;
+        }
+
+        .tw-summary-time {
           font-size: 0.85rem;
+          color: #4b5563;
+        }
+
+        .tw-summary-note {
+          font-size: 0.8rem;
+          color: #6b7280;
         }
       </style>
     `;
