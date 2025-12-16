@@ -904,7 +904,7 @@
   }
 
   // ------------------------------------------------------------
-  // CONFLICT CHECKING ON PLACEMENT
+  // RECURSIVE CONFLICT CHECKING ON PLACEMENT
   // ------------------------------------------------------------
   function applyTimeWithConflictCheck(division, oldBlock, eventName, startTime, endTime, afterResolve, reservedFields = []) {
     // Check for conflicts with this new time WITHIN the division
@@ -916,22 +916,34 @@
       crossDivConflicts = detectCrossDivisionConflicts('Swim', startTime, endTime, division);
     }
 
-    // If there are conflicts, handle them
-    if (sameDivConflicts.length > 0) {
-      handleSameDivisionConflict(division, eventName, startTime, endTime, oldBlock, sameDivConflicts[0], afterResolve, reservedFields);
-    } else if (crossDivConflicts.length > 0) {
-      handleCrossDivisionConflict(division, eventName, startTime, endTime, oldBlock, crossDivConflicts[0], afterResolve, reservedFields);
+    // Handle conflicts recursively - BOTH same-division AND cross-division
+    if (sameDivConflicts.length > 0 || crossDivConflicts.length > 0) {
+      // Prioritize same-division conflicts first
+      if (sameDivConflicts.length > 0) {
+        handleSameDivisionConflict(division, eventName, startTime, endTime, oldBlock, sameDivConflicts, afterResolve, reservedFields);
+      } else {
+        handleCrossDivisionConflict(division, eventName, startTime, endTime, oldBlock, crossDivConflicts[0], afterResolve, reservedFields);
+      }
     } else {
       // No conflicts, apply the change
       applyTimeChange(division, oldBlock, eventName, startTime, endTime, afterResolve, reservedFields);
     }
   }
 
-  function handleSameDivisionConflict(division, newActivityName, startTime, endTime, originalBlock, conflictBlock, afterResolve, reservedFields) {
+  function handleSameDivisionConflict(division, newActivityName, startTime, endTime, originalBlock, conflictBlocks, afterResolve, reservedFields) {
+    const conflictBlock = conflictBlocks[0]; // Handle first conflict
+    const remainingConflicts = conflictBlocks.slice(1); // Save the rest
+
     renderStep({
       title: "Schedule Conflict",
       subtitle: `${newActivityName} at ${startTime}–${endTime} overlaps with "${conflictBlock.event}" (${conflictBlock.startTime}–${conflictBlock.endTime}).`,
       body: `
+        ${remainingConflicts.length > 0 ? `
+          <div class="tw-info-box">
+            Note: There are ${remainingConflicts.length} more conflict(s) after this one.
+          </div>
+        ` : ''}
+
         <div class="tw-options">
           <button class="tw-option" data-choice="change-new">
             <div class="tw-option-title">Choose Different Time for ${newActivityName}</div>
@@ -989,7 +1001,20 @@
               plannedChanges.push(removeChange);
               applyChangeToWorkingSkeleton(removeChange);
 
-              applyTimeChange(division, originalBlock, newActivityName, startTime, endTime, afterResolve, reservedFields);
+              // After removing, check if there are more conflicts
+              if (remainingConflicts.length > 0) {
+                handleSameDivisionConflict(division, newActivityName, startTime, endTime, originalBlock, remainingConflicts, afterResolve, reservedFields);
+              } else {
+                // No more same-division conflicts, but check cross-division
+                if (newActivityName.toLowerCase().includes('swim')) {
+                  const crossDivConflicts = detectCrossDivisionConflicts('Swim', startTime, endTime, division);
+                  if (crossDivConflicts.length > 0) {
+                    handleCrossDivisionConflict(division, newActivityName, startTime, endTime, originalBlock, crossDivConflicts[0], afterResolve, reservedFields);
+                    return;
+                  }
+                }
+                applyTimeChange(division, originalBlock, newActivityName, startTime, endTime, afterResolve, reservedFields);
+              }
             } else if (choice === 'move-existing') {
               document.getElementById('move-existing-time').style.display = 'block';
             }
@@ -1007,7 +1032,7 @@
               return;
             }
 
-            // Check if THIS move creates more conflicts
+            // Check if THIS move creates more conflicts for the thing we're moving
             const moreConflicts = detectConflicts(division, moveStart, moveEnd, conflictBlock.id);
             if (moreConflicts.length > 0) {
               alert(`That time conflicts with "${moreConflicts[0].event}". Please choose another time.`);
@@ -1016,8 +1041,20 @@
 
             // Apply the move for the existing block
             applyTimeChange(division, conflictBlock, conflictBlock.event, moveStart, moveEnd, () => {
-              // Then apply the new activity
-              applyTimeChange(division, originalBlock, newActivityName, startTime, endTime, afterResolve, reservedFields);
+              // After moving, check if there are more conflicts with the NEW activity
+              if (remainingConflicts.length > 0) {
+                handleSameDivisionConflict(division, newActivityName, startTime, endTime, originalBlock, remainingConflicts, afterResolve, reservedFields);
+              } else {
+                // No more same-division conflicts, check cross-division
+                if (newActivityName.toLowerCase().includes('swim')) {
+                  const crossDivConflicts = detectCrossDivisionConflicts('Swim', startTime, endTime, division);
+                  if (crossDivConflicts.length > 0) {
+                    handleCrossDivisionConflict(division, newActivityName, startTime, endTime, originalBlock, crossDivConflicts[0], afterResolve, reservedFields);
+                    return;
+                  }
+                }
+                applyTimeChange(division, originalBlock, newActivityName, startTime, endTime, afterResolve, reservedFields);
+              }
             });
           };
         }
@@ -1077,6 +1114,13 @@
               const trip = tripManifest.find(t => t.division === sourceDivision);
               handleSwimConflict(trip, originalBlock, afterResolve);
             } else if (choice === 'swap') {
+              // Check if swap creates conflicts for source division
+              const swapConflicts = detectConflicts(sourceDivision, targetBlock.startTime, targetBlock.endTime, originalBlock.id);
+              if (swapConflicts.length > 0) {
+                alert(`Swapping would create a conflict with "${swapConflicts[0].event}" in ${sourceDivision}. Please choose another option.`);
+                return;
+              }
+
               applyTimeChange(sourceDivision, originalBlock, 'Swim', targetBlock.startTime, targetBlock.endTime, () => {}, ['Pool']);
               applyTimeChange(targetDivision, targetBlock, 'Swim', startTime, endTime, afterResolve, ['Pool']);
             } else if (choice === 'move-target') {
@@ -1100,6 +1144,13 @@
             const moreConflicts = detectConflicts(targetDivision, moveStart, moveEnd, targetBlock.id);
             if (moreConflicts.length > 0) {
               alert(`That time conflicts with "${moreConflicts[0].event}" in ${targetDivision}.`);
+              return;
+            }
+
+            // Check if moving target creates more cross-division conflicts
+            const moreCrossDivConflicts = detectCrossDivisionConflicts('Swim', moveStart, moveEnd, targetDivision);
+            if (moreCrossDivConflicts.length > 0) {
+              alert(`That time conflicts with ${moreCrossDivConflicts[0].division}'s swim.`);
               return;
             }
 
