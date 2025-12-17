@@ -1,10 +1,11 @@
 // =================================================================
-// skeleton_sandbox.js v3.1 — SIMPLE TILE TYPE RULES (DROP-IN READY)
+// skeleton_sandbox.js v3.2 — SIMPLE TILE TYPE RULES (DROP-IN READY)
 //
-// ✔ Conflict logic unchanged
+// ✔ Fixes: renderBanner missing error
+// ✔ Conflict engine unchanged
 // ✔ Storage unchanged
-// ✔ Only Tile Type Rules UI simplified
-// ✔ Matches existing site theme
+// ✔ Simplified Tile Type Rules UI
+// ✔ Backward compatible with daily_adjustments.js
 // =================================================================
 
 (function () {
@@ -52,7 +53,7 @@ function saveRules() {
 }
 
 // =================================================================
-// CONFLICT ENGINE (UNCHANGED)
+// CONFLICT ENGINE
 // =================================================================
 
 function detectConflicts(skeleton) {
@@ -140,6 +141,42 @@ function timesOverlap(a, b) {
 }
 
 // =================================================================
+// CONFLICT BANNER (RESTORED — FIX)
+// =================================================================
+
+function renderBanner(selector, skeleton) {
+  const container = document.querySelector(selector);
+  if (!container) return [];
+
+  container.querySelector('.conflict-banner')?.remove();
+
+  const conflicts = detectConflicts(skeleton);
+  if (!conflicts.length) return [];
+
+  const crit = conflicts.filter(c => c.type === 'critical').length;
+  const warn = conflicts.filter(c => c.type === 'warning').length;
+  const hasCrit = crit > 0;
+
+  const banner = document.createElement('div');
+  banner.className = 'conflict-banner';
+  banner.innerHTML = `
+    <div class="cb-inner ${hasCrit ? 'cb-critical' : 'cb-warning'}">
+      <div class="cb-icon">${hasCrit ? '🚨' : '⚠️'}</div>
+      <div class="cb-text">
+        <strong>
+          ${crit ? `${crit} critical` : ''}
+          ${crit && warn ? ', ' : ''}
+          ${warn ? `${warn} warning` : ''}
+        </strong>
+      </div>
+    </div>
+  `;
+
+  container.prepend(banner);
+  return conflicts;
+}
+
+// =================================================================
 // RULES MODAL — SIMPLE TILE TYPE RULES
 // =================================================================
 
@@ -184,10 +221,10 @@ function showRulesModal() {
       <div class="simple-rule-row">
         <div class="rule-label">${r.label}</div>
         <div class="rule-severity">
-          ${['allow','warning','critical'].map(v => `
+          ${['warning','critical'].map(v => `
             <button class="${r.severity === v ? 'active' : ''}"
               data-i="${i}" data-v="${v}">
-              ${v === 'allow' ? 'Allow' : v === 'warning' ? 'Warn' : 'Block'}
+              ${v === 'warning' ? 'Warn' : 'Block'}
             </button>
           `).join('')}
         </div>
@@ -201,8 +238,7 @@ function showRulesModal() {
 
     container.querySelectorAll('.rule-severity button').forEach(b => {
       b.onclick = () => {
-        rules.tileTypeRules[b.dataset.i].severity =
-          b.dataset.v === 'allow' ? 'warning' : b.dataset.v;
+        rules.tileTypeRules[b.dataset.i].severity = b.dataset.v;
         render();
       };
     });
@@ -230,7 +266,7 @@ function showRulesModal() {
 }
 
 // =================================================================
-// STYLES (MATCH SITE THEME)
+// STYLES
 // =================================================================
 
 (function injectStyles() {
@@ -253,11 +289,12 @@ function showRulesModal() {
 })();
 
 // =================================================================
-// EXPORT
+// EXPORT (BACKWARD COMPATIBLE)
 // =================================================================
 
 window.SkeletonSandbox = {
   detectConflicts,
+  renderBanner,
   showRulesModal,
   loadRules,
   saveRules
