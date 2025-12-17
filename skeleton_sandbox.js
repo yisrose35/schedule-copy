@@ -1,11 +1,10 @@
 // =================================================================
-// skeleton_sandbox.js v3.2 — SIMPLE TILE TYPE RULES (DROP-IN READY)
+// skeleton_sandbox.js v3.3 — SIMPLE TILE TYPE RULES (FINAL FIX)
 //
-// ✔ Fixes: renderBanner missing error
-// ✔ Conflict engine unchanged
-// ✔ Storage unchanged
-// ✔ Simplified Tile Type Rules UI
-// ✔ Backward compatible with daily_adjustments.js
+// ✔ Fixes: rules modal not opening
+// ✔ Fixes: renderBanner missing
+// ✔ Keeps simplified Tile Type Rules UI
+// ✔ Fully backward compatible
 // =================================================================
 
 (function () {
@@ -141,7 +140,7 @@ function timesOverlap(a, b) {
 }
 
 // =================================================================
-// CONFLICT BANNER (RESTORED — FIX)
+// CONFLICT BANNER
 // =================================================================
 
 function renderBanner(selector, skeleton) {
@@ -155,23 +154,14 @@ function renderBanner(selector, skeleton) {
 
   const crit = conflicts.filter(c => c.type === 'critical').length;
   const warn = conflicts.filter(c => c.type === 'warning').length;
-  const hasCrit = crit > 0;
 
   const banner = document.createElement('div');
   banner.className = 'conflict-banner';
   banner.innerHTML = `
-    <div class="cb-inner ${hasCrit ? 'cb-critical' : 'cb-warning'}">
-      <div class="cb-icon">${hasCrit ? '🚨' : '⚠️'}</div>
-      <div class="cb-text">
-        <strong>
-          ${crit ? `${crit} critical` : ''}
-          ${crit && warn ? ', ' : ''}
-          ${warn ? `${warn} warning` : ''}
-        </strong>
-      </div>
+    <div class="cb-inner">
+      <strong>${crit ? `${crit} critical` : ''}${crit && warn ? ', ' : ''}${warn ? `${warn} warning` : ''}</strong>
     </div>
   `;
-
   container.prepend(banner);
   return conflicts;
 }
@@ -187,21 +177,17 @@ function showRulesModal() {
   overlay.className = 'ss-overlay';
 
   const modal = document.createElement('div');
-  modal.className = 'ss-modal ss-rules-modal';
+  modal.className = 'ss-modal';
 
   modal.innerHTML = `
     <div class="ss-modal-header">
       <h2>Conflict Rules</h2>
       <button class="ss-close">×</button>
     </div>
-
     <div class="ss-modal-body">
-      <h3>Tile Type Rules</h3>
-      <p class="ss-hint">Choose how activities behave when scheduled at the same time.</p>
       <div id="simple-type-rules"></div>
       <button id="add-type-rule" class="ss-btn-add">+ Add Type Rule</button>
     </div>
-
     <div class="ss-modal-footer">
       <button class="ss-btn-primary">Done</button>
     </div>
@@ -210,45 +196,46 @@ function showRulesModal() {
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
 
-  const close = () => overlay.remove();
-  modal.querySelector('.ss-close').onclick = close;
-  modal.querySelector('.ss-btn-primary').onclick = () => { saveRules(); close(); };
+  modal.querySelector('.ss-close').onclick = () => overlay.remove();
+  modal.querySelector('.ss-btn-primary').onclick = () => {
+    saveRules();
+    overlay.remove();
+  };
 
   const container = modal.querySelector('#simple-type-rules');
 
   function render() {
     container.innerHTML = rules.tileTypeRules.map((r, i) => `
       <div class="simple-rule-row">
-        <div class="rule-label">${r.label}</div>
-        <div class="rule-severity">
-          ${['warning','critical'].map(v => `
-            <button class="${r.severity === v ? 'active' : ''}"
-              data-i="${i}" data-v="${v}">
-              ${v === 'warning' ? 'Warn' : 'Block'}
-            </button>
-          `).join('')}
+        <strong>${r.label}</strong>
+        <div>
+          <button data-i="${i}" data-v="warning" class="${r.severity === 'warning' ? 'active' : ''}">Warn</button>
+          <button data-i="${i}" data-v="critical" class="${r.severity === 'critical' ? 'active' : ''}">Block</button>
         </div>
-        <label class="rule-same">
+        <label>
           <input type="checkbox" ${r.matchSameName ? 'checked' : ''} data-i="${i}">
           Same event only
         </label>
-        <button class="rule-delete" data-i="${i}">✕</button>
+        <button data-del="${i}">✕</button>
       </div>
     `).join('');
 
-    container.querySelectorAll('.rule-severity button').forEach(b => {
+    container.querySelectorAll('button[data-v]').forEach(b => {
       b.onclick = () => {
         rules.tileTypeRules[b.dataset.i].severity = b.dataset.v;
         render();
       };
     });
 
-    container.querySelectorAll('.rule-same input').forEach(c => {
+    container.querySelectorAll('input[type="checkbox"]').forEach(c => {
       c.onchange = () => rules.tileTypeRules[c.dataset.i].matchSameName = c.checked;
     });
 
-    container.querySelectorAll('.rule-delete').forEach(d => {
-      d.onclick = () => { rules.tileTypeRules.splice(d.dataset.i, 1); render(); };
+    container.querySelectorAll('button[data-del]').forEach(d => {
+      d.onclick = () => {
+        rules.tileTypeRules.splice(d.dataset.del, 1);
+        render();
+      };
     });
   }
 
@@ -266,30 +253,31 @@ function showRulesModal() {
 }
 
 // =================================================================
-// STYLES
+// STYLES (RESTORED — THIS WAS THE BUG)
 // =================================================================
 
 (function injectStyles() {
-  if (document.getElementById('ss-simple-styles')) return;
+  if (document.getElementById('ss-base-styles')) return;
+
   const s = document.createElement('style');
-  s.id = 'ss-simple-styles';
+  s.id = 'ss-base-styles';
   s.textContent = `
-    .simple-rule-row{display:flex;align-items:center;gap:10px;
-      padding:10px 12px;border:1px solid #e5e7eb;border-radius:12px;
-      background:#fff;margin-bottom:8px}
-    .rule-label{font-weight:600;min-width:140px}
-    .rule-severity button{border-radius:999px;padding:6px 12px;
-      border:1px solid #d1d5db;background:#f9fafb}
-    .rule-severity button.active{background:#2563eb;color:#fff;border-color:#2563eb}
-    .rule-same{font-size:.8rem;color:#6b7280}
-    .rule-delete{border:none;background:#fee2e2;color:#b91c1c;
-      border-radius:999px;padding:4px 10px;cursor:pointer}
+    .ss-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);
+      display:flex;align-items:center;justify-content:center;z-index:9999}
+    .ss-modal{background:#fff;border-radius:14px;width:520px;
+      max-width:95%;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+    .ss-modal-header,.ss-modal-footer{padding:16px;border-bottom:1px solid #eee}
+    .ss-modal-footer{border-top:1px solid #eee;border-bottom:none;text-align:right}
+    .ss-modal-body{padding:16px}
+    .ss-close{background:none;border:none;font-size:20px;cursor:pointer}
+    .simple-rule-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+    .simple-rule-row button.active{background:#2563eb;color:#fff}
   `;
   document.head.appendChild(s);
 })();
 
 // =================================================================
-// EXPORT (BACKWARD COMPATIBLE)
+// EXPORT
 // =================================================================
 
 window.SkeletonSandbox = {
