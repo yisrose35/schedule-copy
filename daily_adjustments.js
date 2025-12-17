@@ -1033,93 +1033,131 @@ function initDailySkeletonUI() {
 
 /**
  * Renders the UI for the "Trips" tab
- * SINGLE RESPONSIBILITY: Launch Trip Wizard
+ * SIMPLE MODE: Add a Trip directly to Daily Skeleton
  */
 function renderTripsForm() {
   if (!tripsFormContainer) return;
 
-  // Clear tab
   tripsFormContainer.innerHTML = "";
 
-  // Wrapper card
-  const card = document.createElement('div');
-  card.style.border = '1px solid #ddd';
-  card.style.padding = '20px';
-  card.style.borderRadius = '10px';
-  card.style.background = '#fff';
-  card.style.maxWidth = '500px';
+  const divisions = window.availableDivisions || [];
+
+  const card = document.createElement("div");
+  card.style.border = "1px solid #ddd";
+  card.style.padding = "20px";
+  card.style.borderRadius = "10px";
+  card.style.background = "#fff";
+  card.style.maxWidth = "520px";
 
   card.innerHTML = `
-    <h3 style="margin-top:0;">Plan a Trip</h3>
+    <h3 style="margin-top:0;">Add a Trip</h3>
     <p style="color:#555;font-size:0.95em;">
-      Use the Trip Planner to schedule off-campus trips.
-      The wizard will automatically resolve conflicts with
-      lunch, leagues, swim, and specialty activities.
+      Add an off-campus trip directly to the daily skeleton.
+      This will automatically override any overlapping events for the selected division.
     </p>
+
+    <div style="margin-bottom:12px;">
+      <label><strong>Division</strong></label><br/>
+      <select id="trip-division-select" style="width:100%;padding:8px;">
+        <option value="">-- Select Division --</option>
+        ${divisions.map(d => `<option value="${d}">${d}</option>`).join("")}
+      </select>
+    </div>
+
+    <div style="margin-bottom:12px;">
+      <label><strong>Trip Name</strong></label><br/>
+      <input id="trip-name-input"
+             type="text"
+             placeholder="e.g. Six Flags, Museum Trip"
+             style="width:100%;padding:8px;" />
+    </div>
+
+    <div style="display:flex;gap:10px;margin-bottom:12px;">
+      <div style="flex:1;">
+        <label><strong>Start Time</strong></label><br/>
+        <input id="trip-start-input"
+               type="text"
+               placeholder="e.g. 10:00am"
+               style="width:100%;padding:8px;" />
+      </div>
+      <div style="flex:1;">
+        <label><strong>End Time</strong></label><br/>
+        <input id="trip-end-input"
+               type="text"
+               placeholder="e.g. 3:30pm"
+               style="width:100%;padding:8px;" />
+      </div>
+    </div>
   `;
 
-  // Primary CTA button
-  const startBtn = document.createElement('button');
-  startBtn.textContent = "Start Trip Planner";
-  startBtn.style.background = '#2563eb';
-  startBtn.style.color = 'white';
-  startBtn.style.padding = '12px 18px';
-  startBtn.style.fontSize = '1.05em';
-  startBtn.style.border = 'none';
-  startBtn.style.borderRadius = '6px';
-  startBtn.style.cursor = 'pointer';
-  startBtn.style.marginTop = '10px';
+  const applyBtn = document.createElement("button");
+  applyBtn.textContent = "Apply Trip";
+  applyBtn.style.background = "#2563eb";
+  applyBtn.style.color = "white";
+  applyBtn.style.padding = "12px 18px";
+  applyBtn.style.fontSize = "1.05em";
+  applyBtn.style.border = "none";
+  applyBtn.style.borderRadius = "6px";
+  applyBtn.style.cursor = "pointer";
 
-  startBtn.onclick = () => {
-    if (!window.TripWizard || typeof window.TripWizard.start !== "function") {
-      alert(
-        "Trip Wizard is not loaded.\n\n" +
-        "Make sure trip_wizard.js is included AFTER daily_adjustments.js."
-      );
+  applyBtn.onclick = () => {
+    const division = document.getElementById("trip-division-select").value;
+    const tripName = document.getElementById("trip-name-input").value.trim();
+    const startTime = document.getElementById("trip-start-input").value.trim();
+    const endTime = document.getElementById("trip-end-input").value.trim();
+
+    if (!division || !tripName || !startTime || !endTime) {
+      alert("Please complete all fields.");
       return;
     }
 
-    window.TripWizard.start((instructions) => {
-      console.log("Trip Wizard completed:", instructions);
+    const startMin = parseTimeToMinutes(startTime);
+    const endMin = parseTimeToMinutes(endTime);
 
-      // Apply wizard instructions to skeleton
-      loadDailySkeleton();
+    if (startMin == null || endMin == null) {
+      alert("Invalid time format. Use e.g. 9:00am or 2:30pm.");
+      return;
+    }
+    if (endMin <= startMin) {
+      alert("End time must be after start time.");
+      return;
+    }
 
-      instructions.forEach(instr => {
-        const div = instr.division;
+    loadDailySkeleton();
 
-        // Remove existing blocks for division
-        dailyOverrideSkeleton = dailyOverrideSkeleton.filter(b => b.division !== div);
+    const newEvent = {
+      id: `trip_${Math.random().toString(36).slice(2, 9)}`,
+      type: "pinned",
+      event: tripName,
+      division,
+      startTime,
+      endTime,
+      reservedFields: [] // optional future enhancement
+    };
 
-        // Apply wizard actions
-        instr.actions.forEach(act => {
-          if (act.type === 'wipe') return;
+    // STRICT overlap removal (same logic as drag/drop)
+    dailyOverrideSkeleton = dailyOverrideSkeleton.filter(ev => {
+      if (ev.division !== division) return true;
 
-          dailyOverrideSkeleton.push({
-            id: `trip_${Math.random().toString(36).slice(2)}`,
-            type: act.type,
-            event: act.event,
-            division: div,
-            startTime: act.startTime,
-            endTime: act.endTime,
-            reservedFields: act.reservedFields || []
-          });
-        });
-      });
+      const evStart = parseTimeToMinutes(ev.startTime);
+      const evEnd = parseTimeToMinutes(ev.endTime);
+      if (evStart == null || evEnd == null) return true;
 
-      saveDailySkeleton();
-
-      // Refresh skeleton grid if visible
-      if (skeletonContainer) {
-        const grid = skeletonContainer.querySelector('#daily-skeleton-grid');
-        if (grid) renderGrid(grid);
-      }
-
-      alert("Trip scheduled successfully!");
+      return !(evStart < endMin && evEnd > startMin);
     });
+
+    dailyOverrideSkeleton.push(newEvent);
+    saveDailySkeleton();
+
+    if (skeletonContainer) {
+      const grid = skeletonContainer.querySelector("#daily-skeleton-grid");
+      if (grid) renderGrid(grid);
+    }
+
+    alert("Trip added to daily skeleton.");
   };
 
-  card.appendChild(startBtn);
+  card.appendChild(applyBtn);
   tripsFormContainer.appendChild(card);
 }
 
