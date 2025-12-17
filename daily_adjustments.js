@@ -397,7 +397,7 @@ function renderGrid(gridContainer) {
   
   // Apply conflict highlighting if sandbox is available
   if (window.SkeletonSandbox) {
-    window.SkeletonSandbox.renderConflictBanner('#override-scheduler-content', dailyOverrideSkeleton);
+    window.SkeletonSandbox.renderBanner('#override-scheduler-content', dailyOverrideSkeleton);
     applyConflictHighlighting(gridContainer);
   }
 }
