@@ -1,188 +1,175 @@
 // =================================================================
-// skeleton_sandbox.js
+// skeleton_sandbox.js v3.0 - Polished Edition
 // 
-// Conflict detection with FULLY CUSTOMIZABLE rules:
-// - Define resource groups and their conflict behavior
-// - Per-division conflict exceptions
-// - Visual highlighting (red pulse for critical, yellow for warnings)
+// - Tile-TYPE based conflict detection (not just names)
+// - Instant updates on rule changes
+// - Clean, modern UI
 // =================================================================
 
 (function() {
 'use strict';
 
 // =================================================================
-// CONFLICT RULES CONFIGURATION (FULLY CUSTOMIZABLE)
+// DEFAULT RULES - TILE TYPE BASED
 // =================================================================
 
-const DEFAULT_CONFLICT_RULES = {
-  // Master switch - if false, no conflicts are detected
+const DEFAULT_RULES = {
   enabled: true,
   
-  // Resource definitions - each resource can have custom behavior
-  resources: [
-    { name: 'Swim', type: 'critical', aliases: ['Pool', 'Swimming Pool', 'Swimming'], canShareWith: [] },
-    { name: 'League', type: 'warning', aliases: ['League Game'], canShareWith: [] },
-    { name: 'Specialty League', type: 'warning', aliases: [], canShareWith: [] }
+  // TILE TYPE rules: which types conflict across divisions
+  tileTypeRules: [
+    { type: 'swim', severity: 'critical', label: 'Swim' },
+    { type: 'pinned', severity: 'warning', label: 'Pinned Events', matchSameName: true },
+    { type: 'league', severity: 'warning', label: 'League Games' },
+    { type: 'specialty_league', severity: 'warning', label: 'Specialty Leagues' }
   ],
   
-  // Division pairs that CAN share resources (exceptions)
-  allowedOverlaps: [],
+  // Named resources (event names containing these)
+  namedResources: [
+    { name: 'Pool', severity: 'critical' },
+    { name: 'Gym', severity: 'warning' }
+  ],
   
-  // Event types to completely ignore for conflict detection
-  ignoredEventTypes: ['slot', 'activity', 'sports', 'special'],
-  
-  // Event names to completely ignore
-  ignoredEventNames: ['General Activity Slot', 'Sports Slot', 'Special Activity', 'Activity'],
-  
-  // If true, any pinned event with same name causes conflict
-  pinnedEventsConflict: true,
-  
-  // If true, reserved fields cause conflicts
+  // Reserved fields always critical
   reservedFieldsConflict: true,
   
-  // Default behavior for unlisted resources
-  defaultBehavior: 'warning'
+  // Division pairs allowed to overlap
+  allowedPairs: [],
+  
+  // Types to completely ignore
+  ignoredTypes: ['slot', 'activity', 'sports', 'special'],
+  
+  // Names to ignore
+  ignoredNames: ['General Activity Slot', 'Sports Slot', 'Special Activity', 'Activity', 'Free']
 };
 
-let conflictRules = JSON.parse(JSON.stringify(DEFAULT_CONFLICT_RULES));
-const CONFLICT_RULES_KEY = 'skeletonConflictRules_v2';
+let rules = JSON.parse(JSON.stringify(DEFAULT_RULES));
+const STORAGE_KEY = 'skeletonRules_v3';
 
-function loadConflictRules() {
+function loadRules() {
   try {
-    const saved = localStorage.getItem(CONFLICT_RULES_KEY);
+    const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       const parsed = JSON.parse(saved);
-      conflictRules = { ...DEFAULT_CONFLICT_RULES, ...parsed };
-      if (!Array.isArray(conflictRules.resources)) conflictRules.resources = DEFAULT_CONFLICT_RULES.resources;
-      if (!Array.isArray(conflictRules.allowedOverlaps)) conflictRules.allowedOverlaps = [];
-      if (!Array.isArray(conflictRules.ignoredEventTypes)) conflictRules.ignoredEventTypes = DEFAULT_CONFLICT_RULES.ignoredEventTypes;
-      if (!Array.isArray(conflictRules.ignoredEventNames)) conflictRules.ignoredEventNames = DEFAULT_CONFLICT_RULES.ignoredEventNames;
+      rules = { ...DEFAULT_RULES, ...parsed };
+      // Ensure arrays exist
+      rules.tileTypeRules = rules.tileTypeRules || DEFAULT_RULES.tileTypeRules;
+      rules.namedResources = rules.namedResources || DEFAULT_RULES.namedResources;
+      rules.allowedPairs = rules.allowedPairs || [];
+      rules.ignoredTypes = rules.ignoredTypes || DEFAULT_RULES.ignoredTypes;
+      rules.ignoredNames = rules.ignoredNames || DEFAULT_RULES.ignoredNames;
     }
-  } catch (e) {
-    console.warn('Failed to load conflict rules:', e);
-  }
-  return conflictRules;
+  } catch (e) { console.warn('Failed to load rules', e); }
+  return rules;
 }
 
-function saveConflictRules() {
-  try {
-    localStorage.setItem(CONFLICT_RULES_KEY, JSON.stringify(conflictRules));
-  } catch (e) {
-    console.warn('Failed to save conflict rules:', e);
-  }
+function saveRules() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(rules)); } catch (e) {}
 }
 
-function resetConflictRules() {
-  conflictRules = JSON.parse(JSON.stringify(DEFAULT_CONFLICT_RULES));
-  saveConflictRules();
+function resetRules() {
+  rules = JSON.parse(JSON.stringify(DEFAULT_RULES));
+  saveRules();
 }
 
 // =================================================================
-// CONFLICT DETECTION ENGINE
+// TILE-TYPE BASED CONFLICT DETECTION
 // =================================================================
 
 function detectConflicts(skeleton) {
+  if (!skeleton?.length || !rules.enabled) return [];
+  
   const conflicts = [];
+  const seen = new Set();
   
-  if (!skeleton || skeleton.length === 0 || !conflictRules.enabled) return conflicts;
-  
-  const eventsByKey = {};
-  skeleton.forEach(ev => {
-    const keys = getConflictKeys(ev);
-    keys.forEach(key => {
-      if (!eventsByKey[key]) eventsByKey[key] = [];
-      eventsByKey[key].push(ev);
-    });
-  });
-  
-  Object.keys(eventsByKey).forEach(resourceKey => {
-    const events = eventsByKey[resourceKey];
-    if (events.length < 2) return;
-    
-    for (let i = 0; i < events.length; i++) {
-      for (let j = i + 1; j < events.length; j++) {
-        const ev1 = events[i];
-        const ev2 = events[j];
-        
-        if (ev1.division === ev2.division) continue;
-        if (isOverlapAllowed(ev1.division, ev2.division)) continue;
-        
-        if (timesOverlap(ev1, ev2)) {
-          const severity = getResourceSeverity(resourceKey);
-          if (severity === 'ignore') continue;
-          
-          conflicts.push({
-            type: severity,
-            resource: resourceKey,
-            event1: ev1,
-            event2: ev2,
-            message: `${resourceKey}: ${ev1.division} (${ev1.startTime}-${ev1.endTime}) ↔ ${ev2.division} (${ev2.startTime}-${ev2.endTime})`
-          });
-        }
-      }
+  for (let i = 0; i < skeleton.length; i++) {
+    for (let j = i + 1; j < skeleton.length; j++) {
+      const a = skeleton[i], b = skeleton[j];
+      
+      // Skip same division
+      if (a.division === b.division) continue;
+      
+      // Skip already checked
+      const key = [a.id, b.id].sort().join('|');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      
+      // Check time overlap
+      if (!timesOverlap(a, b)) continue;
+      
+      // Check allowed pairs
+      if (isPairAllowed(a.division, b.division)) continue;
+      
+      // Find conflict
+      const conflict = findConflict(a, b);
+      if (conflict) conflicts.push(conflict);
     }
-  });
+  }
   
   return conflicts;
 }
 
-function getConflictKeys(ev) {
-  if (!ev) return [];
+function findConflict(a, b) {
+  // Skip ignored types
+  if (rules.ignoredTypes.includes(a.type) || rules.ignoredTypes.includes(b.type)) return null;
+  if (rules.ignoredNames.includes(a.event) || rules.ignoredNames.includes(b.event)) return null;
   
-  const keys = [];
-  
-  if (conflictRules.ignoredEventTypes.includes(ev.type)) return keys;
-  if (conflictRules.ignoredEventNames.includes(ev.event)) return keys;
-  
-  if (ev.type === 'pinned' && conflictRules.pinnedEventsConflict) {
-    keys.push(ev.event);
+  // 1. Check reserved fields (highest priority)
+  if (rules.reservedFieldsConflict) {
+    const fieldsA = a.reservedFields || [];
+    const fieldsB = b.reservedFields || [];
+    const shared = fieldsA.filter(f => fieldsB.includes(f));
+    if (shared.length) {
+      return { type: 'critical', resource: `Field: ${shared[0]}`, event1: a, event2: b };
+    }
   }
   
-  if (conflictRules.reservedFieldsConflict && ev.reservedFields && ev.reservedFields.length > 0) {
-    ev.reservedFields.forEach(field => keys.push(field));
-  }
-  
-  conflictRules.resources.forEach(resource => {
-    const allNames = [resource.name, ...(resource.aliases || [])];
-    const evNameLower = (ev.event || '').toLowerCase();
+  // 2. Check tile TYPE rules
+  for (const rule of rules.tileTypeRules) {
+    // Both events are same type
+    if (a.type === rule.type && b.type === rule.type) {
+      // For pinned, optionally require same name
+      if (rule.matchSameName && a.event !== b.event) continue;
+      return { type: rule.severity, resource: rule.label || rule.type, event1: a, event2: b };
+    }
     
-    for (const name of allNames) {
-      if (evNameLower.includes(name.toLowerCase())) {
-        keys.push(resource.name);
-        break;
+    // Special case: 'swim' type tiles
+    if (rule.type === 'swim') {
+      const aIsSwim = a.type === 'swim' || a.event?.toLowerCase().includes('swim');
+      const bIsSwim = b.type === 'swim' || b.event?.toLowerCase().includes('swim');
+      if (aIsSwim && bIsSwim) {
+        return { type: rule.severity, resource: 'Swim', event1: a, event2: b };
       }
     }
-  });
+  }
   
-  if (ev.type === 'league' && !keys.includes('League')) keys.push('League');
-  if (ev.type === 'specialty_league' && !keys.includes('Specialty League')) keys.push('Specialty League');
+  // 3. Check named resources
+  for (const res of rules.namedResources) {
+    const nameL = res.name.toLowerCase();
+    const aHas = a.event?.toLowerCase().includes(nameL);
+    const bHas = b.event?.toLowerCase().includes(nameL);
+    if (aHas && bHas) {
+      return { type: res.severity, resource: res.name, event1: a, event2: b };
+    }
+  }
   
-  return keys;
+  return null;
 }
 
-function getResourceSeverity(resourceKey) {
-  const resource = conflictRules.resources.find(r => r.name === resourceKey);
-  if (resource) return resource.type;
-  return conflictRules.defaultBehavior;
+function timesOverlap(a, b) {
+  const s1 = parseTime(a.startTime), e1 = parseTime(a.endTime);
+  const s2 = parseTime(b.startTime), e2 = parseTime(b.endTime);
+  if (s1 == null || e1 == null || s2 == null || e2 == null) return false;
+  return s1 < e2 && e1 > s2;
 }
 
-function isOverlapAllowed(div1, div2) {
-  return conflictRules.allowedOverlaps.some(pair => 
-    (pair[0] === div1 && pair[1] === div2) || (pair[0] === div2 && pair[1] === div1)
+function isPairAllowed(d1, d2) {
+  return rules.allowedPairs?.some(p => 
+    (p[0] === d1 && p[1] === d2) || (p[0] === d2 && p[1] === d1)
   );
 }
 
-function timesOverlap(ev1, ev2) {
-  const start1 = parseTimeToMinutes(ev1.startTime);
-  const end1 = parseTimeToMinutes(ev1.endTime);
-  const start2 = parseTimeToMinutes(ev2.startTime);
-  const end2 = parseTimeToMinutes(ev2.endTime);
-  
-  if (start1 == null || end1 == null || start2 == null || end2 == null) return false;
-  return (start1 < end2) && (end1 > start2);
-}
-
-function getConflictingEventIds(conflicts) {
+function getConflictIds(conflicts) {
   const ids = new Set();
   conflicts.forEach(c => {
     if (c.event1?.id) ids.add(c.event1.id);
@@ -192,248 +179,221 @@ function getConflictingEventIds(conflicts) {
 }
 
 // =================================================================
-// TIME UTILITIES
+// TIME HELPERS
 // =================================================================
 
-function parseTimeToMinutes(str) {
-  if (!str || typeof str !== "string") return null;
+function parseTime(str) {
+  if (!str || typeof str !== 'string') return null;
   let s = str.trim().toLowerCase();
   let mer = null;
-  if (s.endsWith("am") || s.endsWith("pm")) {
-    mer = s.endsWith("am") ? "am" : "pm";
-    s = s.replace(/am|pm/g, "").trim();
+  if (s.endsWith('am') || s.endsWith('pm')) {
+    mer = s.slice(-2);
+    s = s.slice(0, -2).trim();
   }
-  const m = s.match(/^(\d{1,2})\s*:\s*(\d{2})$/);
-  if (!m) return null;
-  let hh = parseInt(m[1], 10);
-  const mm = parseInt(m[2], 10);
-  if (Number.isNaN(hh) || Number.isNaN(mm) || mm < 0 || mm > 59) return null;
-  if (mer) {
-    if (hh === 12) hh = mer === "am" ? 0 : 12;
-    else if (mer === "pm") hh += 12;
-  } else {
-    if (hh >= 12 || hh <= 7) {
-      if (hh !== 12) hh += 12;
-    }
-  }
-  return hh * 60 + mm;
+  const match = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  let h = parseInt(match[1]), m = parseInt(match[2]);
+  if (isNaN(h) || isNaN(m)) return null;
+  if (mer === 'am' && h === 12) h = 0;
+  else if (mer === 'pm' && h !== 12) h += 12;
+  else if (!mer && h <= 7) h += 12;
+  return h * 60 + m;
 }
 
-function minutesToTime(min) {
-  const hh = Math.floor(min / 60);
-  const mm = min % 60;
-  const h = hh % 12 === 0 ? 12 : hh % 12;
-  const m = String(mm).padStart(2, '0');
-  const ampm = hh < 12 ? 'am' : 'pm';
-  return `${h}:${m}${ampm}`;
+function formatTime(mins) {
+  const h = Math.floor(mins / 60), m = mins % 60;
+  const hr = h % 12 || 12;
+  return `${hr}:${String(m).padStart(2, '0')}${h < 12 ? 'am' : 'pm'}`;
 }
 
 // =================================================================
-// CONFLICT BANNER UI
+// UI: CONFLICT BANNER
 // =================================================================
 
-function renderConflictBanner(containerSelector, skeleton) {
-  const container = document.querySelector(containerSelector);
+function renderBanner(selector, skeleton, onRefresh) {
+  const container = document.querySelector(selector);
   if (!container) return [];
   
-  const existing = container.querySelector('.conflict-banner');
-  if (existing) existing.remove();
+  // Remove existing
+  container.querySelector('.conflict-banner')?.remove();
   
   const conflicts = detectConflicts(skeleton);
-  if (conflicts.length === 0) return [];
+  if (!conflicts.length) return [];
   
-  const criticalCount = conflicts.filter(c => c.type === 'critical').length;
-  const warningCount = conflicts.filter(c => c.type === 'warning').length;
+  const critCount = conflicts.filter(c => c.type === 'critical').length;
+  const warnCount = conflicts.filter(c => c.type === 'warning').length;
+  const hasCrit = critCount > 0;
   
   const banner = document.createElement('div');
   banner.className = 'conflict-banner';
-  
-  let iconHtml, bgColor, borderColor, textColor;
-  
-  if (criticalCount > 0) {
-    iconHtml = '🚨'; bgColor = '#ffebee'; borderColor = '#ef5350'; textColor = '#c62828';
-  } else {
-    iconHtml = '⚠️'; bgColor = '#fff8e1'; borderColor = '#ffb300'; textColor = '#f57f17';
-  }
-  
-  let message = criticalCount > 0 && warningCount > 0
-    ? `${criticalCount} conflict${criticalCount > 1 ? 's' : ''}, ${warningCount} warning${warningCount > 1 ? 's' : ''}`
-    : criticalCount > 0
-    ? `${criticalCount} conflict${criticalCount > 1 ? 's' : ''}`
-    : `${warningCount} warning${warningCount > 1 ? 's' : ''}`;
-  
-  const firstConflict = conflicts[0];
-  const preview = firstConflict ? `: ${firstConflict.resource} (${firstConflict.event1.division} ↔ ${firstConflict.event2.division})` : '';
-  
   banner.innerHTML = `
-    <div style="background:${bgColor};border:2px solid ${borderColor};border-radius:8px;padding:12px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-      <div style="display:flex;align-items:center;gap:10px;">
-        <span style="font-size:1.3em;">${iconHtml}</span>
-        <span style="color:${textColor};font-weight:600;">${message}</span>
-        <span style="color:#666;font-size:0.9em;">${preview}</span>
+    <div class="cb-inner ${hasCrit ? 'cb-critical' : 'cb-warning'}">
+      <div class="cb-icon">${hasCrit ? '🚨' : '⚠️'}</div>
+      <div class="cb-text">
+        <strong>${critCount ? `${critCount} critical` : ''}${critCount && warnCount ? ', ' : ''}${warnCount ? `${warnCount} warning` : ''}</strong>
+        <span>${conflicts[0].resource}: ${conflicts[0].event1.division} ↔ ${conflicts[0].event2.division}</span>
       </div>
-      <button class="conflict-details-btn" style="background:white;border:1px solid ${borderColor};color:${textColor};padding:6px 12px;border-radius:4px;cursor:pointer;font-size:0.85em;">View All</button>
+      <button class="cb-btn">View All</button>
     </div>
   `;
   
-  container.insertBefore(banner, container.firstChild);
-  banner.querySelector('.conflict-details-btn').onclick = () => showConflictDetails(conflicts);
+  container.prepend(banner);
+  banner.querySelector('.cb-btn').onclick = () => showConflictModal(conflicts);
   
   return conflicts;
 }
 
-function showConflictDetails(conflicts) {
-  const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:10000;display:flex;justify-content:center;align-items:center;';
-  
+function showConflictModal(conflicts) {
+  const overlay = createOverlay();
   const modal = document.createElement('div');
-  modal.style.cssText = 'background:white;border-radius:12px;padding:24px;max-width:600px;max-height:80vh;overflow-y:auto;box-shadow:0 20px 40px rgba(0,0,0,0.3);';
-  
-  let html = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-      <h3 style="margin:0;">Schedule Conflicts</h3>
-      <button class="close-btn" style="background:none;border:none;font-size:1.5em;cursor:pointer;color:#999;">&times;</button>
+  modal.className = 'ss-modal';
+  modal.innerHTML = `
+    <div class="ss-modal-header">
+      <h2>Schedule Conflicts</h2>
+      <button class="ss-close">&times;</button>
     </div>
-    <p style="color:#666;margin-bottom:16px;">Drag tiles on the skeleton to resolve conflicts.</p>
+    <p class="ss-hint">Drag tiles on the skeleton to resolve these conflicts.</p>
+    <div class="ss-conflict-list">
+      ${conflicts.map(c => `
+        <div class="ss-conflict-item ${c.type}">
+          <div class="ss-conflict-icon">${c.type === 'critical' ? '🚨' : '⚠️'}</div>
+          <div class="ss-conflict-info">
+            <strong>${c.resource}</strong>
+            <div class="ss-conflict-divs">
+              <span class="ss-div-tag">${c.event1.division}</span>
+              <span>${c.event1.startTime} - ${c.event1.endTime}</span>
+              <span class="ss-arrow">↔</span>
+              <span class="ss-div-tag">${c.event2.division}</span>
+              <span>${c.event2.startTime} - ${c.event2.endTime}</span>
+            </div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+    <div class="ss-modal-footer">
+      <button class="ss-btn-primary ss-close-btn">Got it</button>
+    </div>
   `;
   
-  conflicts.forEach(c => {
-    const bg = c.type === 'critical' ? '#ffebee' : '#fff8e1';
-    const border = c.type === 'critical' ? '#ef5350' : '#ffb300';
-    const icon = c.type === 'critical' ? '🚨' : '⚠️';
-    html += `
-      <div style="background:${bg};border-left:4px solid ${border};padding:12px;margin-bottom:8px;border-radius:0 8px 8px 0;">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;"><span>${icon}</span><strong>${c.resource}</strong></div>
-        <div style="color:#555;font-size:0.9em;">
-          <span style="background:#e3f2fd;padding:2px 6px;border-radius:3px;">${c.event1.division}</span> ${c.event1.startTime}-${c.event1.endTime}
-          <span style="margin:0 8px;">↔</span>
-          <span style="background:#e3f2fd;padding:2px 6px;border-radius:3px;">${c.event2.division}</span> ${c.event2.startTime}-${c.event2.endTime}
-        </div>
-      </div>
-    `;
-  });
-  
-  html += `<div style="margin-top:20px;text-align:right;"><button class="close-modal-btn" style="background:#333;color:white;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;">Got it</button></div>`;
-  
-  modal.innerHTML = html;
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
   
   const close = () => overlay.remove();
-  modal.querySelector('.close-btn').onclick = close;
-  modal.querySelector('.close-modal-btn').onclick = close;
-  overlay.onclick = (e) => { if (e.target === overlay) close(); };
+  modal.querySelector('.ss-close').onclick = close;
+  modal.querySelector('.ss-close-btn').onclick = close;
+  overlay.onclick = e => { if (e.target === overlay) close(); };
 }
 
 // =================================================================
-// FULLY CUSTOMIZABLE RULES MODAL
+// UI: RULES MODAL (IMPROVED)
 // =================================================================
 
-function showConflictRulesModal() {
-  loadConflictRules();
+function showRulesModal(onSaveCallback) {
+  loadRules();
   
-  const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:10000;display:flex;justify-content:center;align-items:center;padding:20px;';
-  
+  const overlay = createOverlay();
   const modal = document.createElement('div');
-  modal.style.cssText = 'background:white;border-radius:12px;padding:24px;max-width:700px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 20px 40px rgba(0,0,0,0.3);';
+  modal.className = 'ss-modal ss-rules-modal';
   
-  const renderResourceRows = () => conflictRules.resources.map((r, i) => `
-    <div class="resource-row" data-index="${i}" style="display:flex;gap:8px;align-items:center;margin-bottom:8px;padding:8px;background:#f9f9f9;border-radius:4px;">
-      <input type="text" class="res-name" value="${r.name}" placeholder="Name" style="flex:1;padding:6px;border:1px solid #ddd;border-radius:4px;">
-      <input type="text" class="res-aliases" value="${(r.aliases || []).join(', ')}" placeholder="Aliases" style="flex:1;padding:6px;border:1px solid #ddd;border-radius:4px;">
-      <select class="res-type" style="padding:6px;border:1px solid #ddd;border-radius:4px;">
-        <option value="critical" ${r.type === 'critical' ? 'selected' : ''}>🔴 Critical</option>
-        <option value="warning" ${r.type === 'warning' ? 'selected' : ''}>🟡 Warning</option>
-        <option value="ignore" ${r.type === 'ignore' ? 'selected' : ''}>⚪ Ignore</option>
-      </select>
-      <button class="remove-res-btn" data-index="${i}" style="background:#ef5350;color:white;border:none;padding:6px 10px;border-radius:4px;cursor:pointer;">✕</button>
-    </div>
-  `).join('');
-  
-  const renderAllowedOverlaps = () => conflictRules.allowedOverlaps.length === 0
-    ? '<p style="color:#999;font-size:0.9em;margin:0;">No exceptions</p>'
-    : conflictRules.allowedOverlaps.map((pair, i) => `
-      <div style="display:inline-flex;align-items:center;gap:4px;background:#e3f2fd;padding:4px 8px;border-radius:4px;margin:2px;">
-        <span>${pair[0]} ↔ ${pair[1]}</span>
-        <button class="remove-overlap-btn" data-index="${i}" style="background:none;border:none;cursor:pointer;color:#1976d2;">✕</button>
+  function renderTypeRules() {
+    return rules.tileTypeRules.map((r, i) => `
+      <div class="ss-rule-row" data-idx="${i}">
+        <input type="text" class="ss-input rule-type" value="${r.type}" placeholder="Type (e.g., swim)">
+        <input type="text" class="ss-input rule-label" value="${r.label || ''}" placeholder="Label">
+        <select class="ss-select rule-severity">
+          <option value="critical" ${r.severity === 'critical' ? 'selected' : ''}>🔴 Critical</option>
+          <option value="warning" ${r.severity === 'warning' ? 'selected' : ''}>🟡 Warning</option>
+        </select>
+        <label class="ss-check-label"><input type="checkbox" class="rule-samename" ${r.matchSameName ? 'checked' : ''}> Same name only</label>
+        <button class="ss-btn-icon ss-remove-rule" data-idx="${i}">✕</button>
       </div>
     `).join('');
+  }
+  
+  function renderNamedResources() {
+    return rules.namedResources.map((r, i) => `
+      <div class="ss-resource-row" data-idx="${i}">
+        <input type="text" class="ss-input res-name" value="${r.name}" placeholder="Name (e.g., Pool)">
+        <select class="ss-select res-severity">
+          <option value="critical" ${r.severity === 'critical' ? 'selected' : ''}>🔴 Critical</option>
+          <option value="warning" ${r.severity === 'warning' ? 'selected' : ''}>🟡 Warning</option>
+        </select>
+        <button class="ss-btn-icon ss-remove-res" data-idx="${i}">✕</button>
+      </div>
+    `).join('');
+  }
+  
+  function renderAllowedPairs() {
+    if (!rules.allowedPairs.length) return '<span class="ss-muted">None defined</span>';
+    return rules.allowedPairs.map((p, i) => `
+      <span class="ss-pair-tag">${p[0]} ↔ ${p[1]} <button class="ss-remove-pair" data-idx="${i}">✕</button></span>
+    `).join('');
+  }
   
   modal.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-      <h3 style="margin:0;">⚙️ Conflict Detection Rules</h3>
-      <button class="close-btn" style="background:none;border:none;font-size:1.5em;cursor:pointer;color:#999;">&times;</button>
+    <div class="ss-modal-header">
+      <h2>⚙️ Conflict Detection Rules</h2>
+      <button class="ss-close">&times;</button>
     </div>
     
-    <div style="margin-bottom:20px;padding:12px;background:#f5f5f5;border-radius:8px;">
-      <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
-        <input type="checkbox" id="rule-enabled" ${conflictRules.enabled ? 'checked' : ''} style="width:18px;height:18px;">
-        <strong>Enable Conflict Detection</strong>
-      </label>
-    </div>
-    
-    <div style="margin-bottom:20px;">
-      <h4 style="margin:0 0 10px 0;">📍 Resources</h4>
-      <p style="color:#666;font-size:0.85em;margin-bottom:10px;">Define resources that cause conflicts when overlapping.</p>
-      <div id="resources-list">${renderResourceRows()}</div>
-      <button id="add-resource-btn" style="background:#e3f2fd;color:#1976d2;border:1px solid #90caf9;padding:8px 12px;border-radius:4px;cursor:pointer;margin-top:8px;">+ Add Resource</button>
-    </div>
-    
-    <div style="margin-bottom:20px;">
-      <h4 style="margin:0 0 10px 0;">🚫 Ignored Event Types</h4>
-      <input type="text" id="ignored-types" value="${conflictRules.ignoredEventTypes.join(', ')}" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
-      <p style="color:#999;font-size:0.8em;margin-top:4px;">Comma-separated (e.g., slot, activity, sports)</p>
-    </div>
-    
-    <div style="margin-bottom:20px;">
-      <h4 style="margin:0 0 10px 0;">🚫 Ignored Event Names</h4>
-      <input type="text" id="ignored-names" value="${conflictRules.ignoredEventNames.join(', ')}" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
-    </div>
-    
-    <div style="margin-bottom:20px;">
-      <h4 style="margin:0 0 10px 0;">🤝 Allowed Division Overlaps</h4>
-      <p style="color:#666;font-size:0.85em;margin-bottom:10px;">Divisions that can share resources:</p>
-      <div id="allowed-overlaps-list" style="margin-bottom:10px;">${renderAllowedOverlaps()}</div>
-      <div style="display:flex;gap:8px;align-items:center;">
-        <select id="overlap-div1" style="flex:1;padding:6px;border:1px solid #ddd;border-radius:4px;">
-          <option value="">Div 1...</option>
-          ${(window.availableDivisions || []).map(d => `<option value="${d}">${d}</option>`).join('')}
-        </select>
-        <span>↔</span>
-        <select id="overlap-div2" style="flex:1;padding:6px;border:1px solid #ddd;border-radius:4px;">
-          <option value="">Div 2...</option>
-          ${(window.availableDivisions || []).map(d => `<option value="${d}">${d}</option>`).join('')}
-        </select>
-        <button id="add-overlap-btn" style="background:#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7;padding:6px 12px;border-radius:4px;cursor:pointer;">Add</button>
+    <div class="ss-modal-body">
+      <div class="ss-section">
+        <label class="ss-toggle">
+          <input type="checkbox" id="rules-enabled" ${rules.enabled ? 'checked' : ''}>
+          <span class="ss-toggle-slider"></span>
+          <span class="ss-toggle-label">Enable conflict detection</span>
+        </label>
+      </div>
+      
+      <div class="ss-section">
+        <h3>Tile Type Rules</h3>
+        <p class="ss-hint">Define which tile types cause conflicts across divisions.</p>
+        <div id="type-rules-container">${renderTypeRules()}</div>
+        <button id="add-type-rule" class="ss-btn-add">+ Add Type Rule</button>
+      </div>
+      
+      <div class="ss-section">
+        <h3>Named Resources</h3>
+        <p class="ss-hint">Events containing these names will conflict.</p>
+        <div id="named-resources-container">${renderNamedResources()}</div>
+        <button id="add-named-res" class="ss-btn-add">+ Add Resource</button>
+      </div>
+      
+      <div class="ss-section">
+        <h3>Allowed Division Pairs</h3>
+        <p class="ss-hint">These divisions can share resources without conflicts.</p>
+        <div id="pairs-container">${renderAllowedPairs()}</div>
+        <div class="ss-pair-add">
+          <select id="pair-d1" class="ss-select"><option value="">Division 1</option>${(window.availableDivisions||[]).map(d=>`<option>${d}</option>`).join('')}</select>
+          <span>↔</span>
+          <select id="pair-d2" class="ss-select"><option value="">Division 2</option>${(window.availableDivisions||[]).map(d=>`<option>${d}</option>`).join('')}</select>
+          <button id="add-pair" class="ss-btn-add">Add</button>
+        </div>
+      </div>
+      
+      <div class="ss-section">
+        <h3>Other Options</h3>
+        <label class="ss-toggle">
+          <input type="checkbox" id="reserved-fields" ${rules.reservedFieldsConflict ? 'checked' : ''}>
+          <span class="ss-toggle-slider"></span>
+          <span class="ss-toggle-label">Reserved fields cause conflicts</span>
+        </label>
+        <div class="ss-field-group">
+          <label>Ignored event types (comma-separated):</label>
+          <input type="text" id="ignored-types" class="ss-input" value="${rules.ignoredTypes.join(', ')}">
+        </div>
+        <div class="ss-field-group">
+          <label>Ignored event names (comma-separated):</label>
+          <input type="text" id="ignored-names" class="ss-input" value="${rules.ignoredNames.join(', ')}">
+        </div>
       </div>
     </div>
     
-    <div style="margin-bottom:20px;">
-      <h4 style="margin:0 0 10px 0;">⚙️ Other Options</h4>
-      <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer;">
-        <input type="checkbox" id="pinned-conflict" ${conflictRules.pinnedEventsConflict ? 'checked' : ''}>
-        <span>Same-name pinned events cause conflicts</span>
-      </label>
-      <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer;">
-        <input type="checkbox" id="reserved-conflict" ${conflictRules.reservedFieldsConflict ? 'checked' : ''}>
-        <span>Reserved fields cause conflicts</span>
-      </label>
-      <div style="display:flex;align-items:center;gap:8px;margin-top:12px;">
-        <span>Default for unlisted:</span>
-        <select id="default-behavior" style="padding:6px;border:1px solid #ddd;border-radius:4px;">
-          <option value="critical" ${conflictRules.defaultBehavior === 'critical' ? 'selected' : ''}>🔴 Critical</option>
-          <option value="warning" ${conflictRules.defaultBehavior === 'warning' ? 'selected' : ''}>🟡 Warning</option>
-          <option value="ignore" ${conflictRules.defaultBehavior === 'ignore' ? 'selected' : ''}>⚪ Ignore</option>
-        </select>
-      </div>
-    </div>
-    
-    <div style="display:flex;justify-content:space-between;margin-top:20px;padding-top:15px;border-top:1px solid #eee;">
-      <button id="reset-rules-btn" style="background:#fff3e0;color:#e65100;border:1px solid #ffcc80;padding:10px 16px;border-radius:6px;cursor:pointer;">Reset Defaults</button>
-      <div style="display:flex;gap:10px;">
-        <button class="cancel-btn" style="background:#f5f5f5;border:1px solid #ddd;padding:10px 20px;border-radius:6px;cursor:pointer;">Cancel</button>
-        <button class="save-btn" style="background:#2563eb;color:white;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;">Save</button>
+    <div class="ss-modal-footer ss-footer-split">
+      <button id="reset-rules" class="ss-btn-warning">Reset to Defaults</button>
+      <div class="ss-btn-group">
+        <button class="ss-btn-secondary ss-cancel">Cancel</button>
+        <button class="ss-btn-primary ss-save">Save & Apply</button>
       </div>
     </div>
   `;
@@ -442,93 +402,234 @@ function showConflictRulesModal() {
   document.body.appendChild(overlay);
   
   const close = () => overlay.remove();
-  modal.querySelector('.close-btn').onclick = close;
-  modal.querySelector('.cancel-btn').onclick = close;
-  overlay.onclick = (e) => { if (e.target === overlay) close(); };
+  modal.querySelector('.ss-close').onclick = close;
+  modal.querySelector('.ss-cancel').onclick = close;
+  overlay.onclick = e => { if (e.target === overlay) close(); };
   
-  const attachResourceListeners = () => {
-    modal.querySelectorAll('.remove-res-btn').forEach(btn => {
-      btn.onclick = () => {
-        conflictRules.resources.splice(parseInt(btn.dataset.index), 1);
-        modal.querySelector('#resources-list').innerHTML = renderResourceRows();
-        attachResourceListeners();
-      };
+  // Type rules handlers
+  function refreshTypeRules() {
+    modal.querySelector('#type-rules-container').innerHTML = renderTypeRules();
+    modal.querySelectorAll('.ss-remove-rule').forEach(btn => {
+      btn.onclick = () => { rules.tileTypeRules.splice(+btn.dataset.idx, 1); refreshTypeRules(); };
     });
+  }
+  modal.querySelector('#add-type-rule').onclick = () => {
+    rules.tileTypeRules.push({ type: '', severity: 'warning', label: '', matchSameName: false });
+    refreshTypeRules();
   };
-  attachResourceListeners();
+  refreshTypeRules();
   
-  modal.querySelector('#add-resource-btn').onclick = () => {
-    conflictRules.resources.push({ name: '', type: 'warning', aliases: [] });
-    modal.querySelector('#resources-list').innerHTML = renderResourceRows();
-    attachResourceListeners();
-  };
-  
-  const attachOverlapListeners = () => {
-    modal.querySelectorAll('.remove-overlap-btn').forEach(btn => {
-      btn.onclick = () => {
-        conflictRules.allowedOverlaps.splice(parseInt(btn.dataset.index), 1);
-        modal.querySelector('#allowed-overlaps-list').innerHTML = renderAllowedOverlaps();
-        attachOverlapListeners();
-      };
+  // Named resources handlers
+  function refreshResources() {
+    modal.querySelector('#named-resources-container').innerHTML = renderNamedResources();
+    modal.querySelectorAll('.ss-remove-res').forEach(btn => {
+      btn.onclick = () => { rules.namedResources.splice(+btn.dataset.idx, 1); refreshResources(); };
     });
+  }
+  modal.querySelector('#add-named-res').onclick = () => {
+    rules.namedResources.push({ name: '', severity: 'warning' });
+    refreshResources();
   };
-  attachOverlapListeners();
+  refreshResources();
   
-  modal.querySelector('#add-overlap-btn').onclick = () => {
-    const div1 = modal.querySelector('#overlap-div1').value;
-    const div2 = modal.querySelector('#overlap-div2').value;
-    if (div1 && div2 && div1 !== div2) {
-      const exists = conflictRules.allowedOverlaps.some(p => (p[0] === div1 && p[1] === div2) || (p[0] === div2 && p[1] === div1));
-      if (!exists) {
-        conflictRules.allowedOverlaps.push([div1, div2]);
-        modal.querySelector('#allowed-overlaps-list').innerHTML = renderAllowedOverlaps();
-        attachOverlapListeners();
-      }
+  // Pairs handlers
+  function refreshPairs() {
+    modal.querySelector('#pairs-container').innerHTML = renderAllowedPairs();
+    modal.querySelectorAll('.ss-remove-pair').forEach(btn => {
+      btn.onclick = () => { rules.allowedPairs.splice(+btn.dataset.idx, 1); refreshPairs(); };
+    });
+  }
+  modal.querySelector('#add-pair').onclick = () => {
+    const d1 = modal.querySelector('#pair-d1').value;
+    const d2 = modal.querySelector('#pair-d2').value;
+    if (d1 && d2 && d1 !== d2 && !rules.allowedPairs.some(p=>(p[0]===d1&&p[1]===d2)||(p[0]===d2&&p[1]===d1))) {
+      rules.allowedPairs.push([d1, d2]);
+      refreshPairs();
+    }
+  };
+  refreshPairs();
+  
+  // Reset
+  modal.querySelector('#reset-rules').onclick = () => {
+    if (confirm('Reset all rules to defaults?')) {
+      resetRules();
+      close();
+      showRulesModal(onSaveCallback);
     }
   };
   
-  modal.querySelector('#reset-rules-btn').onclick = () => {
-    if (confirm('Reset all rules to defaults?')) { resetConflictRules(); close(); showConflictRulesModal(); }
-  };
-  
-  modal.querySelector('.save-btn').onclick = () => {
-    conflictRules.resources = [];
-    modal.querySelectorAll('.resource-row').forEach(row => {
-      const name = row.querySelector('.res-name').value.trim();
-      const aliases = row.querySelector('.res-aliases').value.split(',').map(s => s.trim()).filter(Boolean);
-      const type = row.querySelector('.res-type').value;
-      if (name) conflictRules.resources.push({ name, aliases, type });
+  // SAVE - with immediate refresh
+  modal.querySelector('.ss-save').onclick = () => {
+    // Gather type rules
+    rules.tileTypeRules = [];
+    modal.querySelectorAll('.ss-rule-row').forEach(row => {
+      const type = row.querySelector('.rule-type').value.trim();
+      const label = row.querySelector('.rule-label').value.trim();
+      const severity = row.querySelector('.rule-severity').value;
+      const matchSameName = row.querySelector('.rule-samename').checked;
+      if (type) rules.tileTypeRules.push({ type, label: label || type, severity, matchSameName });
     });
     
-    conflictRules.enabled = modal.querySelector('#rule-enabled').checked;
-    conflictRules.ignoredEventTypes = modal.querySelector('#ignored-types').value.split(',').map(s => s.trim()).filter(Boolean);
-    conflictRules.ignoredEventNames = modal.querySelector('#ignored-names').value.split(',').map(s => s.trim()).filter(Boolean);
-    conflictRules.pinnedEventsConflict = modal.querySelector('#pinned-conflict').checked;
-    conflictRules.reservedFieldsConflict = modal.querySelector('#reserved-conflict').checked;
-    conflictRules.defaultBehavior = modal.querySelector('#default-behavior').value;
+    // Gather named resources
+    rules.namedResources = [];
+    modal.querySelectorAll('.ss-resource-row').forEach(row => {
+      const name = row.querySelector('.res-name').value.trim();
+      const severity = row.querySelector('.res-severity').value;
+      if (name) rules.namedResources.push({ name, severity });
+    });
     
-    saveConflictRules();
+    // Other options
+    rules.enabled = modal.querySelector('#rules-enabled').checked;
+    rules.reservedFieldsConflict = modal.querySelector('#reserved-fields').checked;
+    rules.ignoredTypes = modal.querySelector('#ignored-types').value.split(',').map(s=>s.trim()).filter(Boolean);
+    rules.ignoredNames = modal.querySelector('#ignored-names').value.split(',').map(s=>s.trim()).filter(Boolean);
+    
+    saveRules();
     close();
+    
+    // INSTANT REFRESH
+    if (onSaveCallback) onSaveCallback();
     if (window.refreshSkeletonConflicts) window.refreshSkeletonConflicts();
   };
 }
 
 // =================================================================
-// EXPORTS
+// HELPERS
 // =================================================================
 
-loadConflictRules();
+function createOverlay() {
+  const el = document.createElement('div');
+  el.className = 'ss-overlay';
+  return el;
+}
+
+function injectStyles() {
+  if (document.getElementById('ss-styles-v3')) return;
+  const style = document.createElement('style');
+  style.id = 'ss-styles-v3';
+  style.textContent = `
+    /* Overlay */
+    .ss-overlay { position:fixed; inset:0; background:rgba(0,0,0,.5); backdrop-filter:blur(4px); z-index:10000; display:flex; justify-content:center; align-items:center; padding:20px; animation:ssFadeIn .2s ease; }
+    @keyframes ssFadeIn { from{opacity:0} to{opacity:1} }
+    
+    /* Modal */
+    .ss-modal { background:#fff; border-radius:16px; width:100%; max-width:580px; max-height:90vh; overflow:hidden; display:flex; flex-direction:column; box-shadow:0 25px 60px rgba(0,0,0,.3); animation:ssSlideUp .25s ease; }
+    .ss-rules-modal { max-width:700px; }
+    @keyframes ssSlideUp { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
+    
+    .ss-modal-header { display:flex; justify-content:space-between; align-items:center; padding:20px 24px; border-bottom:1px solid #e5e7eb; }
+    .ss-modal-header h2 { margin:0; font-size:1.25em; }
+    .ss-close { background:none; border:none; font-size:1.6em; cursor:pointer; color:#9ca3af; transition:color .15s; }
+    .ss-close:hover { color:#374151; }
+    
+    .ss-modal-body { padding:20px 24px; overflow-y:auto; flex:1; }
+    .ss-modal-footer { padding:16px 24px; border-top:1px solid #e5e7eb; display:flex; justify-content:flex-end; gap:10px; }
+    .ss-footer-split { justify-content:space-between; }
+    .ss-btn-group { display:flex; gap:10px; }
+    
+    .ss-hint { color:#6b7280; font-size:.9em; margin:0 0 16px; }
+    .ss-muted { color:#9ca3af; font-size:.9em; }
+    
+    /* Sections */
+    .ss-section { margin-bottom:24px; }
+    .ss-section h3 { margin:0 0 6px; font-size:1em; color:#374151; }
+    
+    /* Toggle */
+    .ss-toggle { display:flex; align-items:center; gap:12px; cursor:pointer; margin-bottom:12px; }
+    .ss-toggle input { display:none; }
+    .ss-toggle-slider { width:44px; height:24px; background:#e5e7eb; border-radius:24px; position:relative; transition:background .2s; }
+    .ss-toggle-slider::before { content:''; position:absolute; width:18px; height:18px; background:#fff; border-radius:50%; top:3px; left:3px; transition:transform .2s; }
+    .ss-toggle input:checked + .ss-toggle-slider { background:#10b981; }
+    .ss-toggle input:checked + .ss-toggle-slider::before { transform:translateX(20px); }
+    .ss-toggle-label { font-weight:500; }
+    
+    /* Inputs */
+    .ss-input { padding:10px 14px; border:1px solid #e5e7eb; border-radius:8px; font-size:.95em; transition:border-color .15s,box-shadow .15s; }
+    .ss-input:focus { outline:none; border-color:#3b82f6; box-shadow:0 0 0 3px rgba(59,130,246,.15); }
+    .ss-select { padding:10px 14px; border:1px solid #e5e7eb; border-radius:8px; background:#fff; font-size:.95em; cursor:pointer; }
+    
+    .ss-field-group { margin-top:12px; }
+    .ss-field-group label { display:block; font-weight:500; margin-bottom:6px; font-size:.9em; }
+    .ss-field-group .ss-input { width:100%; box-sizing:border-box; }
+    
+    /* Rule rows */
+    .ss-rule-row, .ss-resource-row { display:flex; gap:8px; align-items:center; margin-bottom:10px; padding:12px; background:#f9fafb; border-radius:10px; flex-wrap:wrap; }
+    .ss-rule-row .ss-input, .ss-resource-row .ss-input { flex:1; min-width:100px; }
+    .ss-rule-row .ss-select, .ss-resource-row .ss-select { min-width:120px; }
+    .ss-check-label { display:flex; align-items:center; gap:6px; font-size:.85em; color:#6b7280; white-space:nowrap; }
+    .ss-btn-icon { width:32px; height:32px; border:none; border-radius:8px; cursor:pointer; font-weight:bold; display:flex; align-items:center; justify-content:center; transition:all .15s; }
+    .ss-remove-rule, .ss-remove-res { background:#fee2e2; color:#dc2626; }
+    .ss-remove-rule:hover, .ss-remove-res:hover { background:#fecaca; }
+    
+    /* Pairs */
+    .ss-pair-tag { display:inline-flex; align-items:center; gap:6px; background:#dbeafe; color:#1e40af; padding:6px 12px; border-radius:20px; margin:4px; font-size:.9em; }
+    .ss-pair-tag button { background:none; border:none; color:#3b82f6; cursor:pointer; padding:0; font-size:1.1em; }
+    .ss-pair-add { display:flex; gap:8px; align-items:center; margin-top:12px; }
+    .ss-pair-add .ss-select { flex:1; }
+    
+    /* Buttons */
+    .ss-btn-add { background:#eff6ff; color:#2563eb; border:1px solid #bfdbfe; padding:10px 18px; border-radius:8px; cursor:pointer; font-weight:500; transition:all .15s; }
+    .ss-btn-add:hover { background:#dbeafe; }
+    .ss-btn-primary { background:#2563eb; color:#fff; border:none; padding:12px 24px; border-radius:8px; cursor:pointer; font-weight:600; transition:all .15s; }
+    .ss-btn-primary:hover { background:#1d4ed8; }
+    .ss-btn-secondary { background:#f3f4f6; border:1px solid #e5e7eb; padding:12px 24px; border-radius:8px; cursor:pointer; font-weight:500; }
+    .ss-btn-secondary:hover { background:#e5e7eb; }
+    .ss-btn-warning { background:#fef3c7; color:#92400e; border:1px solid #fcd34d; padding:12px 20px; border-radius:8px; cursor:pointer; font-weight:500; }
+    .ss-btn-warning:hover { background:#fde68a; }
+    
+    /* Conflict list */
+    .ss-conflict-list { max-height:350px; overflow-y:auto; }
+    .ss-conflict-item { display:flex; gap:12px; padding:14px; margin-bottom:10px; border-radius:10px; }
+    .ss-conflict-item.critical { background:#fef2f2; border-left:4px solid #ef4444; }
+    .ss-conflict-item.warning { background:#fffbeb; border-left:4px solid #f59e0b; }
+    .ss-conflict-icon { font-size:1.2em; }
+    .ss-conflict-info strong { display:block; margin-bottom:6px; }
+    .ss-conflict-divs { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:.9em; color:#6b7280; }
+    .ss-div-tag { background:#e0f2fe; color:#0369a1; padding:4px 10px; border-radius:6px; font-weight:500; }
+    .ss-arrow { color:#9ca3af; }
+    
+    /* Banner */
+    .conflict-banner { margin-bottom:16px; animation:ssSlideDown .3s ease; }
+    @keyframes ssSlideDown { from{opacity:0;transform:translateY(-10px)} to{opacity:1;transform:translateY(0)} }
+    .cb-inner { display:flex; align-items:center; gap:14px; padding:14px 18px; border-radius:12px; border:2px solid; }
+    .cb-critical { background:#fef2f2; border-color:#fca5a5; }
+    .cb-warning { background:#fffbeb; border-color:#fcd34d; }
+    .cb-icon { font-size:1.4em; }
+    .cb-text { flex:1; }
+    .cb-text strong { color:#dc2626; }
+    .cb-warning .cb-text strong { color:#d97706; }
+    .cb-text span { color:#6b7280; margin-left:8px; }
+    .cb-btn { background:#fff; border:1px solid currentColor; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:500; transition:all .15s; }
+    .cb-critical .cb-btn { color:#dc2626; border-color:#fca5a5; }
+    .cb-warning .cb-btn { color:#d97706; border-color:#fcd34d; }
+    .cb-btn:hover { transform:translateY(-1px); }
+    
+    /* Conflict highlights */
+    @keyframes ssPulse { 0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.4)} 50%{box-shadow:0 0 0 8px rgba(239,68,68,0)} }
+    @keyframes ssPulseWarn { 0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,.4)} 50%{box-shadow:0 0 0 8px rgba(245,158,11,0)} }
+    .conflict-critical { animation:ssPulse 1.5s infinite !important; border:3px solid #ef4444 !important; background:linear-gradient(135deg,#fef2f2,#fecaca) !important; }
+    .conflict-warning { animation:ssPulseWarn 2s infinite !important; border:3px solid #f59e0b !important; background:linear-gradient(135deg,#fffbeb,#fde68a) !important; }
+  `;
+  document.head.appendChild(style);
+}
+
+// =================================================================
+// INIT
+// =================================================================
+
+injectStyles();
+loadRules();
 
 window.SkeletonSandbox = {
   detectConflicts,
-  renderConflictBanner,
-  showConflictRulesModal,
-  loadConflictRules,
-  saveConflictRules,
-  resetConflictRules,
-  getConflictingEventIds,
-  parseTimeToMinutes,
-  minutesToTime
+  renderBanner,
+  showRulesModal,
+  getConflictIds,
+  parseTime,
+  formatTime,
+  loadRules,
+  saveRules,
+  resetRules
 };
 
 })();
