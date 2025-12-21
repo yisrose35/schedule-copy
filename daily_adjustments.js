@@ -1,9 +1,12 @@
 // =================================================================
-// daily_adjustments.js  (UPDATED - SMOOTH DRAG & MINOR UI POLISH)
-// - Added smooth drag-to-reposition with visual preview
-// - Tiles bump down instead of being deleted
-// - Minor UI/UX improvements
-// - All original functionality preserved
+// daily_adjustments.js  (UPDATED - v2.0)
+// - Conflict highlighting on load
+// - 5-minute increments for drag/resize
+// - Resize handles on tiles
+// - Duration display on tiles
+// - Fixed Resource Availability toggles
+// - Field sports toggle in resources
+// - Removed conflict banner (tiles show colors)
 // =================================================================
 
 (function() {
@@ -69,6 +72,7 @@ let activeSubTab = 'skeleton';
 let dailyOverrideSkeleton = [];
 const PIXELS_PER_MINUTE = 2;
 const INCREMENT_MINS = 30;
+const SNAP_MINS = 5; // 5-minute increments for drag/resize
 
 // --- Tile Definitions (MATCH master_schedule_builder.js) ---
 const TILES = [
@@ -245,6 +249,20 @@ function bumpOverlappingTiles(newEvent, divName) {
 }
 
 // =================================================================
+// HELPER: Calculate duration text
+// =================================================================
+function getDurationText(startTime, endTime) {
+  const startMin = parseTimeToMinutes(startTime);
+  const endMin = parseTimeToMinutes(endTime);
+  if (startMin == null || endMin == null) return '';
+  const duration = endMin - startMin;
+  if (duration < 60) return `${duration}m`;
+  const hours = Math.floor(duration / 60);
+  const mins = duration % 60;
+  return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+}
+
+// =================================================================
 // RENDER FUNCTIONS
 // =================================================================
 
@@ -393,13 +411,11 @@ function renderGrid(gridContainer) {
   
   addDropListeners(gridContainer);
   addDragToRepositionListeners(gridContainer);
+  addResizeListeners(gridContainer);
   addRemoveListeners(gridContainer);
   
-  // Apply conflict highlighting if sandbox is available
-  if (window.SkeletonSandbox) {
-    window.SkeletonSandbox.renderBanner('#override-scheduler-content', dailyOverrideSkeleton);
-    applyConflictHighlighting(gridContainer);
-  }
+  // Apply conflict highlighting immediately on render
+  applyConflictHighlighting(gridContainer);
 }
 
 function renderEventTile(event, top, height) {
@@ -420,28 +436,117 @@ function renderEventTile(event, top, height) {
     tripStyle = 'background:#455a64;color:white;border:1px solid #263238;';
   }
 
-  let innerHtml = `<strong style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${event.event}</strong><div style="font-size:.8em;color:#555;">${event.startTime} - ${event.endTime}</div>`;
+  // Calculate duration
+  const duration = getDurationText(event.startTime, event.endTime);
+
+  let innerHtml = `<strong style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:0.85em;">${event.event}</strong>`;
+  innerHtml += `<div style="font-size:.75em;color:inherit;opacity:0.85;">${event.startTime} - ${event.endTime}</div>`;
+  innerHtml += `<div style="font-size:.7em;font-weight:600;opacity:0.7;margin-top:1px;">${duration}</div>`;
   
   if (event.reservedFields && event.reservedFields.length > 0) {
-    innerHtml += `<div style="font-size:0.7em;color:#c62828;margin-top:2px;">📍 ${event.reservedFields.join(', ')}</div>`;
+    innerHtml += `<div style="font-size:0.65em;color:#c62828;margin-top:2px;">📍 ${event.reservedFields.join(', ')}</div>`;
   }
   
   if (event.type === 'smart' && event.smartData) {
-    innerHtml += `<div style="font-size:0.7em;margin-top:2px;opacity:0.8;">↳ ${event.smartData.fallbackActivity}</div>`;
+    innerHtml += `<div style="font-size:0.65em;margin-top:2px;opacity:0.8;">↳ ${event.smartData.fallbackActivity}</div>`;
   }
 
   return `
     <div class="grid-event"
          data-event-id="${event.id}"
          draggable="true"
-         title="Drag to move • Double-click to remove"
-         style="${tripStyle || style}padding:4px 6px;border-radius:6px;text-align:center;
+         title="Drag to move • Double-click to remove • Drag bottom edge to resize"
+         style="${tripStyle || style}padding:4px 6px 12px 6px;border-radius:6px;text-align:center;
                  margin:0 2px;font-size:.85em;position:absolute;
                  top:${top}px;height:${height}px;width:calc(100% - 6px);
                  box-sizing:border-box;overflow:hidden;cursor:grab;
                  transition:transform 0.1s, box-shadow 0.1s;">
       ${innerHtml}
+      <div class="resize-handle" style="position:absolute;bottom:0;left:0;right:0;height:8px;cursor:ns-resize;background:linear-gradient(transparent, rgba(0,0,0,0.1));border-radius:0 0 6px 6px;"></div>
     </div>`;
+}
+
+// =================================================================
+// RESIZE FUNCTIONALITY
+// =================================================================
+
+function addResizeListeners(gridContainer) {
+  const earliestMin = parseInt(gridContainer.dataset.earliestMin, 10) || 540;
+  
+  gridContainer.querySelectorAll('.grid-event').forEach(tile => {
+    const handle = tile.querySelector('.resize-handle');
+    if (!handle) return;
+    
+    let isResizing = false;
+    let startY = 0;
+    let startHeight = 0;
+    let eventId = null;
+    
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      isResizing = true;
+      startY = e.clientY;
+      startHeight = tile.offsetHeight;
+      eventId = tile.dataset.eventId;
+      
+      tile.style.transition = 'none';
+      tile.style.zIndex = '100';
+      
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
+    
+    function onMouseMove(e) {
+      if (!isResizing) return;
+      
+      const deltaY = e.clientY - startY;
+      const newHeight = Math.max(SNAP_MINS * PIXELS_PER_MINUTE, startHeight + deltaY);
+      const snappedHeight = Math.round(newHeight / (SNAP_MINS * PIXELS_PER_MINUTE)) * (SNAP_MINS * PIXELS_PER_MINUTE);
+      
+      tile.style.height = snappedHeight + 'px';
+    }
+    
+    function onMouseUp(e) {
+      if (!isResizing) return;
+      isResizing = false;
+      
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      
+      tile.style.transition = '';
+      tile.style.zIndex = '';
+      
+      // Calculate new end time
+      const event = dailyOverrideSkeleton.find(ev => ev.id === eventId);
+      if (!event) return;
+      
+      const newHeightPx = parseInt(tile.style.height, 10);
+      const newDurationMin = Math.round(newHeightPx / PIXELS_PER_MINUTE / SNAP_MINS) * SNAP_MINS;
+      const startMin = parseTimeToMinutes(event.startTime);
+      const newEndMin = startMin + newDurationMin;
+      
+      // Validate against division end
+      const div = window.divisions?.[event.division] || {};
+      const divEndMin = parseTimeToMinutes(div.endTime) || 960;
+      
+      if (newEndMin > divEndMin) {
+        event.endTime = minutesToTime(divEndMin);
+      } else {
+        event.endTime = minutesToTime(newEndMin);
+      }
+      
+      saveDailySkeleton();
+      renderGrid(gridContainer);
+    }
+    
+    // Prevent drag when clicking resize handle
+    handle.addEventListener('dragstart', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+  });
 }
 
 // =================================================================
@@ -465,6 +570,12 @@ function addDragToRepositionListeners(gridContainer) {
   // Make existing events draggable
   gridContainer.querySelectorAll('.grid-event').forEach(tile => {
     tile.addEventListener('dragstart', (e) => {
+      // Don't drag if clicking resize handle
+      if (e.target.classList.contains('resize-handle')) {
+        e.preventDefault();
+        return;
+      }
+      
       const eventId = tile.dataset.eventId;
       const event = dailyOverrideSkeleton.find(ev => ev.id === eventId);
       if (!event) return;
@@ -522,7 +633,7 @@ function addDragToRepositionListeners(gridContainer) {
       if (isEventMove && dragData && preview) {
         const rect = cell.getBoundingClientRect();
         const y = e.clientY - rect.top;
-        const snapMin = Math.round(y / PIXELS_PER_MINUTE / 15) * 15;
+        const snapMin = Math.round(y / PIXELS_PER_MINUTE / SNAP_MINS) * SNAP_MINS;
         const cellStartMin = parseInt(cell.dataset.startMin, 10);
         
         preview.style.display = 'block';
@@ -555,7 +666,7 @@ function addDragToRepositionListeners(gridContainer) {
         
         const rect = cell.getBoundingClientRect();
         const y = e.clientY - rect.top;
-        const snapMin = Math.round(y / PIXELS_PER_MINUTE / 15) * 15;
+        const snapMin = Math.round(y / PIXELS_PER_MINUTE / SNAP_MINS) * SNAP_MINS;
         
         const duration = parseTimeToMinutes(event.endTime) - parseTimeToMinutes(event.startTime);
         const newStartMin = cellStartMin + snapMin;
@@ -638,7 +749,7 @@ function addDropListeners(gridContainer) {
       const rect = cell.getBoundingClientRect();
       const scrollTop = cell.closest('#daily-skeleton-grid')?.scrollTop || 0;
       const y = e.clientY - rect.top + scrollTop;
-      const droppedMin = Math.round(y / PIXELS_PER_MINUTE / 15) * 15;
+      const droppedMin = Math.round(y / PIXELS_PER_MINUTE / SNAP_MINS) * SNAP_MINS;
       const earliestMin = parseInt(cell.dataset.startMin, 10);
       const defaultStartTime = minutesToTime(earliestMin + droppedMin);
 
@@ -886,6 +997,9 @@ function addRemoveListeners(gridContainer) {
   gridContainer.querySelectorAll('.grid-event').forEach(tile => {
     tile.ondblclick = (e) => {
       e.stopPropagation();
+      // Don't trigger on resize handle
+      if (e.target.classList.contains('resize-handle')) return;
+      
       const eventId = tile.dataset.eventId;
       if (!eventId) return;
       const event = dailyOverrideSkeleton.find(ev => ev.id === eventId);
@@ -1048,7 +1162,7 @@ function init() {
     <div style="padding:12px 18px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
       <div>
         <h2 style="margin:0 0 4px 0;font-size:1.3em;color:#1f2937;">Daily Adjustments for ${window.currentScheduleDate}</h2>
-        <p style="margin:0;font-size:0.9em;color:#6b7280;">Drag tiles to reposition • Double-click to remove • Overlapping tiles bump down</p>
+        <p style="margin:0;font-size:0.9em;color:#6b7280;">Drag tiles to reposition • Double-click to remove • Drag bottom edge to resize</p>
       </div>
       <button id="run-optimizer-btn"
               style="background:#10b981;color:white;padding:12px 24px;font-size:1.1em;border:none;border-radius:8px;cursor:pointer;font-weight:600;transition:all 0.15s;box-shadow:0 2px 8px rgba(16,185,129,0.3);">
@@ -1118,6 +1232,9 @@ function init() {
       .grid-cell.drag-over {
         background:rgba(37,99,235,0.08) !important;
       }
+      .resize-handle:hover {
+        background:linear-gradient(transparent, rgba(0,0,0,0.25)) !important;
+      }
       @keyframes pulse {
         0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
         50% { box-shadow: 0 0 0 8px rgba(239,68,68,0); }
@@ -1159,6 +1276,110 @@ function init() {
         background:#059669;
         transform:translateY(-1px);
         box-shadow:0 4px 12px rgba(16,185,129,0.4);
+      }
+      /* Resource Toggle Styles */
+      .resource-toggle-row {
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        padding:10px 12px;
+        background:#fff;
+        border:1px solid #e5e7eb;
+        border-radius:8px;
+        margin-bottom:6px;
+        transition:all 0.15s;
+      }
+      .resource-toggle-row:hover {
+        background:#f9fafb;
+        border-color:#d1d5db;
+      }
+      .resource-toggle-row.disabled-row {
+        background:#fef2f2;
+        border-color:#fecaca;
+      }
+      .resource-toggle-row.expanded {
+        border-color:#3b82f6;
+        background:#eff6ff;
+      }
+      .resource-toggle-name {
+        font-weight:500;
+        color:#1f2937;
+        flex:1;
+      }
+      .resource-toggle-switch {
+        position:relative;
+        width:44px;
+        height:24px;
+        flex-shrink:0;
+      }
+      .resource-toggle-switch input {
+        opacity:0;
+        width:0;
+        height:0;
+      }
+      .resource-toggle-slider {
+        position:absolute;
+        cursor:pointer;
+        top:0;
+        left:0;
+        right:0;
+        bottom:0;
+        background:#e5e7eb;
+        transition:0.2s;
+        border-radius:24px;
+      }
+      .resource-toggle-slider:before {
+        position:absolute;
+        content:"";
+        height:18px;
+        width:18px;
+        left:3px;
+        bottom:3px;
+        background:white;
+        transition:0.2s;
+        border-radius:50%;
+        box-shadow:0 1px 3px rgba(0,0,0,0.2);
+      }
+      .resource-toggle-switch input:checked + .resource-toggle-slider {
+        background:#10b981;
+      }
+      .resource-toggle-switch input:checked + .resource-toggle-slider:before {
+        transform:translateX(20px);
+      }
+      .field-sports-panel {
+        margin-top:8px;
+        padding:12px;
+        background:#f8fafc;
+        border:1px solid #e2e8f0;
+        border-radius:8px;
+      }
+      .field-sports-title {
+        font-size:0.85em;
+        font-weight:600;
+        color:#64748b;
+        margin-bottom:8px;
+      }
+      .field-sport-chip {
+        display:inline-block;
+        padding:4px 10px;
+        margin:2px;
+        border-radius:999px;
+        font-size:0.8em;
+        cursor:pointer;
+        transition:all 0.15s;
+        border:1px solid #e5e7eb;
+        background:#fff;
+      }
+      .field-sport-chip.enabled {
+        background:#dcfce7;
+        border-color:#86efac;
+        color:#166534;
+      }
+      .field-sport-chip.disabled {
+        background:#fee2e2;
+        border-color:#fecaca;
+        color:#991b1b;
+        text-decoration:line-through;
       }
     </style>
   `;
@@ -1531,29 +1752,32 @@ function renderExistingBunkOverrides() {
 }
 
 // =================================================================
-// RESOURCE OVERRIDES UI
+// RESOURCE OVERRIDES UI - IMPROVED
 // =================================================================
+
+let expandedField = null;
 
 function renderResourceOverridesUI() {
   if (!resourceOverridesContainer) return;
 
   resourceOverridesContainer.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:24px;">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:24px;">
       <div>
         <h4 style="margin:0 0 12px 0;color:#374151;">Fields</h4>
-        <div id="override-fields-list" class="master-list"></div>
+        <p style="font-size:0.8em;color:#6b7280;margin-bottom:12px;">Click a field to toggle specific sports on/off</p>
+        <div id="override-fields-list"></div>
       </div>
       <div>
         <h4 style="margin:0 0 12px 0;color:#374151;">Special Activities</h4>
-        <div id="override-specials-list" class="master-list"></div>
+        <div id="override-specials-list"></div>
       </div>
       <div>
         <h4 style="margin:0 0 12px 0;color:#374151;">Leagues</h4>
-        <div id="override-leagues-list" class="master-list"></div>
+        <div id="override-leagues-list"></div>
       </div>
       <div>
         <h4 style="margin:0 0 12px 0;color:#374151;">Specialty Leagues</h4>
-        <div id="override-specialty-leagues-list" class="master-list"></div>
+        <div id="override-specialty-leagues-list"></div>
       </div>
     </div>
   `;
@@ -1565,73 +1789,146 @@ function renderResourceOverridesUI() {
     fullOverrides.disabledFields = currentOverrides.disabledFields;
     fullOverrides.disabledSpecials = currentOverrides.disabledSpecials;
     window.saveCurrentDailyData("overrides", fullOverrides);
+    window.saveCurrentDailyData("dailyDisabledSportsByField", currentOverrides.dailyDisabledSportsByField);
   };
 
-  const createToggle = (name, isEnabled, onToggle) => {
-    const el = document.createElement('div');
-    el.className = 'list-item';
-    el.innerHTML = `
-      <span class="list-item-name">${name}</span>
-      <label class="switch" style="position:relative;width:44px;height:24px;flex-shrink:0;">
-        <input type="checkbox" ${isEnabled ? 'checked' : ''} style="opacity:0;width:0;height:0;">
-        <span class="slider" style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:${isEnabled ? '#10b981' : '#e5e7eb'};transition:.2s;border-radius:24px;"></span>
-      </label>
-    `;
-    
-    const checkbox = el.querySelector('input');
-    const slider = el.querySelector('.slider');
-    
-    checkbox.onchange = () => {
-      onToggle(checkbox.checked);
-      slider.style.background = checkbox.checked ? '#10b981' : '#e5e7eb';
-    };
-    
-    return el;
-  };
-
+  // Fields with expandable sports
   const fields = masterSettings.app1.fields || [];
   const overrideFieldsListEl = document.getElementById("override-fields-list");
+  
   fields.forEach(item => {
     const isDisabled = currentOverrides.disabledFields.includes(item.name);
-    overrideFieldsListEl.appendChild(createToggle(item.name, !isDisabled, (isEnabled) => {
-      if (isEnabled) currentOverrides.disabledFields = currentOverrides.disabledFields.filter(n => n !== item.name);
-      else if (!currentOverrides.disabledFields.includes(item.name)) currentOverrides.disabledFields.push(item.name);
+    const isExpanded = expandedField === item.name;
+    
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = `
+      <div class="resource-toggle-row ${isDisabled ? 'disabled-row' : ''} ${isExpanded ? 'expanded' : ''}" data-field="${item.name}">
+        <div style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer;" class="field-name-area">
+          <span style="color:#6b7280;font-size:0.9em;">${isExpanded ? '▼' : '▶'}</span>
+          <span class="resource-toggle-name">${item.name}</span>
+          <span style="font-size:0.75em;color:#9ca3af;">(${(item.activities || []).length} sports)</span>
+        </div>
+        <label class="resource-toggle-switch" onclick="event.stopPropagation()">
+          <input type="checkbox" ${!isDisabled ? 'checked' : ''}>
+          <span class="resource-toggle-slider"></span>
+        </label>
+      </div>
+      ${isExpanded ? `
+        <div class="field-sports-panel">
+          <div class="field-sports-title">Sports available on ${item.name}:</div>
+          <div class="field-sports-chips">
+            ${(item.activities || []).map(sport => {
+              const disabledSports = currentOverrides.dailyDisabledSportsByField[item.name] || [];
+              const isSportDisabled = disabledSports.includes(sport);
+              return `<span class="field-sport-chip ${isSportDisabled ? 'disabled' : 'enabled'}" data-field="${item.name}" data-sport="${sport}">${sport}</span>`;
+            }).join('')}
+          </div>
+        </div>
+      ` : ''}
+    `;
+    
+    // Toggle field enabled/disabled
+    const checkbox = wrapper.querySelector('input[type="checkbox"]');
+    checkbox.onchange = () => {
+      if (checkbox.checked) {
+        currentOverrides.disabledFields = currentOverrides.disabledFields.filter(n => n !== item.name);
+      } else {
+        if (!currentOverrides.disabledFields.includes(item.name)) {
+          currentOverrides.disabledFields.push(item.name);
+        }
+      }
       saveOverrides();
-    }));
+      renderResourceOverridesUI();
+    };
+    
+    // Click to expand/collapse
+    const nameArea = wrapper.querySelector('.field-name-area');
+    nameArea.onclick = () => {
+      expandedField = expandedField === item.name ? null : item.name;
+      renderResourceOverridesUI();
+    };
+    
+    // Sport chip toggles
+    wrapper.querySelectorAll('.field-sport-chip').forEach(chip => {
+      chip.onclick = () => {
+        const fieldName = chip.dataset.field;
+        const sportName = chip.dataset.sport;
+        
+        if (!currentOverrides.dailyDisabledSportsByField[fieldName]) {
+          currentOverrides.dailyDisabledSportsByField[fieldName] = [];
+        }
+        
+        const idx = currentOverrides.dailyDisabledSportsByField[fieldName].indexOf(sportName);
+        if (idx >= 0) {
+          currentOverrides.dailyDisabledSportsByField[fieldName].splice(idx, 1);
+        } else {
+          currentOverrides.dailyDisabledSportsByField[fieldName].push(sportName);
+        }
+        
+        saveOverrides();
+        renderResourceOverridesUI();
+      };
+    });
+    
+    overrideFieldsListEl.appendChild(wrapper);
   });
 
+  // Special Activities
   const specials = masterSettings.app1.specialActivities || [];
   const overrideSpecialsListEl = document.getElementById("override-specials-list");
   specials.forEach(item => {
     const isDisabled = currentOverrides.disabledSpecials.includes(item.name);
-    overrideSpecialsListEl.appendChild(createToggle(item.name, !isDisabled, (isEnabled) => {
+    overrideSpecialsListEl.appendChild(createResourceToggle(item.name, !isDisabled, (isEnabled) => {
       if (isEnabled) currentOverrides.disabledSpecials = currentOverrides.disabledSpecials.filter(n => n !== item.name);
       else if (!currentOverrides.disabledSpecials.includes(item.name)) currentOverrides.disabledSpecials.push(item.name);
       saveOverrides();
+      renderResourceOverridesUI();
     }));
   });
 
+  // Leagues
   const leagues = Object.keys(masterSettings.leaguesByName || {});
   const overrideLeaguesListEl = document.getElementById("override-leagues-list");
   leagues.forEach(name => {
     const isDisabled = currentOverrides.leagues.includes(name);
-    overrideLeaguesListEl.appendChild(createToggle(name, !isDisabled, (isEnabled) => {
+    overrideLeaguesListEl.appendChild(createResourceToggle(name, !isDisabled, (isEnabled) => {
       if (isEnabled) currentOverrides.leagues = currentOverrides.leagues.filter(l => l !== name);
       else if (!currentOverrides.leagues.includes(name)) currentOverrides.leagues.push(name);
       saveOverrides();
     }));
   });
 
+  // Specialty Leagues
   const specialtyLeagues = Object.values(masterSettings.specialtyLeagues || {}).map(l => l.name).sort();
   const overrideSpecialtyLeaguesListEl = document.getElementById("override-specialty-leagues-list");
   specialtyLeagues.forEach(name => {
     const isDisabled = currentOverrides.disabledSpecialtyLeagues.includes(name);
-    overrideSpecialtyLeaguesListEl.appendChild(createToggle(name, !isDisabled, (isEnabled) => {
+    overrideSpecialtyLeaguesListEl.appendChild(createResourceToggle(name, !isDisabled, (isEnabled) => {
       if (isEnabled) currentOverrides.disabledSpecialtyLeagues = currentOverrides.disabledSpecialtyLeagues.filter(l => l !== name);
       else if (!currentOverrides.disabledSpecialtyLeagues.includes(name)) currentOverrides.disabledSpecialtyLeagues.push(name);
       window.saveCurrentDailyData("disabledSpecialtyLeagues", currentOverrides.disabledSpecialtyLeagues);
     }));
   });
+}
+
+function createResourceToggle(name, isEnabled, onToggle) {
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = `
+    <div class="resource-toggle-row ${!isEnabled ? 'disabled-row' : ''}">
+      <span class="resource-toggle-name">${name}</span>
+      <label class="resource-toggle-switch">
+        <input type="checkbox" ${isEnabled ? 'checked' : ''}>
+        <span class="resource-toggle-slider"></span>
+      </label>
+    </div>
+  `;
+  
+  const checkbox = wrapper.querySelector('input[type="checkbox"]');
+  checkbox.onchange = () => {
+    onToggle(checkbox.checked);
+  };
+  
+  return wrapper;
 }
 
 // Expose init
