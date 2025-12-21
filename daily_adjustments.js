@@ -1,12 +1,11 @@
 // =================================================================
-// daily_adjustments.js  (UPDATED - v2.0)
-// - Conflict highlighting on load
-// - 5-minute increments for drag/resize
-// - Resize handles on tiles
-// - Duration display on tiles
-// - Fixed Resource Availability toggles
-// - Field sports toggle in resources
-// - Removed conflict banner (tiles show colors)
+// daily_adjustments.js  (UPDATED - v2.1)
+// - Top & bottom resize handles
+// - Real-time resize preview
+// - Better small tile visibility
+// - Improved warning tile contrast
+// - Professional styling
+// - Fixed displaced tiles for all types
 // =================================================================
 
 (function() {
@@ -153,8 +152,10 @@ function promptForReservedFields(eventName) {
 // =================================================================
 
 function addDisplacedTile(event, reason) {
+  // Include all tile types in displaced tracking
   displacedTiles.push({
     event: event.event,
+    type: event.type,
     division: event.division,
     originalStart: event.startTime,
     originalEnd: event.endTime,
@@ -180,16 +181,22 @@ function renderDisplacedTilesPanel() {
   
   panel.style.display = 'block';
   panel.innerHTML = `
-    <div style="background:#fff3e0;border:1px solid #ffb300;border-radius:8px;padding:12px;margin-bottom:12px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <strong style="color:#e65100;">📋 Displaced Tiles (${displacedTiles.length})</strong>
-        <button id="clear-displaced-btn" style="background:#fff;border:1px solid #ffb300;color:#e65100;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.85em;">Clear</button>
+    <div style="background:linear-gradient(135deg,#fff8e1,#ffecb3);border:1px solid #ffb300;border-radius:10px;padding:14px 16px;margin-bottom:14px;box-shadow:0 2px 8px rgba(255,179,0,0.2);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-size:1.2em;">📋</span>
+          <strong style="color:#e65100;font-size:0.95em;">Displaced Tiles (${displacedTiles.length})</strong>
+        </div>
+        <button id="clear-displaced-btn" style="background:#fff;border:1px solid #ffb300;color:#e65100;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:0.8em;font-weight:500;transition:all 0.15s;">Clear All</button>
       </div>
-      <div style="max-height:120px;overflow-y:auto;">
+      <div style="max-height:140px;overflow-y:auto;">
         ${displacedTiles.map(d => `
-          <div style="background:#fff;padding:6px 10px;margin-bottom:4px;border-radius:4px;font-size:0.85em;display:flex;justify-content:space-between;align-items:center;">
-            <span><strong>${d.event}</strong> (${d.division})</span>
-            <span style="color:#888;">${d.originalStart} - ${d.originalEnd} • ${d.reason}</span>
+          <div style="background:#fff;padding:8px 12px;margin-bottom:6px;border-radius:6px;font-size:0.85em;display:flex;justify-content:space-between;align-items:center;border-left:3px solid ${d.type === 'pinned' ? '#ff5722' : '#ffb300'};">
+            <div>
+              <strong style="color:#1f2937;">${d.event}</strong>
+              <span style="color:#6b7280;margin-left:6px;">(${d.division})</span>
+            </div>
+            <span style="color:#9ca3af;font-size:0.8em;">${d.originalStart} - ${d.originalEnd}</span>
           </div>
         `).join('')}
       </div>
@@ -259,7 +266,7 @@ function getDurationText(startTime, endTime) {
   if (duration < 60) return `${duration}m`;
   const hours = Math.floor(duration / 60);
   const mins = duration % 60;
-  return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+  return mins > 0 ? `${hours}h${mins}m` : `${hours}h`;
 }
 
 // =================================================================
@@ -267,17 +274,19 @@ function getDurationText(startTime, endTime) {
 // =================================================================
 
 function renderPalette(paletteContainer) {
-  paletteContainer.innerHTML = '<span style="font-weight:600;align-self:center;margin-right:8px;">Drag tiles:</span>';
+  paletteContainer.innerHTML = '<span style="font-weight:600;align-self:center;margin-right:10px;color:#374151;">Drag tiles:</span>';
   TILES.forEach(tile => {
     const el = document.createElement('div');
     el.className = 'grid-tile-draggable';
     el.textContent = tile.name;
     el.style.cssText = tile.style;
-    el.style.padding = '8px 14px';
+    el.style.padding = '6px 12px';
     el.style.borderRadius = '6px';
     el.style.cursor = 'grab';
-    el.style.fontSize = '0.9em';
+    el.style.fontSize = '0.85em';
+    el.style.fontWeight = '500';
     el.style.transition = 'transform 0.15s, box-shadow 0.15s';
+    el.style.userSelect = 'none';
     el.title = tile.description;
     el.draggable = true;
     el.ondragstart = (e) => {
@@ -323,7 +332,7 @@ function renderGrid(gridContainer) {
   gridContainer.dataset.earliestMin = earliestMin;
 
   let gridHtml = `<div style="display:grid;grid-template-columns:60px repeat(${availableDivisions.length},1fr);position:relative;">`;
-  gridHtml += `<div style="grid-row:1;position:sticky;top:0;background:#f8f9fa;z-index:10;border-bottom:1px solid #dee2e6;padding:10px 8px;font-weight:600;color:#495057;">Time</div>`;
+  gridHtml += `<div style="grid-row:1;position:sticky;top:0;background:#f8f9fa;z-index:10;border-bottom:1px solid #dee2e6;padding:10px 8px;font-weight:600;color:#495057;font-size:0.85em;">Time</div>`;
 
   availableDivisions.forEach((divName, i) => {
     gridHtml += `
@@ -339,6 +348,7 @@ function renderGrid(gridContainer) {
         padding:10px 8px;
         text-align:center;
         font-weight:600;
+        font-size:0.9em;
       ">${divName}</div>`;
   });
 
@@ -355,8 +365,8 @@ function renderGrid(gridContainer) {
         height:${INCREMENT_MINS * PIXELS_PER_MINUTE}px;
         border-bottom:1px dashed #e9ecef;
         box-sizing:border-box;
-        font-size:11px;
-        padding:2px 6px;
+        font-size:10px;
+        padding:2px 4px;
         color:#6c757d;
       ">${minutesToTime(min)}</div>`;
   }
@@ -438,113 +448,185 @@ function renderEventTile(event, top, height) {
 
   // Calculate duration
   const duration = getDurationText(event.startTime, event.endTime);
+  
+  // Determine if this is a small tile (less than 40px height)
+  const isSmall = height < 50;
+  const isTiny = height < 35;
 
-  let innerHtml = `<strong style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:0.85em;">${event.event}</strong>`;
-  innerHtml += `<div style="font-size:.75em;color:inherit;opacity:0.85;">${event.startTime} - ${event.endTime}</div>`;
-  innerHtml += `<div style="font-size:.7em;font-weight:600;opacity:0.7;margin-top:1px;">${duration}</div>`;
+  // Build inner HTML based on tile size
+  let innerHtml = '';
   
-  if (event.reservedFields && event.reservedFields.length > 0) {
-    innerHtml += `<div style="font-size:0.65em;color:#c62828;margin-top:2px;">📍 ${event.reservedFields.join(', ')}</div>`;
-  }
-  
-  if (event.type === 'smart' && event.smartData) {
-    innerHtml += `<div style="font-size:0.65em;margin-top:2px;opacity:0.8;">↳ ${event.smartData.fallbackActivity}</div>`;
+  if (isTiny) {
+    // Very small tiles: single line with time range
+    innerHtml = `<div class="tile-content-tiny">
+      <strong>${event.event}</strong>
+      <span class="tile-time-tiny">${event.startTime}-${event.endTime}</span>
+    </div>`;
+  } else if (isSmall) {
+    // Small tiles: two lines
+    innerHtml = `<div class="tile-content-small">
+      <strong>${event.event}</strong>
+      <div class="tile-time">${event.startTime}-${event.endTime} (${duration})</div>
+    </div>`;
+  } else {
+    // Normal size tiles
+    innerHtml = `<div class="tile-content-normal">
+      <strong>${event.event}</strong>
+      <div class="tile-time">${event.startTime} - ${event.endTime}</div>
+      <div class="tile-duration">${duration}</div>`;
+    
+    if (event.reservedFields && event.reservedFields.length > 0) {
+      innerHtml += `<div class="tile-field">📍 ${event.reservedFields.join(', ')}</div>`;
+    }
+    
+    if (event.type === 'smart' && event.smartData) {
+      innerHtml += `<div class="tile-extra">↳ ${event.smartData.fallbackActivity}</div>`;
+    }
+    
+    innerHtml += `</div>`;
   }
 
   return `
     <div class="grid-event"
          data-event-id="${event.id}"
          draggable="true"
-         title="Drag to move • Double-click to remove • Drag bottom edge to resize"
-         style="${tripStyle || style}padding:4px 6px 12px 6px;border-radius:6px;text-align:center;
-                 margin:0 2px;font-size:.85em;position:absolute;
+         title="${event.event} | ${event.startTime} - ${event.endTime} (${duration})\nDrag to move • Double-click to remove • Drag edges to resize"
+         style="${tripStyle || style}border-radius:5px;text-align:center;
+                 margin:0 2px;position:absolute;
                  top:${top}px;height:${height}px;width:calc(100% - 6px);
-                 box-sizing:border-box;overflow:hidden;cursor:grab;
-                 transition:transform 0.1s, box-shadow 0.1s;">
+                 box-sizing:border-box;overflow:hidden;cursor:grab;">
+      <div class="resize-handle resize-handle-top" data-direction="top"></div>
       ${innerHtml}
-      <div class="resize-handle" style="position:absolute;bottom:0;left:0;right:0;height:8px;cursor:ns-resize;background:linear-gradient(transparent, rgba(0,0,0,0.1));border-radius:0 0 6px 6px;"></div>
+      <div class="resize-handle resize-handle-bottom" data-direction="bottom"></div>
     </div>`;
 }
 
 // =================================================================
-// RESIZE FUNCTIONALITY
+// RESIZE FUNCTIONALITY - TOP & BOTTOM
 // =================================================================
 
 function addResizeListeners(gridContainer) {
   const earliestMin = parseInt(gridContainer.dataset.earliestMin, 10) || 540;
   
+  // Create resize preview tooltip
+  let tooltip = document.getElementById('resize-tooltip');
+  if (!tooltip) {
+    tooltip = document.createElement('div');
+    tooltip.id = 'resize-tooltip';
+    tooltip.style.cssText = 'position:fixed;padding:6px 10px;background:#1f2937;color:#fff;border-radius:6px;font-size:0.8em;font-weight:500;pointer-events:none;z-index:10002;display:none;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+    document.body.appendChild(tooltip);
+  }
+  
   gridContainer.querySelectorAll('.grid-event').forEach(tile => {
-    const handle = tile.querySelector('.resize-handle');
-    if (!handle) return;
+    const handles = tile.querySelectorAll('.resize-handle');
     
-    let isResizing = false;
-    let startY = 0;
-    let startHeight = 0;
-    let eventId = null;
-    
-    handle.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
+    handles.forEach(handle => {
+      let isResizing = false;
+      let startY = 0;
+      let startTop = 0;
+      let startHeight = 0;
+      let eventId = null;
+      let direction = null;
       
-      isResizing = true;
-      startY = e.clientY;
-      startHeight = tile.offsetHeight;
-      eventId = tile.dataset.eventId;
+      handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        isResizing = true;
+        startY = e.clientY;
+        startTop = parseInt(tile.style.top, 10);
+        startHeight = tile.offsetHeight;
+        eventId = tile.dataset.eventId;
+        direction = handle.dataset.direction;
+        
+        tile.style.transition = 'none';
+        tile.style.zIndex = '100';
+        tile.classList.add('resizing');
+        
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      });
       
-      tile.style.transition = 'none';
-      tile.style.zIndex = '100';
-      
-      document.addEventListener('mousemove', onMouseMove);
-      document.addEventListener('mouseup', onMouseUp);
-    });
-    
-    function onMouseMove(e) {
-      if (!isResizing) return;
-      
-      const deltaY = e.clientY - startY;
-      const newHeight = Math.max(SNAP_MINS * PIXELS_PER_MINUTE, startHeight + deltaY);
-      const snappedHeight = Math.round(newHeight / (SNAP_MINS * PIXELS_PER_MINUTE)) * (SNAP_MINS * PIXELS_PER_MINUTE);
-      
-      tile.style.height = snappedHeight + 'px';
-    }
-    
-    function onMouseUp(e) {
-      if (!isResizing) return;
-      isResizing = false;
-      
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-      
-      tile.style.transition = '';
-      tile.style.zIndex = '';
-      
-      // Calculate new end time
-      const event = dailyOverrideSkeleton.find(ev => ev.id === eventId);
-      if (!event) return;
-      
-      const newHeightPx = parseInt(tile.style.height, 10);
-      const newDurationMin = Math.round(newHeightPx / PIXELS_PER_MINUTE / SNAP_MINS) * SNAP_MINS;
-      const startMin = parseTimeToMinutes(event.startTime);
-      const newEndMin = startMin + newDurationMin;
-      
-      // Validate against division end
-      const div = window.divisions?.[event.division] || {};
-      const divEndMin = parseTimeToMinutes(div.endTime) || 960;
-      
-      if (newEndMin > divEndMin) {
-        event.endTime = minutesToTime(divEndMin);
-      } else {
-        event.endTime = minutesToTime(newEndMin);
+      function onMouseMove(e) {
+        if (!isResizing) return;
+        
+        const event = dailyOverrideSkeleton.find(ev => ev.id === eventId);
+        if (!event) return;
+        
+        const deltaY = e.clientY - startY;
+        let newTop = startTop;
+        let newHeight = startHeight;
+        
+        if (direction === 'bottom') {
+          newHeight = Math.max(SNAP_MINS * PIXELS_PER_MINUTE, startHeight + deltaY);
+          newHeight = Math.round(newHeight / (SNAP_MINS * PIXELS_PER_MINUTE)) * (SNAP_MINS * PIXELS_PER_MINUTE);
+        } else if (direction === 'top') {
+          const maxDelta = startHeight - (SNAP_MINS * PIXELS_PER_MINUTE);
+          const constrainedDelta = Math.min(deltaY, maxDelta);
+          const snappedDelta = Math.round(constrainedDelta / (SNAP_MINS * PIXELS_PER_MINUTE)) * (SNAP_MINS * PIXELS_PER_MINUTE);
+          newTop = startTop + snappedDelta;
+          newHeight = startHeight - snappedDelta;
+        }
+        
+        tile.style.top = newTop + 'px';
+        tile.style.height = newHeight + 'px';
+        
+        // Calculate preview times
+        const newStartMin = earliestMin + (newTop / PIXELS_PER_MINUTE);
+        const newEndMin = newStartMin + (newHeight / PIXELS_PER_MINUTE);
+        const newDuration = getDurationText(minutesToTime(newStartMin), minutesToTime(newEndMin));
+        
+        // Update tooltip
+        tooltip.innerHTML = `${minutesToTime(newStartMin)} - ${minutesToTime(newEndMin)}<br><strong>${newDuration}</strong>`;
+        tooltip.style.display = 'block';
+        tooltip.style.left = (e.clientX + 15) + 'px';
+        tooltip.style.top = (e.clientY - 20) + 'px';
       }
       
-      saveDailySkeleton();
-      renderGrid(gridContainer);
-    }
+      function onMouseUp(e) {
+        if (!isResizing) return;
+        isResizing = false;
+        
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        
+        tile.style.transition = '';
+        tile.style.zIndex = '';
+        tile.classList.remove('resizing');
+        tooltip.style.display = 'none';
+        
+        // Calculate new times
+        const event = dailyOverrideSkeleton.find(ev => ev.id === eventId);
+        if (!event) return;
+        
+        const newTop = parseInt(tile.style.top, 10);
+        const newHeightPx = parseInt(tile.style.height, 10);
+        
+        const newStartMin = earliestMin + (newTop / PIXELS_PER_MINUTE);
+        const newEndMin = newStartMin + (newHeightPx / PIXELS_PER_MINUTE);
+        
+        // Validate against division bounds
+        const div = window.divisions?.[event.division] || {};
+        const divStartMin = parseTimeToMinutes(div.startTime) || 540;
+        const divEndMin = parseTimeToMinutes(div.endTime) || 960;
+        
+        const finalStartMin = Math.max(divStartMin, Math.round(newStartMin / SNAP_MINS) * SNAP_MINS);
+        const finalEndMin = Math.min(divEndMin, Math.round(newEndMin / SNAP_MINS) * SNAP_MINS);
+        
+        event.startTime = minutesToTime(finalStartMin);
+        event.endTime = minutesToTime(finalEndMin);
+        
+        saveDailySkeleton();
+        renderGrid(gridContainer);
+      }
+    });
     
     // Prevent drag when clicking resize handle
-    handle.addEventListener('dragstart', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
+    tile.querySelectorAll('.resize-handle').forEach(h => {
+      h.addEventListener('dragstart', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      });
     });
   });
 }
@@ -718,7 +800,7 @@ window.refreshSkeletonConflicts = function() {
 function addDropListeners(gridContainer) {
   gridContainer.querySelectorAll('.grid-cell').forEach(cell => {
     cell.ondragover = (e) => {
-      if (e.dataTransfer.types.includes('text/event-move')) return; // Handled by reposition listener
+      if (e.dataTransfer.types.includes('text/event-move')) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
       cell.style.backgroundColor = 'rgba(37, 99, 235, 0.08)';
@@ -729,7 +811,7 @@ function addDropListeners(gridContainer) {
     };
     
     cell.ondrop = (e) => {
-      if (e.dataTransfer.types.includes('text/event-move')) return; // Handled by reposition listener
+      if (e.dataTransfer.types.includes('text/event-move')) return;
       
       e.preventDefault();
       cell.style.backgroundColor = '';
@@ -997,7 +1079,6 @@ function addRemoveListeners(gridContainer) {
   gridContainer.querySelectorAll('.grid-event').forEach(tile => {
     tile.ondblclick = (e) => {
       e.stopPropagation();
-      // Don't trigger on resize handle
       if (e.target.classList.contains('resize-handle')) return;
       
       const eventId = tile.dataset.eventId;
@@ -1076,18 +1157,10 @@ function parseTimeToMinutes(str) {
   return hh * 60 + mm;
 }
 
-// =================================================================
-// SMART TILE PRE-PROCESSOR (DISABLED)
-// =================================================================
-
 function applySmartTileOverridesForToday() {
   console.log("Smart Tile pre-processor DISABLED. Using Core Scheduler for capacity-aware Smart Tiles.");
   return;
 }
-
-// =================================================================
-// RUN OPTIMIZER
-// =================================================================
 
 function runOptimizer() {
   if (!window.runSkeletonOptimizer) {
@@ -1099,7 +1172,6 @@ function runOptimizer() {
     return;
   }
 
-  // Check for conflicts
   if (window.SkeletonSandbox) {
     const conflicts = window.SkeletonSandbox.detectConflicts(dailyOverrideSkeleton);
     const critical = conflicts.filter(c => c.type === 'critical');
@@ -1159,69 +1231,90 @@ function init() {
   currentOverrides.bunkActivityOverrides = dailyData.bunkActivityOverrides || [];
 
   container.innerHTML = `
-    <div style="padding:12px 18px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+    <div style="padding:14px 20px;background:linear-gradient(135deg,#fff,#f8fafc);border:1px solid #e2e8f0;border-radius:12px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;box-shadow:0 2px 8px rgba(0,0,0,0.04);">
       <div>
-        <h2 style="margin:0 0 4px 0;font-size:1.3em;color:#1f2937;">Daily Adjustments for ${window.currentScheduleDate}</h2>
-        <p style="margin:0;font-size:0.9em;color:#6b7280;">Drag tiles to reposition • Double-click to remove • Drag bottom edge to resize</p>
+        <h2 style="margin:0 0 4px 0;font-size:1.25em;color:#1e293b;font-weight:600;">Daily Adjustments</h2>
+        <p style="margin:0;font-size:0.85em;color:#64748b;">${window.currentScheduleDate} • Drag edges to resize • Double-click to remove</p>
       </div>
       <button id="run-optimizer-btn"
-              style="background:#10b981;color:white;padding:12px 24px;font-size:1.1em;border:none;border-radius:8px;cursor:pointer;font-weight:600;transition:all 0.15s;box-shadow:0 2px 8px rgba(16,185,129,0.3);">
+              style="background:linear-gradient(135deg,#10b981,#059669);color:white;padding:10px 22px;font-size:1em;border:none;border-radius:8px;cursor:pointer;font-weight:600;transition:all 0.15s;box-shadow:0 2px 8px rgba(16,185,129,0.3);">
         ▶ Run Optimizer
       </button>
     </div>
 
-    <div class="da-tabs-nav league-nav">
+    <div class="da-tabs-nav league-nav" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:6px;margin-bottom:16px;display:flex;gap:4px;">
       <button class="tab-button active" data-tab="skeleton">Skeleton</button>
       <button class="tab-button" data-tab="trips">Trips</button>
       <button class="tab-button" data-tab="bunk-specific">Bunk Specific</button>
-      <button class="tab-button" data-tab="resources">Resource Availability</button>
+      <button class="tab-button" data-tab="resources">Resources</button>
     </div>
 
     <div id="da-pane-skeleton" class="da-tab-pane league-content-pane active">
-      <div class="override-section" id="daily-skeleton-editor-section">
+      <div class="override-section" id="daily-skeleton-editor-section" style="border:1px solid #e2e8f0;border-radius:10px;padding:16px;background:#fff;">
         <div id="override-scheduler-content"></div>
       </div>
     </div>
 
     <div id="da-pane-trips" class="da-tab-pane league-content-pane">
-      <div class="override-section" id="daily-trips-section">
-        <h3 style="margin-top:0;">Add Trip</h3>
+      <div class="override-section" id="daily-trips-section" style="border:1px solid #e2e8f0;border-radius:10px;padding:16px;background:#fff;">
+        <h3 style="margin-top:0;font-size:1.1em;color:#1e293b;">Add Trip</h3>
         <div id="trips-form-container"></div>
       </div>
     </div>
 
     <div id="da-pane-bunk-specific" class="da-tab-pane league-content-pane">
-      <div class="override-section" id="daily-bunk-overrides-section">
-        <h3 style="margin-top:0;">Bunk-Specific Pinned Activities</h3>
-        <p style="font-size:0.9em;color:#6b7280;margin-bottom:16px;">Assign a specific activity to one or more bunks at a specific time.</p>
+      <div class="override-section" id="daily-bunk-overrides-section" style="border:1px solid #e2e8f0;border-radius:10px;padding:16px;background:#fff;">
+        <h3 style="margin-top:0;font-size:1.1em;color:#1e293b;">Bunk-Specific Pinned Activities</h3>
+        <p style="font-size:0.85em;color:#64748b;margin-bottom:16px;">Assign a specific activity to one or more bunks at a specific time.</p>
         <div id="bunk-overrides-container"></div>
       </div>
     </div>
 
     <div id="da-pane-resources" class="da-tab-pane league-content-pane">
-      <div class="override-section" id="other-overrides-section">
-        <h3 style="margin-top:0;">Daily Resource Availability</h3>
-        <p style="font-size:0.9em;color:#6b7280;margin-bottom:16px;">Disable fields, leagues, or activities for this day only.</p>
+      <div class="override-section" id="other-overrides-section" style="border:1px solid #e2e8f0;border-radius:10px;padding:16px;background:#fff;">
+        <h3 style="margin-top:0;font-size:1.1em;color:#1e293b;">Daily Resource Availability</h3>
+        <p style="font-size:0.85em;color:#64748b;margin-bottom:16px;">Disable fields, leagues, or activities for this day only.</p>
         <div id="resource-overrides-container"></div>
       </div>
     </div>
 
     <style>
+      .da-tabs-nav .tab-button {
+        flex:1;
+        padding:8px 16px;
+        border:none;
+        background:transparent;
+        border-radius:6px;
+        cursor:pointer;
+        font-size:0.9em;
+        font-weight:500;
+        color:#64748b;
+        transition:all 0.15s;
+      }
+      .da-tabs-nav .tab-button:hover {
+        background:#e2e8f0;
+        color:#334155;
+      }
+      .da-tabs-nav .tab-button.active {
+        background:#1e293b;
+        color:#fff;
+      }
       .grid-disabled {
         position:absolute;
         width:100%;
-        background-color:rgba(128,128,128,0.15);
-        background-image:linear-gradient(-45deg,rgba(0,0,0,0.05) 25%,transparent 25%,transparent 50%,rgba(0,0,0,0.05) 50%,rgba(0,0,0,0.05) 75%,transparent 75%,transparent);
-        background-size:20px 20px;
+        background-color:rgba(148,163,184,0.15);
+        background-image:linear-gradient(-45deg,rgba(0,0,0,0.03) 25%,transparent 25%,transparent 50%,rgba(0,0,0,0.03) 50%,rgba(0,0,0,0.03) 75%,transparent 75%,transparent);
+        background-size:16px 16px;
         z-index:1;
         pointer-events:none;
       }
       .grid-event {
         z-index:2;
         position:relative;
+        box-shadow:0 1px 3px rgba(0,0,0,0.1);
+        transition:box-shadow 0.15s;
       }
       .grid-event:hover {
-        transform:scale(1.02);
         box-shadow:0 4px 12px rgba(0,0,0,0.15);
         z-index:10 !important;
       }
@@ -1229,69 +1322,156 @@ function init() {
         opacity:0.4;
         cursor:grabbing;
       }
+      .grid-event.resizing {
+        box-shadow:0 0 0 2px #2563eb, 0 4px 12px rgba(37,99,235,0.3);
+      }
       .grid-cell.drag-over {
         background:rgba(37,99,235,0.08) !important;
       }
-      .resize-handle:hover {
-        background:linear-gradient(transparent, rgba(0,0,0,0.25)) !important;
+      
+      /* Tile content styles */
+      .tile-content-tiny {
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        height:100%;
+        padding:0 6px;
+        font-size:0.7em;
       }
+      .tile-content-tiny .tile-time-tiny {
+        opacity:0.85;
+        margin-left:4px;
+        white-space:nowrap;
+        font-size:0.9em;
+      }
+      .tile-content-tiny strong {
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
+        flex:1;
+        min-width:0;
+      }
+      .tile-content-small {
+        padding:3px 6px;
+      }
+      .tile-content-small strong {
+        display:block;
+        font-size:0.75em;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
+      }
+      .tile-content-small .tile-time {
+        font-size:0.65em;
+        opacity:0.85;
+      }
+      .tile-content-normal {
+        padding:4px 6px;
+      }
+      .tile-content-normal strong {
+        display:block;
+        font-size:0.8em;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
+        margin-bottom:1px;
+      }
+      .tile-content-normal .tile-time {
+        font-size:0.7em;
+        opacity:0.85;
+      }
+      .tile-content-normal .tile-duration {
+        font-size:0.65em;
+        font-weight:600;
+        opacity:0.7;
+      }
+      .tile-content-normal .tile-field {
+        font-size:0.6em;
+        color:#c62828;
+        margin-top:1px;
+      }
+      .tile-content-normal .tile-extra {
+        font-size:0.6em;
+        margin-top:1px;
+        opacity:0.8;
+      }
+      
+      /* Resize handles */
+      .resize-handle {
+        position:absolute;
+        left:0;
+        right:0;
+        height:8px;
+        cursor:ns-resize;
+        z-index:5;
+        opacity:0;
+        transition:opacity 0.15s;
+      }
+      .resize-handle-top {
+        top:0;
+        border-radius:5px 5px 0 0;
+        background:linear-gradient(to bottom, rgba(37,99,235,0.5), transparent);
+      }
+      .resize-handle-bottom {
+        bottom:0;
+        border-radius:0 0 5px 5px;
+        background:linear-gradient(to top, rgba(37,99,235,0.5), transparent);
+      }
+      .grid-event:hover .resize-handle {
+        opacity:1;
+      }
+      
+      /* Conflict styles - HIGH CONTRAST */
       @keyframes pulse {
-        0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
-        50% { box-shadow: 0 0 0 8px rgba(239,68,68,0); }
+        0%, 100% { box-shadow: 0 0 0 0 rgba(185,28,28,0.5); }
+        50% { box-shadow: 0 0 0 4px rgba(185,28,28,0); }
       }
       @keyframes pulseWarn {
-        0%, 100% { box-shadow: 0 0 0 0 rgba(245,158,11,0.4); }
-        50% { box-shadow: 0 0 0 8px rgba(245,158,11,0); }
+        0%, 100% { box-shadow: 0 0 0 0 rgba(146,64,14,0.5); }
+        50% { box-shadow: 0 0 0 4px rgba(146,64,14,0); }
       }
       .conflict-critical {
         animation: pulse 1.5s infinite;
-        border: 3px solid #ef4444 !important;
-        background: linear-gradient(135deg, #fef2f2, #fecaca) !important;
+        border: 2px solid #b91c1c !important;
+        background: #fef2f2 !important;
+      }
+      .conflict-critical .tile-content-tiny,
+      .conflict-critical .tile-content-small,
+      .conflict-critical .tile-content-normal,
+      .conflict-critical strong,
+      .conflict-critical .tile-time,
+      .conflict-critical .tile-duration {
+        color: #7f1d1d !important;
       }
       .conflict-warning {
         animation: pulseWarn 2s infinite;
-        border: 3px solid #f59e0b !important;
-        background: linear-gradient(135deg, #fffbeb, #fde68a) !important;
+        border: 2px solid #92400e !important;
+        background: #fefce8 !important;
       }
-      .master-list .list-item {
-        padding:10px 12px;
-        border:1px solid #e5e7eb;
-        border-radius:8px;
-        margin-bottom:6px;
-        cursor:pointer;
-        background:#fff;
-        font-size:.95em;
-        display:flex;
-        justify-content:space-between;
-        align-items:center;
-        transition:all 0.15s;
+      .conflict-warning .tile-content-tiny,
+      .conflict-warning .tile-content-small,
+      .conflict-warning .tile-content-normal,
+      .conflict-warning strong,
+      .conflict-warning .tile-time,
+      .conflict-warning .tile-duration {
+        color: #78350f !important;
       }
-      .master-list .list-item:hover { background:#f9fafb; }
-      .master-list .list-item.selected {
-        background:#eff6ff;
-        border-color:#3b82f6;
-      }
-      .master-list .list-item-name { font-weight:600; flex-grow:1; }
-      #run-optimizer-btn:hover {
-        background:#059669;
-        transform:translateY(-1px);
-        box-shadow:0 4px 12px rgba(16,185,129,0.4);
-      }
+      
       /* Resource Toggle Styles */
       .resource-toggle-row {
         display:flex;
         align-items:center;
         justify-content:space-between;
-        padding:10px 12px;
+        padding:10px 14px;
         background:#fff;
-        border:1px solid #e5e7eb;
+        border:1px solid #e2e8f0;
         border-radius:8px;
-        margin-bottom:6px;
+        margin-bottom:8px;
         transition:all 0.15s;
       }
       .resource-toggle-row:hover {
-        background:#f9fafb;
-        border-color:#d1d5db;
+        background:#f8fafc;
+        border-color:#cbd5e1;
       }
       .resource-toggle-row.disabled-row {
         background:#fef2f2;
@@ -1303,8 +1483,9 @@ function init() {
       }
       .resource-toggle-name {
         font-weight:500;
-        color:#1f2937;
+        color:#1e293b;
         flex:1;
+        font-size:0.9em;
       }
       .resource-toggle-switch {
         position:relative;
@@ -1324,7 +1505,7 @@ function init() {
         left:0;
         right:0;
         bottom:0;
-        background:#e5e7eb;
+        background:#cbd5e1;
         transition:0.2s;
         border-radius:24px;
       }
@@ -1354,7 +1535,7 @@ function init() {
         border-radius:8px;
       }
       .field-sports-title {
-        font-size:0.85em;
+        font-size:0.8em;
         font-weight:600;
         color:#64748b;
         margin-bottom:8px;
@@ -1367,7 +1548,7 @@ function init() {
         font-size:0.8em;
         cursor:pointer;
         transition:all 0.15s;
-        border:1px solid #e5e7eb;
+        border:1px solid #e2e8f0;
         background:#fff;
       }
       .field-sport-chip.enabled {
@@ -1380,6 +1561,10 @@ function init() {
         border-color:#fecaca;
         color:#991b1b;
         text-decoration:line-through;
+      }
+      #run-optimizer-btn:hover {
+        transform:translateY(-1px);
+        box-shadow:0 4px 12px rgba(16,185,129,0.4);
       }
     </style>
   `;
@@ -1407,10 +1592,6 @@ function init() {
   renderResourceOverridesUI();
 }
 
-// =================================================================
-// SKELETON UI
-// =================================================================
-
 function initDailySkeletonUI() {
   if (!skeletonContainer) return;
   loadDailySkeleton();
@@ -1424,21 +1605,21 @@ function initDailySkeletonUI() {
   skeletonContainer.innerHTML = `
     <div id="displaced-tiles-panel" style="display:none;"></div>
     
-    <div style="margin-bottom:14px;padding:12px;background:#f8f9fa;border:1px solid #e5e7eb;border-radius:8px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-      <select id="daily-skeleton-select" style="padding:8px 12px;border-radius:6px;border:1px solid #d1d5db;background:#fff;">
+    <div style="margin-bottom:14px;padding:10px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <select id="daily-skeleton-select" style="padding:8px 12px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;font-size:0.9em;">
         ${optionsHtml}
       </select>
-      <button id="daily-skeleton-load-btn" style="padding:8px 16px;background:#2563eb;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:500;">
+      <button id="daily-skeleton-load-btn" style="padding:8px 16px;background:#1e293b;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:500;font-size:0.9em;">
         Load
       </button>
       <div style="flex:1;"></div>
-      ${window.SkeletonSandbox ? `<button id="conflict-rules-btn" style="padding:8px 16px;background:#f3f4f6;border:1px solid #d1d5db;border-radius:6px;cursor:pointer;">⚙️ Conflict Rules</button>` : ''}
+      ${window.SkeletonSandbox ? `<button id="conflict-rules-btn" style="padding:8px 14px;background:#fff;border:1px solid #cbd5e1;border-radius:6px;cursor:pointer;font-size:0.85em;color:#475569;">⚙️ Conflict Rules</button>` : ''}
     </div>
 
     <div id="daily-skeleton-palette"
-         style="padding:12px;background:#f8f9fa;border-radius:8px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:10px;"></div>
+         style="padding:10px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;"></div>
     <div id="daily-skeleton-grid"
-         style="overflow-x:auto;border:1px solid #d1d5db;border-radius:8px;max-height:550px;overflow-y:auto;"></div>
+         style="overflow-x:auto;border:1px solid #cbd5e1;border-radius:8px;max-height:550px;overflow-y:auto;background:#fff;"></div>
   `;
 
   document.getElementById("daily-skeleton-load-btn").onclick = () => {
@@ -1473,47 +1654,38 @@ function initDailySkeletonUI() {
   renderDisplacedTilesPanel();
 }
 
-// =================================================================
-// TRIPS FORM
-// =================================================================
-
 function renderTripsForm() {
   if (!tripsFormContainer) return;
-
   const divisions = window.availableDivisions || [];
 
   tripsFormContainer.innerHTML = `
     <div style="max-width:480px;">
-      <p style="color:#6b7280;font-size:0.9em;margin-bottom:16px;">
-        Add an off-campus trip directly to the daily skeleton. Overlapping events will be bumped down.
+      <p style="color:#64748b;font-size:0.85em;margin-bottom:16px;">
+        Add an off-campus trip. Overlapping events will be bumped down.
       </p>
-
       <div style="margin-bottom:14px;">
-        <label style="display:block;font-weight:500;margin-bottom:6px;">Division</label>
-        <select id="trip-division-select" style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;">
+        <label style="display:block;font-weight:500;margin-bottom:6px;font-size:0.9em;color:#374151;">Division</label>
+        <select id="trip-division-select" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.9em;">
           <option value="">-- Select Division --</option>
           ${divisions.map(d => `<option value="${d}">${d}</option>`).join("")}
         </select>
       </div>
-
       <div style="margin-bottom:14px;">
-        <label style="display:block;font-weight:500;margin-bottom:6px;">Trip Name</label>
-        <input id="trip-name-input" type="text" placeholder="e.g. Six Flags, Museum Trip" style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;box-sizing:border-box;" />
+        <label style="display:block;font-weight:500;margin-bottom:6px;font-size:0.9em;color:#374151;">Trip Name</label>
+        <input id="trip-name-input" type="text" placeholder="e.g. Six Flags" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:6px;box-sizing:border-box;font-size:0.9em;" />
       </div>
-
       <div style="display:flex;gap:12px;margin-bottom:16px;">
         <div style="flex:1;">
-          <label style="display:block;font-weight:500;margin-bottom:6px;">Start Time</label>
-          <input id="trip-start-input" type="text" placeholder="e.g. 10:00am" style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;box-sizing:border-box;" />
+          <label style="display:block;font-weight:500;margin-bottom:6px;font-size:0.9em;color:#374151;">Start</label>
+          <input id="trip-start-input" type="text" placeholder="10:00am" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:6px;box-sizing:border-box;font-size:0.9em;" />
         </div>
         <div style="flex:1;">
-          <label style="display:block;font-weight:500;margin-bottom:6px;">End Time</label>
-          <input id="trip-end-input" type="text" placeholder="e.g. 3:30pm" style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;box-sizing:border-box;" />
+          <label style="display:block;font-weight:500;margin-bottom:6px;font-size:0.9em;color:#374151;">End</label>
+          <input id="trip-end-input" type="text" placeholder="3:30pm" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:6px;box-sizing:border-box;font-size:0.9em;" />
         </div>
       </div>
-
-      <button id="apply-trip-btn" style="width:100%;background:#2563eb;color:white;padding:12px;font-size:1em;font-weight:600;border:none;border-radius:8px;cursor:pointer;transition:all 0.15s;">
-        Add Trip to Skeleton
+      <button id="apply-trip-btn" style="width:100%;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:white;padding:12px;font-size:1em;font-weight:600;border:none;border-radius:8px;cursor:pointer;">
+        Add Trip
       </button>
     </div>
   `;
@@ -1533,7 +1705,7 @@ function renderTripsForm() {
     const endMin = parseTimeToMinutes(endTime);
 
     if (startMin == null || endMin == null) {
-      alert("Invalid time format. Use e.g. 9:00am or 2:30pm.");
+      alert("Invalid time format.");
       return;
     }
     if (endMin <= startMin) {
@@ -1562,25 +1734,14 @@ function renderTripsForm() {
       if (grid) renderGrid(grid);
     }
 
-    // Switch to skeleton tab
     container.querySelector('.tab-button[data-tab="skeleton"]').click();
-
-    const conflicts = window.SkeletonSandbox?.detectConflicts(dailyOverrideSkeleton) || [];
-    if (conflicts.length > 0) {
-      alert(`Trip added! ${conflicts.length} conflict(s) detected - check the skeleton.`);
-    } else {
-      alert("Trip added to daily skeleton.");
-    }
+    alert("Trip added!");
 
     document.getElementById("trip-name-input").value = "";
     document.getElementById("trip-start-input").value = "";
     document.getElementById("trip-end-input").value = "";
   };
 }
-
-// =================================================================
-// BUNK OVERRIDES UI
-// =================================================================
 
 function renderBunkOverridesUI() {
   if (!bunkOverridesContainer) return;
@@ -1607,45 +1768,39 @@ function renderBunkOverridesUI() {
   bunkOverridesContainer.innerHTML = `
     <div style="max-width:520px;">
       <div style="margin-bottom:14px;">
-        <label style="display:block;font-weight:500;margin-bottom:6px;">Type</label>
-        <select id="bo-type" style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;">
+        <label style="display:block;font-weight:500;margin-bottom:6px;font-size:0.9em;">Type</label>
+        <select id="bo-type" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.9em;">
           <option value="">-- Select Type --</option>
           <option value="sport">Sport</option>
           <option value="special">Special Activity</option>
           <option value="trip">Personal Trip</option>
         </select>
       </div>
-
       <div id="bo-activity-wrap" style="margin-bottom:14px;display:none;">
-        <label style="display:block;font-weight:500;margin-bottom:6px;">Activity</label>
-        <select id="bo-activity" style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;"></select>
+        <label style="display:block;font-weight:500;margin-bottom:6px;font-size:0.9em;">Activity</label>
+        <select id="bo-activity" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.9em;"></select>
       </div>
-
       <div id="bo-trip-wrap" style="margin-bottom:14px;display:none;">
-        <label style="display:block;font-weight:500;margin-bottom:6px;">Trip Name</label>
-        <input id="bo-trip-name" type="text" placeholder="e.g. Doctor Appointment" style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;box-sizing:border-box;">
+        <label style="display:block;font-weight:500;margin-bottom:6px;font-size:0.9em;">Trip Name</label>
+        <input id="bo-trip-name" type="text" placeholder="e.g. Doctor" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:6px;box-sizing:border-box;font-size:0.9em;">
       </div>
-
       <div style="display:flex;gap:12px;margin-bottom:14px;">
         <div style="flex:1;">
-          <label style="display:block;font-weight:500;margin-bottom:6px;">Start Time</label>
-          <input id="bo-start" type="text" placeholder="10:00am" style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;box-sizing:border-box;">
+          <label style="display:block;font-weight:500;margin-bottom:6px;font-size:0.9em;">Start</label>
+          <input id="bo-start" type="text" placeholder="10:00am" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:6px;box-sizing:border-box;font-size:0.9em;">
         </div>
         <div style="flex:1;">
-          <label style="display:block;font-weight:500;margin-bottom:6px;">End Time</label>
-          <input id="bo-end" type="text" placeholder="11:00am" style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;box-sizing:border-box;">
+          <label style="display:block;font-weight:500;margin-bottom:6px;font-size:0.9em;">End</label>
+          <input id="bo-end" type="text" placeholder="11:00am" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:6px;box-sizing:border-box;font-size:0.9em;">
         </div>
       </div>
-
       <div style="margin-bottom:16px;">
-        <label style="display:block;font-weight:500;margin-bottom:8px;">Select Bunks</label>
-        <div id="bo-bunks" style="display:flex;flex-wrap:wrap;gap:8px;max-height:160px;overflow-y:auto;padding:8px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;">
-          ${bunks.map(b => `<button type="button" class="bunk-chip" data-bunk="${b.name}" data-color="${b.color}" style="padding:6px 14px;border:2px solid ${b.color};background:white;border-radius:20px;cursor:pointer;font-size:0.9em;transition:all 0.15s;">${b.name}</button>`).join('')}
+        <label style="display:block;font-weight:500;margin-bottom:8px;font-size:0.9em;">Select Bunks</label>
+        <div id="bo-bunks" style="display:flex;flex-wrap:wrap;gap:8px;max-height:160px;overflow-y:auto;padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;">
+          ${bunks.map(b => `<button type="button" class="bunk-chip" data-bunk="${b.name}" data-color="${b.color}" style="padding:6px 14px;border:2px solid ${b.color};background:white;border-radius:20px;cursor:pointer;font-size:0.85em;">${b.name}</button>`).join('')}
         </div>
       </div>
-
-      <button id="bo-apply" style="width:100%;background:#2563eb;color:white;padding:12px;font-size:1em;font-weight:600;border:none;border-radius:8px;cursor:pointer;">Apply Override</button>
-
+      <button id="bo-apply" style="width:100%;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:white;padding:12px;font-size:1em;font-weight:600;border:none;border-radius:8px;cursor:pointer;">Apply</button>
       <div id="bo-existing" style="margin-top:20px;"></div>
     </div>
   `;
@@ -1659,10 +1814,10 @@ function renderBunkOverridesUI() {
     activityWrap.style.display = 'none';
     tripWrap.style.display = 'none';
     if (typeSelect.value === 'sport') {
-      activitySelect.innerHTML = `<option value="">-- Select Sport --</option>` + sports.map(s => `<option value="${s}">${s}</option>`).join('');
+      activitySelect.innerHTML = `<option value="">-- Select --</option>` + sports.map(s => `<option value="${s}">${s}</option>`).join('');
       activityWrap.style.display = 'block';
     } else if (typeSelect.value === 'special') {
-      activitySelect.innerHTML = `<option value="">-- Select Special --</option>` + specials.map(s => `<option value="${s}">${s}</option>`).join('');
+      activitySelect.innerHTML = `<option value="">-- Select --</option>` + specials.map(s => `<option value="${s}">${s}</option>`).join('');
       activityWrap.style.display = 'block';
     } else if (typeSelect.value === 'trip') {
       tripWrap.style.display = 'block';
@@ -1682,7 +1837,7 @@ function renderBunkOverridesUI() {
     const startTime = document.getElementById("bo-start").value.trim();
     const endTime = document.getElementById("bo-end").value.trim();
 
-    if (!type || !startTime || !endTime) { alert("Select type and enter times."); return; }
+    if (!type || !startTime || !endTime) { alert("Complete all fields."); return; }
 
     let activityName = '';
     if (type === 'sport' || type === 'special') {
@@ -1694,7 +1849,7 @@ function renderBunkOverridesUI() {
     }
 
     const selectedBunks = [...bunkOverridesContainer.querySelectorAll('.bunk-chip.selected')].map(c => c.dataset.bunk);
-    if (selectedBunks.length === 0) { alert("Select at least one bunk."); return; }
+    if (selectedBunks.length === 0) { alert("Select bunks."); return; }
 
     const startMin = parseTimeToMinutes(startTime);
     const endMin = parseTimeToMinutes(endTime);
@@ -1706,7 +1861,7 @@ function renderBunkOverridesUI() {
     });
 
     window.saveCurrentDailyData("bunkActivityOverrides", currentOverrides.bunkActivityOverrides);
-    alert(`Override applied to ${selectedBunks.length} bunk(s)!`);
+    alert(`Applied to ${selectedBunks.length} bunk(s)!`);
 
     bunkOverridesContainer.querySelectorAll('.bunk-chip.selected').forEach(c => {
       c.classList.remove('selected');
@@ -1721,28 +1876,28 @@ function renderBunkOverridesUI() {
 }
 
 function renderExistingBunkOverrides() {
-  const container = document.getElementById("bo-existing");
-  if (!container) return;
+  const cont = document.getElementById("bo-existing");
+  if (!cont) return;
 
   if (currentOverrides.bunkActivityOverrides.length === 0) {
-    container.innerHTML = '';
+    cont.innerHTML = '';
     return;
   }
 
-  container.innerHTML = `
-    <h4 style="margin:0 0 12px 0;">Existing Overrides</h4>
+  cont.innerHTML = `
+    <h4 style="margin:0 0 12px 0;font-size:0.95em;">Existing Overrides</h4>
     ${currentOverrides.bunkActivityOverrides.map((o, i) => `
-      <div style="background:#f9fafb;padding:12px;border-radius:8px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
+      <div style="background:#f8fafc;padding:12px;border-radius:8px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;border:1px solid #e2e8f0;">
         <div>
-          <strong>${o.activity}</strong> (${o.type})<br>
-          <span style="font-size:0.85em;color:#6b7280;">${o.bunks.join(', ')} • ${o.startTime} - ${o.endTime}</span>
+          <strong>${o.activity}</strong> <span style="color:#64748b;">(${o.type})</span><br>
+          <span style="font-size:0.85em;color:#64748b;">${o.bunks.join(', ')} • ${o.startTime}-${o.endTime}</span>
         </div>
-        <button class="remove-bo-btn" data-index="${i}" style="background:#fee2e2;color:#dc2626;border:none;width:32px;height:32px;border-radius:6px;cursor:pointer;font-weight:bold;">✕</button>
+        <button class="remove-bo-btn" data-index="${i}" style="background:#fee2e2;color:#dc2626;border:none;width:32px;height:32px;border-radius:6px;cursor:pointer;font-size:1.1em;">×</button>
       </div>
     `).join('')}
   `;
 
-  container.querySelectorAll('.remove-bo-btn').forEach(btn => {
+  cont.querySelectorAll('.remove-bo-btn').forEach(btn => {
     btn.onclick = () => {
       currentOverrides.bunkActivityOverrides.splice(parseInt(btn.dataset.index), 1);
       window.saveCurrentDailyData("bunkActivityOverrides", currentOverrides.bunkActivityOverrides);
@@ -1751,32 +1906,27 @@ function renderExistingBunkOverrides() {
   });
 }
 
-// =================================================================
-// RESOURCE OVERRIDES UI - IMPROVED
-// =================================================================
-
 let expandedField = null;
 
 function renderResourceOverridesUI() {
   if (!resourceOverridesContainer) return;
 
   resourceOverridesContainer.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:24px;">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));gap:20px;">
       <div>
-        <h4 style="margin:0 0 12px 0;color:#374151;">Fields</h4>
-        <p style="font-size:0.8em;color:#6b7280;margin-bottom:12px;">Click a field to toggle specific sports on/off</p>
+        <h4 style="margin:0 0 10px 0;color:#374151;font-size:0.95em;font-weight:600;">Fields</h4>
         <div id="override-fields-list"></div>
       </div>
       <div>
-        <h4 style="margin:0 0 12px 0;color:#374151;">Special Activities</h4>
+        <h4 style="margin:0 0 10px 0;color:#374151;font-size:0.95em;font-weight:600;">Special Activities</h4>
         <div id="override-specials-list"></div>
       </div>
       <div>
-        <h4 style="margin:0 0 12px 0;color:#374151;">Leagues</h4>
+        <h4 style="margin:0 0 10px 0;color:#374151;font-size:0.95em;font-weight:600;">Leagues</h4>
         <div id="override-leagues-list"></div>
       </div>
       <div>
-        <h4 style="margin:0 0 12px 0;color:#374151;">Specialty Leagues</h4>
+        <h4 style="margin:0 0 10px 0;color:#374151;font-size:0.95em;font-weight:600;">Specialty Leagues</h4>
         <div id="override-specialty-leagues-list"></div>
       </div>
     </div>
@@ -1792,7 +1942,6 @@ function renderResourceOverridesUI() {
     window.saveCurrentDailyData("dailyDisabledSportsByField", currentOverrides.dailyDisabledSportsByField);
   };
 
-  // Fields with expandable sports
   const fields = masterSettings.app1.fields || [];
   const overrideFieldsListEl = document.getElementById("override-fields-list");
   
@@ -1804,9 +1953,8 @@ function renderResourceOverridesUI() {
     wrapper.innerHTML = `
       <div class="resource-toggle-row ${isDisabled ? 'disabled-row' : ''} ${isExpanded ? 'expanded' : ''}" data-field="${item.name}">
         <div style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer;" class="field-name-area">
-          <span style="color:#6b7280;font-size:0.9em;">${isExpanded ? '▼' : '▶'}</span>
+          <span style="color:#94a3b8;font-size:0.8em;transition:transform 0.15s;transform:rotate(${isExpanded ? '90deg' : '0deg'});">▶</span>
           <span class="resource-toggle-name">${item.name}</span>
-          <span style="font-size:0.75em;color:#9ca3af;">(${(item.activities || []).length} sports)</span>
         </div>
         <label class="resource-toggle-switch" onclick="event.stopPropagation()">
           <input type="checkbox" ${!isDisabled ? 'checked' : ''}>
@@ -1815,19 +1963,19 @@ function renderResourceOverridesUI() {
       </div>
       ${isExpanded ? `
         <div class="field-sports-panel">
-          <div class="field-sports-title">Sports available on ${item.name}:</div>
+          <div class="field-sports-title">Available sports:</div>
           <div class="field-sports-chips">
-            ${(item.activities || []).map(sport => {
-              const disabledSports = currentOverrides.dailyDisabledSportsByField[item.name] || [];
-              const isSportDisabled = disabledSports.includes(sport);
-              return `<span class="field-sport-chip ${isSportDisabled ? 'disabled' : 'enabled'}" data-field="${item.name}" data-sport="${sport}">${sport}</span>`;
-            }).join('')}
+            ${(item.activities || []).length === 0 ? '<span style="color:#94a3b8;font-size:0.8em;font-style:italic;">No sports</span>' : 
+              (item.activities || []).map(sport => {
+                const disabledSports = currentOverrides.dailyDisabledSportsByField[item.name] || [];
+                const isSportDisabled = disabledSports.includes(sport);
+                return `<span class="field-sport-chip ${isSportDisabled ? 'disabled' : 'enabled'}" data-field="${item.name}" data-sport="${sport}">${sport}</span>`;
+              }).join('')}
           </div>
         </div>
       ` : ''}
     `;
     
-    // Toggle field enabled/disabled
     const checkbox = wrapper.querySelector('input[type="checkbox"]');
     checkbox.onchange = () => {
       if (checkbox.checked) {
@@ -1841,14 +1989,12 @@ function renderResourceOverridesUI() {
       renderResourceOverridesUI();
     };
     
-    // Click to expand/collapse
     const nameArea = wrapper.querySelector('.field-name-area');
     nameArea.onclick = () => {
       expandedField = expandedField === item.name ? null : item.name;
       renderResourceOverridesUI();
     };
     
-    // Sport chip toggles
     wrapper.querySelectorAll('.field-sport-chip').forEach(chip => {
       chip.onclick = () => {
         const fieldName = chip.dataset.field;
@@ -1873,7 +2019,6 @@ function renderResourceOverridesUI() {
     overrideFieldsListEl.appendChild(wrapper);
   });
 
-  // Special Activities
   const specials = masterSettings.app1.specialActivities || [];
   const overrideSpecialsListEl = document.getElementById("override-specials-list");
   specials.forEach(item => {
@@ -1886,7 +2031,6 @@ function renderResourceOverridesUI() {
     }));
   });
 
-  // Leagues
   const leagues = Object.keys(masterSettings.leaguesByName || {});
   const overrideLeaguesListEl = document.getElementById("override-leagues-list");
   leagues.forEach(name => {
@@ -1898,7 +2042,6 @@ function renderResourceOverridesUI() {
     }));
   });
 
-  // Specialty Leagues
   const specialtyLeagues = Object.values(masterSettings.specialtyLeagues || {}).map(l => l.name).sort();
   const overrideSpecialtyLeaguesListEl = document.getElementById("override-specialty-leagues-list");
   specialtyLeagues.forEach(name => {
@@ -1931,7 +2074,10 @@ function createResourceToggle(name, isEnabled, onToggle) {
   return wrapper;
 }
 
-// Expose init
 window.initDailyAdjustments = init;
+
+// Export utilities for other scripts (e.g., trip_wizard.js)
+window.parseTimeToMinutes = parseTimeToMinutes;
+window.minutesToTime = minutesToTime;
 
 })();
