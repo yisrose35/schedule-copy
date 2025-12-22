@@ -332,63 +332,106 @@ function renderEventTile(ev, top, height) {
   if (!tile && ev.type) tile = TILES.find(t => t.type === ev.type);
   const style = tile ? tile.style : 'background:#eee;border:1px solid #666;';
   
-  let label = `<strong>${ev.event}</strong><br>${ev.startTime}-${ev.endTime}`;
+  // Subtract 2px from height to prevent border overlap (1px top + 1px bottom border)
+  const adjustedHeight = Math.max(height - 2, 10);
   
-  // Show reserved fields if any
-  if (ev.reservedFields && ev.reservedFields.length > 0) {
-    label += `<br><span style="font-size:0.7em;color:#c62828;">📍 ${ev.reservedFields.join(', ')}</span>`;
+  // Determine font size and layout based on available height
+  let fontSize, timeSize, layout;
+  if (adjustedHeight < 30) {
+    // Very small tile - single line, tiny font
+    fontSize = '0.65rem';
+    timeSize = '0.55rem';
+    layout = 'compact';
+  } else if (adjustedHeight < 50) {
+    // Small tile - compact layout
+    fontSize = '0.75rem';
+    timeSize = '0.65rem';
+    layout = 'small';
+  } else {
+    // Normal tile
+    fontSize = '0.85rem';
+    timeSize = '0.75rem';
+    layout = 'normal';
   }
   
-  if (ev.type === 'smart' && ev.smartData) {
-    label += `<br><span style="font-size:0.75em">F: ${ev.smartData.fallbackActivity} (if ${ev.smartData.fallbackFor.substring(0, 4)} busy)</span>`;
+  // Build content based on layout
+  let content;
+  const eventName = ev.event || 'Event';
+  const timeStr = `${ev.startTime}-${ev.endTime}`;
+  
+  if (layout === 'compact') {
+    // Single line: "Event 12:00-1:00"
+    content = `<span style="font-weight:600;">${eventName}</span> <span style="opacity:0.8;font-size:${timeSize};">${timeStr}</span>`;
+  } else if (layout === 'small') {
+    // Two lines but compact
+    content = `<div style="font-weight:600;line-height:1.2;">${eventName}</div><div style="font-size:${timeSize};opacity:0.85;line-height:1.2;">${timeStr}</div>`;
+  } else {
+    // Normal layout with optional extras
+    content = `<div style="font-weight:600;line-height:1.3;">${eventName}</div><div style="font-size:${timeSize};opacity:0.85;">${timeStr}</div>`;
+    
+    // Show reserved fields if any (only on larger tiles)
+    if (ev.reservedFields && ev.reservedFields.length > 0 && adjustedHeight > 60) {
+      content += `<div style="font-size:0.65rem;color:#c62828;margin-top:2px;">📍 ${ev.reservedFields.join(', ')}</div>`;
+    }
+    
+    // Smart tile fallback info
+    if (ev.type === 'smart' && ev.smartData && adjustedHeight > 70) {
+      content += `<div style="font-size:0.7rem;opacity:0.8;margin-top:2px;">F: ${ev.smartData.fallbackActivity}</div>`;
+    }
   }
 
-  // Subtract 2px from height to account for top+bottom borders (1px each)
-  // This ensures adjacent tiles touch but don't overlap
-  const adjustedHeight = Math.max(height - 2, 10);
-  return `<div class="grid-event" data-id="${ev.id}" draggable="true" title="Double-click to remove" 
-          style="${style} position:absolute; top:${top}px; height:${adjustedHeight}px; width:96%; left:2%; padding:4px; font-size:0.85rem; overflow:hidden; border-radius:3px; cursor:pointer; box-sizing:border-box;">
+  return `<div class="grid-event" data-id="${ev.id}" draggable="true" title="${eventName} (${timeStr}) - Double-click to remove" 
+          style="${style} position:absolute; top:${top}px; height:${adjustedHeight}px; width:96%; left:2%; 
+          padding:4px 6px; font-size:${fontSize}; overflow:hidden; border-radius:3px; cursor:pointer; 
+          box-sizing:border-box; display:flex; flex-direction:column; justify-content:center; 
+          text-overflow:ellipsis; line-height:1.2;">
           <div class="resize-handle resize-handle-top"></div>
-          ${label}
+          ${content}
           <div class="resize-handle resize-handle-bottom"></div>
           </div>`;
 }
 
 // =================================================================
-// CONFLICT HIGHLIGHTING - Only when rules exist, site theme colors
+// CONFLICT HIGHLIGHTING - Uses SkeletonSandbox for detection
 // =================================================================
 
 function applyConflictHighlighting(gridEl) {
   // Only apply if SkeletonSandbox exists
-  if (!window.SkeletonSandbox) return;
-  
-  // Check if there are ACTUAL rules configured
-  let rules = [];
-  try {
-    rules = window.SkeletonSandbox.getRules?.() || [];
-  } catch (e) {
+  if (!window.SkeletonSandbox) {
+    console.log("[Conflicts] SkeletonSandbox not loaded");
     return;
   }
   
-  // NO RULES = NO HIGHLIGHTING - fixes league issue on first load
-  if (!rules || !Array.isArray(rules) || rules.length === 0) {
-    return;
-  }
+  // Load rules (this also initializes defaults if none saved)
+  window.SkeletonSandbox.loadRules();
   
+  // Detect conflicts using the skeleton sandbox
   const conflicts = window.SkeletonSandbox.detectConflicts(dailyOverrideSkeleton);
+  
+  console.log(`[Conflicts] Detected ${conflicts.length} conflicts in skeleton`);
+  
   if (!conflicts || conflicts.length === 0) return;
   
   const conflictMap = {};
   conflicts.forEach(c => {
-    if (c.event1?.id) conflictMap[c.event1.id] = conflictMap[c.event1.id] === 'critical' ? 'critical' : c.type;
-    if (c.event2?.id) conflictMap[c.event2.id] = conflictMap[c.event2.id] === 'critical' ? 'critical' : c.type;
+    // Mark both events involved in the conflict
+    if (c.event1?.id) {
+      conflictMap[c.event1.id] = conflictMap[c.event1.id] === 'critical' ? 'critical' : c.type;
+    }
+    if (c.event2?.id) {
+      conflictMap[c.event2.id] = conflictMap[c.event2.id] === 'critical' ? 'critical' : c.type;
+    }
+    console.log(`[Conflicts] ${c.type}: ${c.resource} - ${c.event1?.event} vs ${c.event2?.event}`);
   });
   
+  // Apply visual highlighting
   gridEl.querySelectorAll('.grid-event').forEach(tile => {
     tile.classList.remove('conflict-critical', 'conflict-warning');
     const id = tile.dataset.id;
     const severity = conflictMap[id];
-    if (severity) tile.classList.add(`conflict-${severity}`);
+    if (severity) {
+      tile.classList.add(`conflict-${severity}`);
+    }
   });
 }
 
