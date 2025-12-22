@@ -143,8 +143,26 @@ function renderDisplacedTilesPanel() {
 }
 
 // =================================================================
-// BUMP LOGIC
+// OVERLAP HANDLING - Erase for trips, bump for others
 // =================================================================
+
+function eraseOverlappingTiles(newEvent, divName) {
+  const newStartMin = parseTimeToMinutes(newEvent.startTime);
+  const newEndMin = parseTimeToMinutes(newEvent.endTime);
+  
+  // Simply remove any overlapping tiles in this division
+  dailyOverrideSkeleton = dailyOverrideSkeleton.filter(ev => {
+    if (ev.id === newEvent.id || ev.division !== divName) return true;
+    const evStart = parseTimeToMinutes(ev.startTime);
+    const evEnd = parseTimeToMinutes(ev.endTime);
+    if (evStart == null || evEnd == null) return true;
+    const overlaps = (evStart < newEndMin && evEnd > newStartMin);
+    if (overlaps) {
+      addDisplacedTile(ev, 'Erased by trip');
+    }
+    return !overlaps;
+  });
+}
 
 function bumpOverlappingTiles(newEvent, divName) {
   const newStartMin = parseTimeToMinutes(newEvent.startTime);
@@ -325,9 +343,11 @@ function renderEventTile(ev, top, height) {
     label += `<br><span style="font-size:0.75em">F: ${ev.smartData.fallbackActivity} (if ${ev.smartData.fallbackFor.substring(0, 4)} busy)</span>`;
   }
 
-  // EXACT same structure as master_schedule_builder.js + resize handles
+  // Subtract 2px from height to account for top+bottom borders (1px each)
+  // This ensures adjacent tiles touch but don't overlap
+  const adjustedHeight = Math.max(height - 2, 10);
   return `<div class="grid-event" data-id="${ev.id}" draggable="true" title="Double-click to remove" 
-          style="${style} position:absolute; top:${top}px; height:${height}px; width:96%; left:2%; padding:2px; font-size:0.85rem; overflow:hidden; border-radius:4px; cursor:pointer;">
+          style="${style} position:absolute; top:${top}px; height:${adjustedHeight}px; width:96%; left:2%; padding:4px; font-size:0.85rem; overflow:hidden; border-radius:3px; cursor:pointer; box-sizing:border-box;">
           <div class="resize-handle resize-handle-top"></div>
           ${label}
           <div class="resize-handle resize-handle-bottom"></div>
@@ -813,7 +833,7 @@ function init() {
     <style>
       /* EXACT grid styles from master_schedule_builder.js */
       .grid-disabled { position:absolute; width:100%; background-color:#80808040; background-image:linear-gradient(-45deg,#0000001a 25%,transparent 25%,transparent 50%,#0000001a 50%,#0000001a 75%,transparent 75%,transparent); background-size:20px 20px; z-index:1; pointer-events:none; }
-      .grid-event { z-index:2; position:relative; box-shadow:0 1px 3px rgba(0,0,0,0.2); }
+      .grid-event { z-index:2; position:relative; box-sizing:border-box; }
       .grid-cell { position:relative; border-right:1px solid #ccc; background:#fff; }
       
       /* Resize handles - subtle until hover */
@@ -1061,8 +1081,8 @@ function renderTripsForm() {
 
     loadDailySkeleton();
     const newEvent = { id: `trip_${Date.now()}`, type: "pinned", event: tripName, division, startTime, endTime, reservedFields: [] };
+    eraseOverlappingTiles(newEvent, division);  // ERASE overlapping tiles, don't bump
     dailyOverrideSkeleton.push(newEvent);
-    bumpOverlappingTiles(newEvent, division);
     saveDailySkeleton();
 
     renderGrid(document.getElementById("daily-skeleton-grid"));
@@ -1168,7 +1188,18 @@ function renderBunkOverridesUI() {
     const endMin = parseTimeToMinutes(endTime);
     if (startMin == null || endMin == null || endMin <= startMin) { alert("Invalid times."); return; }
 
-    currentOverrides.bunkActivityOverrides.push({ id: `bunk_${Date.now()}`, type, activity: activityName, bunks: selectedBunks, startTime, endTime });
+    // Create ONE override per bunk (scheduler expects override.bunk to be singular)
+    selectedBunks.forEach(bunkName => {
+      currentOverrides.bunkActivityOverrides.push({ 
+        id: `bunk_${Date.now()}_${bunkName}`, 
+        type, 
+        activity: activityName, 
+        bunk: bunkName,  // SINGULAR - required by scheduler_core_main.js
+        bunks: [bunkName],  // Keep for display purposes
+        startTime, 
+        endTime 
+      });
+    });
     window.saveCurrentDailyData("bunkActivityOverrides", currentOverrides.bunkActivityOverrides);
     alert(`Applied to ${selectedBunks.length} bunk(s)!`);
 
@@ -1188,19 +1219,39 @@ function renderExistingBunkOverrides() {
   if (!cont) return;
   if (currentOverrides.bunkActivityOverrides.length === 0) { cont.innerHTML = ''; return; }
 
+  // Group overrides by activity+time for cleaner display
+  const grouped = {};
+  currentOverrides.bunkActivityOverrides.forEach((o, i) => {
+    const key = `${o.activity}|${o.startTime}|${o.endTime}|${o.type}`;
+    if (!grouped[key]) {
+      grouped[key] = { ...o, bunks: [], indices: [] };
+    }
+    // Handle both old format (bunks array) and new format (bunk singular)
+    if (o.bunk) {
+      grouped[key].bunks.push(o.bunk);
+    } else if (o.bunks && Array.isArray(o.bunks)) {
+      grouped[key].bunks.push(...o.bunks);
+    }
+    grouped[key].indices.push(i);
+  });
+
   cont.innerHTML = `
     <h4 style="margin:0 0 10px 0;">Existing Overrides</h4>
-    ${currentOverrides.bunkActivityOverrides.map((o, i) => `
+    ${Object.values(grouped).map(o => `
       <div style="background:#f9f9f9;padding:10px;border-radius:8px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;border:1px solid #e5e7eb;">
         <div><strong>${o.activity}</strong> (${o.type})<br><span style="font-size:0.85em;color:#666;">${o.bunks.join(', ')} • ${o.startTime}-${o.endTime}</span></div>
-        <button class="remove-bo-btn" data-index="${i}" style="background:#dc3545;color:white;border:none;width:28px;height:28px;border-radius:4px;cursor:pointer;">×</button>
+        <button class="remove-bo-btn" data-indices="${o.indices.join(',')}" style="background:#dc3545;color:white;border:none;width:28px;height:28px;border-radius:4px;cursor:pointer;">×</button>
       </div>
     `).join('')}
   `;
 
   cont.querySelectorAll('.remove-bo-btn').forEach(btn => {
     btn.onclick = () => {
-      currentOverrides.bunkActivityOverrides.splice(parseInt(btn.dataset.index), 1);
+      const indices = btn.dataset.indices.split(',').map(Number).sort((a,b) => b - a);
+      // Remove from highest index first to preserve lower indices
+      indices.forEach(idx => {
+        currentOverrides.bunkActivityOverrides.splice(idx, 1);
+      });
       window.saveCurrentDailyData("bunkActivityOverrides", currentOverrides.bunkActivityOverrides);
       renderExistingBunkOverrides();
     };
