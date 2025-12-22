@@ -1,10 +1,10 @@
 // =================================================================
-// skeleton_sandbox.js v4.0 — MODERN UI REDESIGN
+// skeleton_sandbox.js v4.1 — FIXED: Added getRules export
 //
 // ✔ Matches App Theme (Apple/System UI style)
 // ✔ Segmented Controls for Severity
 // ✔ Toggle Switches for constraints
-// ✔ Retains all logic from v3.3
+// ✔ Fixed: getRules() function for conflict detection
 // =================================================================
 
 (function () {
@@ -51,11 +51,18 @@
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(rules)); } catch {}
   }
 
+  // Get the current rules (for conflict detection)
+  function getRules() {
+    loadRules();
+    return rules.tileTypeRules || [];
+  }
+
   // =================================================================
   // CONFLICT ENGINE (LOGIC CORE)
   // =================================================================
 
   function detectConflicts(skeleton) {
+    loadRules(); // Always load latest rules
     if (!skeleton?.length || !rules.enabled) return [];
     const conflicts = [];
     const seen = new Set();
@@ -176,7 +183,7 @@
             conflicts detected.
         </span>
       </div>
-      <button id="view-conflicts-btn" style="background:white; border:1px solid #f87171; color:#b91c1c; font-size:0.8rem; padding:4px 10px;">Review</button>
+      <button id="view-conflicts-btn" style="background:white; border:1px solid #f87171; color:#b91c1c; font-size:0.8rem; padding:4px 10px; border-radius:4px; cursor:pointer;">Review</button>
     `;
     container.prepend(banner);
     
@@ -190,7 +197,7 @@
   // MODAL UI — THEME MATCHING
   // =================================================================
 
-  function showRulesModal() {
+  function showRulesModal(onClose) {
     loadRules();
     const overlay = document.createElement('div');
     overlay.className = 'ss-overlay';
@@ -229,7 +236,13 @@
     document.body.appendChild(overlay);
 
     // Event Listeners
-    const close = () => { overlay.classList.add('fade-out'); setTimeout(() => overlay.remove(), 200); };
+    const close = () => { 
+      overlay.classList.add('fade-out'); 
+      setTimeout(() => {
+        overlay.remove();
+        if (typeof onClose === 'function') onClose();
+      }, 200); 
+    };
     modal.querySelector('.ss-close-btn').onclick = close;
     modal.querySelector('.ss-btn-primary').onclick = () => { saveRules(); close(); };
 
@@ -406,6 +419,16 @@
       .ss-toggle-wrapper { display: flex; align-items: center; gap: 8px; cursor: pointer; }
       .ss-toggle-label { font-size: 0.75rem; color: #6b7280; white-space: nowrap; }
 
+      /* SWITCH STYLES */
+      .switch { position: relative; display: inline-block; width: 36px; height: 20px; }
+      .switch input { opacity: 0; width: 0; height: 0; }
+      .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .3s; }
+      .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .3s; }
+      .switch input:checked + .slider { background-color: #2563eb; }
+      .switch input:checked + .slider:before { transform: translateX(16px); }
+      .slider.round { border-radius: 20px; }
+      .slider.round:before { border-radius: 50%; }
+
       /* ADD BUTTON */
       .ss-add-btn {
         width: 100%; border: none; background: transparent; padding: 16px;
@@ -458,7 +481,8 @@
     renderBanner,
     showRulesModal,
     loadRules,
-    saveRules
+    saveRules,
+    getRules  // ADDED: Required for conflict detection in daily_adjustments.js
   };
 
 })();
