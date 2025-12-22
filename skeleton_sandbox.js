@@ -1,14 +1,28 @@
 // =================================================================
-// skeleton_sandbox.js v5.0 — TILE-BASED CONFLICT DETECTOR
+// skeleton_sandbox.js v5.1 — TILE-BASED CONFLICT DETECTOR
 //
-// ✔ Shows all tiles from skeleton
+// ✔ Uses predefined TILES from palette (not skeleton)
+// ✔ Smart/Split tiles checked by their component activities
 // ✔ 3-way severity: Warn (Red) | Notice (Yellow) | Ignore
 // ✔ Add custom tile types for pinned events
-// ✔ Scans grid and highlights conflicts
 // =================================================================
 
 (function () {
   'use strict';
+
+  // =================================================================
+  // PREDEFINED TILES (matches the palette in daily_adjustments.js)
+  // =================================================================
+
+  const PREDEFINED_TILES = [
+    { name: 'Swim', type: 'swim' },
+    { name: 'Lunch', type: 'lunch' },
+    { name: 'Snacks', type: 'snacks' },
+    { name: 'Dismissal', type: 'dismissal' },
+    { name: 'League Game', type: 'league' },
+    { name: 'Specialty League', type: 'specialty_league' },
+    { name: 'Regroup', type: 'custom' }
+  ];
 
   // =================================================================
   // STORAGE
@@ -18,17 +32,27 @@
   
   // Rules stored as: { "Swim": "warn", "Lunch": "notice", "League Game": "ignore" }
   let tileRules = {};
+  let customTiles = []; // User-added custom tile names
 
   function loadRules() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) tileRules = JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        tileRules = parsed.rules || parsed || {};
+        customTiles = parsed.customTiles || [];
+      }
     } catch {}
     return tileRules;
   }
 
   function saveRules() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(tileRules)); } catch {}
+    try { 
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        rules: tileRules,
+        customTiles: customTiles
+      })); 
+    } catch {}
   }
 
   function getRules() {
@@ -37,42 +61,76 @@
   }
 
   // =================================================================
-  // GET ALL UNIQUE TILES FROM SKELETON
+  // EXTRACT ACTIVITIES FROM SMART/SPLIT TILES
   // =================================================================
 
-  function getUniqueTilesFromSkeleton(skeleton) {
-    if (!skeleton || !Array.isArray(skeleton)) return [];
+  /**
+   * Extract component activities from a tile event name
+   * e.g., "Swim / Special Activity" → ["Swim", "Special Activity"]
+   * e.g., "Art / Sports" → ["Art", "Sports"]
+   * e.g., "Swim" → ["Swim"]
+   */
+  function extractActivities(eventName) {
+    if (!eventName) return [];
     
-    const seen = new Set();
-    const tiles = [];
+    // Check if it's a combined tile (smart or split)
+    if (eventName.includes(' / ')) {
+      return eventName.split(' / ').map(s => s.trim()).filter(Boolean);
+    }
     
-    skeleton.forEach(item => {
-      const name = item.event || item.name;
-      if (!name || seen.has(name)) return;
-      
-      // Skip generic slots
-      const lower = name.toLowerCase();
-      if (lower.includes('general activity') || 
-          lower.includes('sports slot') || 
-          lower.includes('special activity') ||
-          lower === 'activity' ||
-          lower === 'free') return;
-      
-      seen.add(name);
-      tiles.push({
-        name: name,
-        type: item.type || 'custom',
-        count: skeleton.filter(s => s.event === name).length
-      });
-    });
+    // Single activity
+    return [eventName.trim()];
+  }
+
+  /**
+   * Check if two tiles have any overlapping activities
+   */
+  function hasOverlappingActivity(eventA, eventB) {
+    const activitiesA = extractActivities(eventA);
+    const activitiesB = extractActivities(eventB);
     
-    // Sort by count (most used first), then alphabetically
-    tiles.sort((a, b) => {
-      if (b.count !== a.count) return b.count - a.count;
-      return a.name.localeCompare(b.name);
-    });
+    for (const actA of activitiesA) {
+      for (const actB of activitiesB) {
+        // Normalize for comparison
+        const normA = actA.toLowerCase().trim();
+        const normB = actB.toLowerCase().trim();
+        
+        if (normA === normB) {
+          return actA; // Return the matching activity name
+        }
+        
+        // Also check partial matches for common variations
+        // e.g., "Swim" should match "Swim" in "Swim / Special"
+        if (normA.includes(normB) || normB.includes(normA)) {
+          return actA.length <= actB.length ? actA : actB;
+        }
+      }
+    }
     
-    return tiles;
+    return null; // No overlap
+  }
+
+  /**
+   * Get the severity for an activity (checks all component activities)
+   */
+  function getActivitySeverity(eventName) {
+    const activities = extractActivities(eventName);
+    
+    let highestSeverity = null;
+    let matchedActivity = null;
+    
+    for (const activity of activities) {
+      const severity = tileRules[activity];
+      if (severity === 'warn') {
+        return { severity: 'warn', activity }; // Warn is highest, return immediately
+      }
+      if (severity === 'notice' && highestSeverity !== 'warn') {
+        highestSeverity = 'notice';
+        matchedActivity = activity;
+      }
+    }
+    
+    return highestSeverity ? { severity: highestSeverity, activity: matchedActivity } : null;
   }
 
   // =================================================================
@@ -117,24 +175,26 @@
         // Must be different divisions
         if (a.division === b.division) continue;
         
-        // Must be same event type/name
-        if (a.event !== b.event) continue;
-        
         // Must overlap in time
         if (!timesOverlap(a, b)) continue;
         
-        // Check if this tile type has a rule
-        const severity = tileRules[a.event];
+        // Check if any activities overlap between the two tiles
+        const overlappingActivity = hasOverlappingActivity(a.event, b.event);
+        
+        if (!overlappingActivity) continue;
+        
+        // Check if this activity has a rule
+        const severity = tileRules[overlappingActivity];
         if (!severity || severity === 'ignore') continue;
         
         // Avoid duplicate conflict entries
-        const key = [a.id, b.id].sort().join('|');
+        const key = [a.id, b.id].sort().join('|') + '_' + overlappingActivity;
         if (seen.has(key)) continue;
         seen.add(key);
         
         conflicts.push({
           type: severity, // 'warn' or 'notice'
-          resource: a.event,
+          resource: overlappingActivity,
           event1: a,
           event2: b
         });
@@ -173,15 +233,41 @@
   }
 
   // =================================================================
+  // GET ALL TILES FOR THE MODAL
+  // =================================================================
+
+  function getAllTiles() {
+    loadRules();
+    
+    // Start with predefined tiles
+    const tiles = PREDEFINED_TILES.map(t => ({
+      name: t.name,
+      type: t.type,
+      isPredefined: true
+    }));
+    
+    // Add custom tiles
+    customTiles.forEach(name => {
+      if (!tiles.find(t => t.name === name)) {
+        tiles.push({
+          name: name,
+          type: 'custom',
+          isPredefined: false
+        });
+      }
+    });
+    
+    return tiles;
+  }
+
+  // =================================================================
   // MODAL UI
   // =================================================================
 
   function showRulesModal(onClose, currentSkeleton) {
     loadRules();
     
-    // Get skeleton from window if not provided
-    const skeleton = currentSkeleton || window.dailyOverrideSkeleton || [];
-    const tiles = getUniqueTilesFromSkeleton(skeleton);
+    const tiles = getAllTiles();
     
     // Inject styles
     injectStyles();
@@ -196,7 +282,7 @@
       <div class="cd-header">
         <div>
           <h2 class="cd-title">Conflict Detection</h2>
-          <p class="cd-subtitle">Set how each tile type should be flagged when it appears in multiple divisions at the same time.</p>
+          <p class="cd-subtitle">Set how each tile type should be flagged when it appears in multiple divisions at the same time. Smart and Split tiles are checked by their component activities.</p>
         </div>
         <button class="cd-close-btn">×</button>
       </div>
@@ -213,7 +299,7 @@
         </div>
         
         <button id="cd-add-custom" class="cd-add-btn">
-          <span>+</span> Add Custom Tile Type
+          <span>+</span> Add Custom Activity
         </button>
       </div>
 
@@ -249,32 +335,30 @@
     modal.querySelector('#cd-reset-btn').onclick = () => {
       if (confirm('Reset all rules to defaults?')) {
         // Set sensible defaults
-        tileRules = {};
-        tiles.forEach(t => {
-          const lower = t.name.toLowerCase();
-          if (lower.includes('swim') || lower.includes('pool')) {
-            tileRules[t.name] = 'warn';
-          } else if (lower.includes('league') || lower.includes('lunch') || lower.includes('dismissal')) {
-            tileRules[t.name] = 'notice';
-          } else {
-            tileRules[t.name] = 'ignore';
-          }
-        });
+        tileRules = {
+          'Swim': 'warn',
+          'Lunch': 'notice',
+          'Snacks': 'notice',
+          'Dismissal': 'notice',
+          'League Game': 'notice',
+          'Specialty League': 'notice',
+          'Regroup': 'ignore'
+        };
         renderTiles();
       }
     };
 
     modal.querySelector('#cd-add-custom').onclick = () => {
-      const name = prompt("Enter tile/event name:", "");
+      const name = prompt("Enter activity name (e.g., 'Pool', 'Art', 'Music'):", "");
       if (name && name.trim()) {
         const trimmed = name.trim();
-        if (!tileRules.hasOwnProperty(trimmed)) {
+        if (!tiles.find(t => t.name.toLowerCase() === trimmed.toLowerCase())) {
+          customTiles.push(trimmed);
           tileRules[trimmed] = 'notice';
-          // Add to tiles list for rendering
-          tiles.push({ name: trimmed, type: 'custom', count: 0 });
+          tiles.push({ name: trimmed, type: 'custom', isPredefined: false });
           renderTiles();
         } else {
-          alert('This tile type already exists.');
+          alert('This activity already exists.');
         }
       }
     };
@@ -285,17 +369,17 @@
       if (tiles.length === 0) {
         listContainer.innerHTML = `
           <div class="cd-empty">
-            No tiles found in the skeleton. Add a custom tile type or load a skeleton template first.
+            No tiles configured. Add a custom activity.
           </div>
         `;
         return;
       }
 
       tiles.forEach(tile => {
-        // Get current severity or default to 'ignore'
+        // Get current severity or default
         let severity = tileRules[tile.name];
         if (!severity) {
-          // Auto-detect sensible defaults
+          // Set defaults based on tile type
           const lower = tile.name.toLowerCase();
           if (lower.includes('swim') || lower.includes('pool')) {
             severity = 'warn';
@@ -312,7 +396,7 @@
         row.innerHTML = `
           <div class="cd-tile-info">
             <span class="cd-tile-name">${tile.name}</span>
-            ${tile.count > 0 ? `<span class="cd-tile-count">${tile.count}×</span>` : '<span class="cd-tile-count cd-custom">custom</span>'}
+            ${tile.isPredefined ? '' : '<span class="cd-tile-count cd-custom">custom</span>'}
           </div>
           <div class="cd-severity-slider">
             <button class="cd-sev-btn ${severity === 'warn' ? 'active' : ''}" data-sev="warn" title="Warn (Red)">
@@ -328,7 +412,7 @@
               Ignore
             </button>
           </div>
-          ${tile.count === 0 ? `<button class="cd-remove-btn" title="Remove">×</button>` : ''}
+          ${!tile.isPredefined ? `<button class="cd-remove-btn" title="Remove">×</button>` : ''}
         `;
 
         // Wire up severity buttons
@@ -345,8 +429,10 @@
         if (removeBtn) {
           removeBtn.onclick = () => {
             delete tileRules[tile.name];
-            const idx = tiles.findIndex(t => t.name === tile.name);
-            if (idx >= 0) tiles.splice(idx, 1);
+            const idx = customTiles.indexOf(tile.name);
+            if (idx >= 0) customTiles.splice(idx, 1);
+            const tileIdx = tiles.findIndex(t => t.name === tile.name);
+            if (tileIdx >= 0) tiles.splice(tileIdx, 1);
             renderTiles();
           };
         }
@@ -543,7 +629,9 @@
     loadRules,
     saveRules,
     getRules,
-    getUniqueTilesFromSkeleton
+    getAllTiles,
+    extractActivities,
+    hasOverlappingActivity
   };
 
 })();
