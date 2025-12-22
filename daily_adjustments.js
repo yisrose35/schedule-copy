@@ -410,23 +410,35 @@ function applyConflictHighlighting(gridEl) {
   
   console.log(`[Conflicts] Detected ${conflicts.length} conflicts in skeleton`);
   
-  if (!conflicts || conflicts.length === 0) return;
+  if (!conflicts || conflicts.length === 0) {
+    // Clear any existing conflict highlights
+    gridEl.querySelectorAll('.grid-event').forEach(tile => {
+      tile.classList.remove('conflict-warn', 'conflict-notice', 'conflict-critical', 'conflict-warning');
+    });
+    return;
+  }
   
   const conflictMap = {};
   conflicts.forEach(c => {
     // Mark both events involved in the conflict
+    // Use highest severity if multiple conflicts
+    const severity = c.type; // 'warn' or 'notice'
     if (c.event1?.id) {
-      conflictMap[c.event1.id] = conflictMap[c.event1.id] === 'critical' ? 'critical' : c.type;
+      if (!conflictMap[c.event1.id] || severity === 'warn') {
+        conflictMap[c.event1.id] = severity;
+      }
     }
     if (c.event2?.id) {
-      conflictMap[c.event2.id] = conflictMap[c.event2.id] === 'critical' ? 'critical' : c.type;
+      if (!conflictMap[c.event2.id] || severity === 'warn') {
+        conflictMap[c.event2.id] = severity;
+      }
     }
-    console.log(`[Conflicts] ${c.type}: ${c.resource} - ${c.event1?.event} vs ${c.event2?.event}`);
+    console.log(`[Conflicts] ${c.type}: ${c.resource} - ${c.event1?.event} (${c.event1?.division}) vs ${c.event2?.event} (${c.event2?.division})`);
   });
   
   // Apply visual highlighting
   gridEl.querySelectorAll('.grid-event').forEach(tile => {
-    tile.classList.remove('conflict-critical', 'conflict-warning');
+    tile.classList.remove('conflict-warn', 'conflict-notice', 'conflict-critical', 'conflict-warning');
     const id = tile.dataset.id;
     const severity = conflictMap[id];
     if (severity) {
@@ -792,6 +804,7 @@ function loadDailySkeleton() {
   const dailyData = window.loadCurrentDailyData?.() || {};
   if (dailyData.manualSkeleton && dailyData.manualSkeleton.length > 0) {
     dailyOverrideSkeleton = JSON.parse(JSON.stringify(dailyData.manualSkeleton));
+    window.dailyOverrideSkeleton = dailyOverrideSkeleton; // Expose globally for conflict detection
     return;
   }
   const assignments = masterSettings.app1.skeletonAssignments || {};
@@ -803,10 +816,12 @@ function loadDailySkeleton() {
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   let tmpl = assignments[dayNames[dow]] || assignments["Default"];
   dailyOverrideSkeleton = (tmpl && skeletons[tmpl]) ? JSON.parse(JSON.stringify(skeletons[tmpl])) : [];
+  window.dailyOverrideSkeleton = dailyOverrideSkeleton; // Expose globally for conflict detection
 }
 
 function saveDailySkeleton() {
   window.saveCurrentDailyData?.("manualSkeleton", dailyOverrideSkeleton);
+  window.dailyOverrideSkeleton = dailyOverrideSkeleton; // Keep global in sync
 }
 
 // EXACT same helper functions as master_schedule_builder.js
@@ -915,20 +930,22 @@ function init() {
         margin:4px; box-shadow:0 2px 6px rgba(0,0,0,0.1);
       }
       
-      /* Conflict styles - matches styles.css color palette */
-      .conflict-critical {
-        border:2px solid #b91c1c !important;
+      /* Conflict styles - Warn (Red) and Notice (Yellow) */
+      .conflict-warn, .conflict-critical {
+        border:2px solid #dc2626 !important;
         background:#fef2f2 !important;
-        box-shadow:0 0 0 1px rgba(185,28,28,0.2), 0 2px 8px rgba(185,28,28,0.15) !important;
+        box-shadow:0 0 0 2px rgba(220,38,38,0.2), 0 2px 8px rgba(220,38,38,0.15) !important;
       }
-      .conflict-critical strong, .conflict-critical span:not(.resize-handle) { color:#7f1d1d !important; }
+      .conflict-warn strong, .conflict-warn > div:first-child,
+      .conflict-critical strong, .conflict-critical > div:first-child { color:#991b1b !important; }
       
-      .conflict-warning {
-        border:2px solid #d97706 !important;
+      .conflict-notice, .conflict-warning {
+        border:2px solid #f59e0b !important;
         background:#fffbeb !important;
-        box-shadow:0 0 0 1px rgba(217,119,6,0.2), 0 2px 8px rgba(217,119,6,0.15) !important;
+        box-shadow:0 0 0 2px rgba(245,158,11,0.2), 0 2px 8px rgba(245,158,11,0.15) !important;
       }
-      .conflict-warning strong, .conflict-warning span:not(.resize-handle) { color:#92400e !important; }
+      .conflict-notice strong, .conflict-notice > div:first-child,
+      .conflict-warning strong, .conflict-warning > div:first-child { color:#92400e !important; }
       
       /* Tab buttons - matches styles.css */
       .da-tab-btn { 
@@ -1077,7 +1094,13 @@ function initDailySkeletonUI() {
   if (window.SkeletonSandbox) {
     const rulesBtn = document.getElementById("conflict-rules-btn");
     if (rulesBtn) {
-      rulesBtn.onclick = () => window.SkeletonSandbox.showRulesModal(() => { renderGrid(document.getElementById("daily-skeleton-grid")); });
+      rulesBtn.onclick = () => {
+        // Pass the current skeleton and a callback to refresh the grid
+        window.SkeletonSandbox.showRulesModal(
+          () => { renderGrid(document.getElementById("daily-skeleton-grid")); },
+          dailyOverrideSkeleton
+        );
+      };
     }
   }
 
