@@ -187,6 +187,10 @@ function bumpOverlappingTiles(newEvent, divName) {
 // =================================================================
 
 function renderPalette(paletteEl) {
+  if (!paletteEl) {
+    console.error("Palette element not found!");
+    return;
+  }
   paletteEl.innerHTML = '';
   TILES.forEach(tile => {
     const el = document.createElement('div');
@@ -196,8 +200,12 @@ function renderPalette(paletteEl) {
     el.style.padding = '8px 12px';
     el.style.borderRadius = '5px';
     el.style.cursor = 'grab';
+    el.style.userSelect = 'none';
     el.draggable = true;
-    el.ondragstart = (e) => { e.dataTransfer.setData('application/json', JSON.stringify(tile)); };
+    el.ondragstart = (e) => { 
+      e.dataTransfer.setData('application/json', JSON.stringify(tile)); 
+      e.dataTransfer.effectAllowed = 'copy';
+    };
     paletteEl.appendChild(el);
   });
 }
@@ -987,7 +995,7 @@ function initDailySkeletonUI() {
       <div style="flex:1;"></div>
       ${window.SkeletonSandbox ? `<button id="conflict-rules-btn" style="padding:6px 12px;background:#fff;border:1px solid #ddd;border-radius:4px;cursor:pointer;">⚙️ Conflict Rules</button>` : ''}
     </div>
-    <div id="scheduler-palette" style="padding:10px;background:#f4f4f4;border-radius:8px;margin-bottom:15px;display:flex;flex-wrap:wrap;gap:10px;"></div>
+    <div id="daily-skeleton-palette" style="padding:10px;background:#f4f4f4;border-radius:8px;margin-bottom:15px;display:flex;flex-wrap:wrap;gap:10px;"></div>
     <div id="scheduler-grid-wrapper" style="overflow-x:auto; border:1px solid #999; background:#fff;">
       <div id="daily-skeleton-grid"></div>
     </div>
@@ -1010,7 +1018,8 @@ function initDailySkeletonUI() {
     }
   }
 
-  renderPalette(document.getElementById("scheduler-palette"));
+  const paletteEl = document.getElementById("daily-skeleton-palette");
+  renderPalette(paletteEl);
   renderGrid(document.getElementById("daily-skeleton-grid"));
   renderDisplacedTilesPanel();
 }
