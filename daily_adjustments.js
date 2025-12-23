@@ -784,24 +784,74 @@ function addDropListeners(gridEl) {
         const specialActivities = (masterSettings.app1.specialActivities || []).map(s => s.name);
         const allLocations = [...new Set([...allFields, ...specialActivities])].sort();
         
+        console.log('[Elective] Available locations:', allLocations);
+        
         const activitiesInput = prompt(
           `ELECTIVE for ${divName}\n\n` +
           `Enter activities to RESERVE for this division (separated by commas).\n` +
           `Other divisions will NOT be able to use these during ${st} - ${et}.\n\n` +
           `Available:\n${allLocations.join(', ')}\n\n` +
+          `Tip: "Swim" or "Pool" will work for your swimming area.\n\n` +
           `Example: Swim, Court 1, Canteen`,
           ''
         );
         if (!activitiesInput || !activitiesInput.trim()) return;
         
-        // Parse and validate
+        // Swim/Pool alias patterns
+        const swimPoolPatterns = ['swim', 'pool', 'swimming', 'aqua'];
+        
+        function isSwimPoolAlias(name) {
+          const lower = (name || '').toLowerCase().trim();
+          return swimPoolPatterns.some(p => lower.includes(p) || p.includes(lower));
+        }
+        
+        function findPoolField(locations) {
+          for (const loc of locations) {
+            if (isSwimPoolAlias(loc)) return loc;
+          }
+          return null;
+        }
+        
+        const poolFieldName = findPoolField(allLocations);
+        console.log('[Elective] Pool field found:', poolFieldName);
+        
+        // Parse and validate with swim/pool alias support
         const requested = activitiesInput.split(',').map(s => s.trim()).filter(Boolean);
         const validated = [], invalid = [];
+        
         requested.forEach(name => {
+          console.log(`[Elective] Processing: "${name}"`);
+          
+          // Check for swim/pool aliases FIRST
+          if (isSwimPoolAlias(name)) {
+            console.log(`[Elective] "${name}" is a swim/pool alias`);
+            if (poolFieldName) {
+              if (!validated.includes(poolFieldName)) {
+                validated.push(poolFieldName);
+                console.log(`[Elective] Resolved "${name}" → "${poolFieldName}"`);
+              }
+            } else {
+              // No pool field in settings, but user wants swim - add the literal name
+              // The scheduler will handle it
+              if (!validated.includes(name)) {
+                validated.push(name);
+                console.log(`[Elective] No pool field found, adding "${name}" as-is`);
+              }
+            }
+            return; // Don't check against allLocations for swim/pool
+          }
+          
+          // Standard matching for non-swim activities
           const match = allLocations.find(loc => loc.toLowerCase() === name.toLowerCase());
-          if (match) validated.push(match);
-          else invalid.push(name);
+          if (match) {
+            if (!validated.includes(match)) validated.push(match);
+          } else {
+            invalid.push(name);
+          }
         });
+        
+        console.log('[Elective] Validated:', validated);
+        console.log('[Elective] Invalid:', invalid);
         
         if (validated.length === 0) {
           alert('No valid activities selected. Please try again.');
