@@ -1,10 +1,11 @@
 // ============================================================================
-// SmartLogicAdapter V43 (DIVISION RESTRICTIONS FIX)
+// SmartLogicAdapter V44 (ELECTIVE LOCK SUPPORT + SWIM/POOL ALIAS)
 // ============================================================================
-// CRITICAL FIXES FROM V42:
-// 1. NOW CHECKS DIVISION RESTRICTIONS (limitUsage, preferences.exclusive)
-// 2. Filters available specials BY DIVISION before calculating capacity
-// 3. Only specials that THIS division can use count toward capacity
+// CRITICAL FIXES FROM V43:
+// 1. NOW CHECKS GlobalFieldLocks for elective locks (division-aware)
+// 2. When activity is locked, uses fallback instead of leaving empty
+// 3. Swim/Pool interchangeability - treats them as the same resource
+// 4. Better logging for lock conflicts
 // ============================================================================
 
 (function() {
@@ -69,22 +70,80 @@
     }
 
     // =========================================================================
-    // CORE: CHECK IF DIVISION CAN USE A SPECIAL (NEW!)
+    // SWIM/POOL ALIAS SYSTEM
+    // =========================================================================
+    
+    const SWIM_POOL_ALIASES = ['swim', 'pool', 'swimming', 'swimming pool'];
+    
+    /**
+     * Check if a name refers to swim/pool
+     */
+    function isSwimOrPool(name) {
+        if (!name) return false;
+        const lower = name.toLowerCase().trim();
+        return SWIM_POOL_ALIASES.some(alias => lower.includes(alias));
+    }
+    
+    /**
+     * Get canonical name for swim/pool (returns "Pool" as the canonical)
+     */
+    function getCanonicalSwimName(name, activityProps) {
+        if (!isSwimOrPool(name)) return name;
+        
+        // Look for Pool in activity properties first
+        const poolNames = ['Pool', 'pool', 'Swimming Pool', 'swimming pool'];
+        for (const pn of poolNames) {
+            if (activityProps?.[pn]) return pn;
+        }
+        
+        // Look for Swim
+        const swimNames = ['Swim', 'swim', 'Swimming', 'swimming'];
+        for (const sn of swimNames) {
+            if (activityProps?.[sn]) return sn;
+        }
+        
+        return name; // Return original if no match found
+    }
+
+    // =========================================================================
+    // CORE: CHECK IF DIVISION CAN USE A SPECIAL (WITH LOCK CHECK)
     // =========================================================================
     
     /**
      * Checks if a specific division is allowed to use this special activity.
      * 
      * Checks:
-     * 1. limitUsage.enabled + limitUsage.divisions
-     * 2. preferences.exclusive + preferences.list
+     * 1. GlobalFieldLocks (elective locks)
+     * 2. limitUsage.enabled + limitUsage.divisions
+     * 3. preferences.exclusive + preferences.list
      * 
      * @param {string} divisionName - The division to check
      * @param {object} props - The activity properties
+     * @param {string} specialName - The name of the special activity
+     * @param {number[]} slots - The slot indices to check
      * @returns {boolean} - True if division can use this special
      */
-    function canDivisionUseSpecial(divisionName, props) {
+    function canDivisionUseSpecial(divisionName, props, specialName, slots) {
         if (!props) return true; // No props = no restrictions
+        
+        // CHECK GLOBAL FIELD LOCKS (Elective locks) - CRITICAL!
+        if (window.GlobalFieldLocks && slots && slots.length > 0) {
+            // Check the activity name
+            let lockInfo = window.GlobalFieldLocks.isFieldLocked(specialName, slots, divisionName);
+            
+            // Also check swim/pool aliases
+            if (!lockInfo && isSwimOrPool(specialName)) {
+                for (const alias of SWIM_POOL_ALIASES) {
+                    lockInfo = window.GlobalFieldLocks.isFieldLocked(alias, slots, divisionName);
+                    if (lockInfo) break;
+                }
+            }
+            
+            if (lockInfo) {
+                log(`    [LOCK] ${specialName} is locked for ${divisionName}: ${lockInfo.reason || lockInfo.lockedBy}`);
+                return false;
+            }
+        }
         
         // Check limitUsage restrictions
         if (props.limitUsage?.enabled) {
@@ -94,9 +153,6 @@
             if (!(divisionName in allowedDivisions)) {
                 return false;
             }
-            
-            // If there are specific bunks listed, we'll check that separately
-            // For now, division is in the list = allowed
         }
         
         // Check preferences.exclusive
@@ -129,13 +185,15 @@
      * @param {string} bunkName - The bunk to check
      * @param {string} divisionName - The division this bunk belongs to
      * @param {object} props - The activity properties
+     * @param {string} specialName - The name of the special
+     * @param {number[]} slots - The slot indices
      * @returns {boolean} - True if bunk can use this special
      */
-    function canBunkAccessSpecial(bunkName, divisionName, props) {
+    function canBunkAccessSpecial(bunkName, divisionName, props, specialName, slots) {
         if (!props) return true;
         
-        // First check division-level
-        if (!canDivisionUseSpecial(divisionName, props)) {
+        // First check division-level (includes lock check)
+        if (!canDivisionUseSpecial(divisionName, props, specialName, slots)) {
             return false;
         }
         
@@ -174,6 +232,7 @@
      * 1. window.getGlobalSpecialActivities() - master list
      * 2. activityProps - for availability, time rules, capacity, restrictions
      * 3. dailyFieldAvailability - for daily overrides
+     * 4. GlobalFieldLocks - for elective locks
      * 
      * @param {number} startMin - Block start time in minutes
      * @param {number} endMin - Block end time in minutes
@@ -221,9 +280,9 @@
                 return;
             }
 
-            // 2. CHECK DIVISION RESTRICTIONS (NEW!)
-            if (!canDivisionUseSpecial(divisionName, props)) {
-                log(`    ❌ ${specialName}: NOT ALLOWED for division "${divisionName}"`);
+            // 2. CHECK DIVISION RESTRICTIONS + LOCKS (UPDATED!)
+            if (!canDivisionUseSpecial(divisionName, props, specialName, slots)) {
+                log(`    ❌ ${specialName}: NOT ALLOWED for division "${divisionName}" (restriction or lock)`);
                 return;
             }
 
@@ -313,13 +372,14 @@
      * Checks:
      * 1. Bunk-level access (limitUsage.divisions[div] array)
      * 2. maxUsage limits from historical counts
+     * 3. GlobalFieldLocks
      */
-    function canBunkUseSpecial(bunk, divisionName, special, historicalCounts, activityProps) {
+    function canBunkUseSpecial(bunk, divisionName, special, historicalCounts, activityProps, slots) {
         const props = activityProps?.[special.name] || special.props || special;
         
-        // Check bunk-level access restrictions
-        if (!canBunkAccessSpecial(bunk, divisionName, props)) {
-            log(`      ${bunk}: not allowed to use ${special.name} (bunk restriction)`);
+        // Check bunk-level access restrictions (includes lock check)
+        if (!canBunkAccessSpecial(bunk, divisionName, props, special.name, slots)) {
+            log(`      ${bunk}: not allowed to use ${special.name} (bunk restriction or lock)`);
             return false;
         }
         
@@ -341,10 +401,10 @@
     /**
      * Find which specials a bunk can use from the available list
      */
-    function getUsableSpecialsForBunk(bunk, divisionName, availableSpecials, historicalCounts, activityProps) {
+    function getUsableSpecialsForBunk(bunk, divisionName, availableSpecials, historicalCounts, activityProps, slots) {
         return availableSpecials.filter(special => 
             special.remainingSlots > 0 && 
-            canBunkUseSpecial(bunk, divisionName, special, historicalCounts, activityProps)
+            canBunkUseSpecial(bunk, divisionName, special, historicalCounts, activityProps, slots)
         );
     }
 
@@ -364,6 +424,38 @@
         });
         
         return sorted[0];
+    }
+
+    // =========================================================================
+    // CHECK IF MAIN ACTIVITY IS LOCKED
+    // =========================================================================
+    
+    /**
+     * Check if a main activity (like Swim) is locked for a division
+     */
+    function isMainActivityLocked(activityName, divisionName, slots, activityProps) {
+        if (!window.GlobalFieldLocks) return false;
+        
+        // Check the activity directly
+        let lockInfo = window.GlobalFieldLocks.isFieldLocked(activityName, slots, divisionName);
+        if (lockInfo) return true;
+        
+        // Check swim/pool aliases
+        if (isSwimOrPool(activityName)) {
+            const canonical = getCanonicalSwimName(activityName, activityProps);
+            if (canonical !== activityName) {
+                lockInfo = window.GlobalFieldLocks.isFieldLocked(canonical, slots, divisionName);
+                if (lockInfo) return true;
+            }
+            
+            // Check all aliases
+            for (const alias of SWIM_POOL_ALIASES) {
+                lockInfo = window.GlobalFieldLocks.isFieldLocked(alias, slots, divisionName);
+                if (lockInfo) return true;
+            }
+        }
+        
+        return false;
     }
 
     // =========================================================================
@@ -418,13 +510,13 @@
         },
 
         // =====================================================================
-        // MAIN ASSIGNMENT LOGIC (V43 - DIVISION AWARE)
+        // MAIN ASSIGNMENT LOGIC (V44 - ELECTIVE LOCK AWARE)
         // =====================================================================
 
         generateAssignments(bunks, job, historical = {}, specialNames = [], activityProps = {}, masterFields = [], dailyFieldAvailability = {}, yesterdayHistory = {}) {
             
             log("\n" + "=".repeat(70));
-            log(`SMART TILE V43: ${job.division}`);
+            log(`SMART TILE V44: ${job.division}`);
             log(`Main1: ${job.main1}, Main2: ${job.main2}`);
             log(`Fallback: ${job.fallbackActivity} (for ${job.fallbackFor})`);
             log(`Bunks: ${bunks.join(', ')}`);
@@ -435,6 +527,23 @@
             const main2 = job.main2?.trim();
             const fbAct = job.fallbackActivity || "Sports";
             const fbFor = job.fallbackFor || "";
+
+            // Get slots for checking locks
+            const slotsA = window.SchedulerCoreUtils?.findSlotsForRange(job.blockA.startMin, job.blockA.endMin) || [];
+            const slotsB = job.blockB ? window.SchedulerCoreUtils?.findSlotsForRange(job.blockB.startMin, job.blockB.endMin) || [] : [];
+
+            // -----------------------------------------------------------------
+            // CHECK IF MAIN ACTIVITIES ARE LOCKED (ELECTIVE)
+            // -----------------------------------------------------------------
+            const main1LockedA = isMainActivityLocked(main1, divisionName, slotsA, activityProps);
+            const main2LockedA = isMainActivityLocked(main2, divisionName, slotsA, activityProps);
+            const main1LockedB = job.blockB ? isMainActivityLocked(main1, divisionName, slotsB, activityProps) : false;
+            const main2LockedB = job.blockB ? isMainActivityLocked(main2, divisionName, slotsB, activityProps) : false;
+
+            if (main1LockedA) log(`⚠️ ${main1} is LOCKED for ${divisionName} in Block A`);
+            if (main2LockedA) log(`⚠️ ${main2} is LOCKED for ${divisionName} in Block A`);
+            if (main1LockedB) log(`⚠️ ${main1} is LOCKED for ${divisionName} in Block B`);
+            if (main2LockedB) log(`⚠️ ${main2} is LOCKED for ${divisionName} in Block B`);
 
             // Determine which is the "special" and which is "open"
             let specialConfig, openAct;
@@ -457,20 +566,47 @@
             log(`  Division: ${divisionName}`);
 
             // -----------------------------------------------------------------
+            // DETERMINE EFFECTIVE ACTIVITIES FOR EACH BLOCK
+            // -----------------------------------------------------------------
+            // If an activity is locked, we need to use fallback or the other main
+            
+            function getEffectiveActivities(main1Locked, main2Locked, blockLabel) {
+                if (main1Locked && main2Locked) {
+                    log(`  ${blockLabel}: BOTH mains locked! Using fallback for all.`);
+                    return { special: null, open: fbAct, allFallback: true };
+                }
+                if (main1Locked) {
+                    log(`  ${blockLabel}: ${main1} locked, using ${main2} as open activity`);
+                    return { special: specialConfig === main1 ? null : specialConfig, open: main2, oneLocked: main1 };
+                }
+                if (main2Locked) {
+                    log(`  ${blockLabel}: ${main2} locked, using ${main1} as open activity`);
+                    return { special: specialConfig === main2 ? null : specialConfig, open: main1, oneLocked: main2 };
+                }
+                return { special: specialConfig, open: openAct, allFallback: false };
+            }
+
+            const effectiveA = getEffectiveActivities(main1LockedA, main2LockedA, "Block A");
+            const effectiveB = job.blockB ? getEffectiveActivities(main1LockedB, main2LockedB, "Block B") : null;
+
+            // -----------------------------------------------------------------
             // STEP 1: Get available specials for BLOCK A (DIVISION-FILTERED!)
             // -----------------------------------------------------------------
             log("\n--- BLOCK A: QUERYING AVAILABLE SPECIALS FOR " + divisionName + " ---");
             
-            let specialsBlockA = getAvailableSpecialsForTimeBlock(
-                job.blockA.startMin, 
-                job.blockA.endMin,
-                divisionName,  // PASS DIVISION!
-                activityProps, 
-                dailyFieldAvailability
-            );
-            
-            if (!needsResolution) {
-                specialsBlockA = specialsBlockA.filter(s => isSame(s.name, specialConfig));
+            let specialsBlockA = [];
+            if (!effectiveA.allFallback && effectiveA.special) {
+                specialsBlockA = getAvailableSpecialsForTimeBlock(
+                    job.blockA.startMin, 
+                    job.blockA.endMin,
+                    divisionName,
+                    activityProps, 
+                    dailyFieldAvailability
+                );
+                
+                if (!needsResolution && effectiveA.special) {
+                    specialsBlockA = specialsBlockA.filter(s => isSame(s.name, effectiveA.special));
+                }
             }
             
             const capacityA = getTotalSpecialCapacity(specialsBlockA);
@@ -482,19 +618,19 @@
             let specialsBlockB = [];
             let capacityB = 0;
             
-            if (job.blockB) {
+            if (job.blockB && effectiveB && !effectiveB.allFallback && effectiveB.special) {
                 log("\n--- BLOCK B: QUERYING AVAILABLE SPECIALS FOR " + divisionName + " ---");
                 
                 specialsBlockB = getAvailableSpecialsForTimeBlock(
                     job.blockB.startMin, 
                     job.blockB.endMin,
-                    divisionName,  // PASS DIVISION!
+                    divisionName,
                     activityProps, 
                     dailyFieldAvailability
                 );
                 
-                if (!needsResolution) {
-                    specialsBlockB = specialsBlockB.filter(s => isSame(s.name, specialConfig));
+                if (!needsResolution && effectiveB.special) {
+                    specialsBlockB = specialsBlockB.filter(s => isSame(s.name, effectiveB.special));
                 }
                 
                 capacityB = getTotalSpecialCapacity(specialsBlockB);
@@ -521,9 +657,12 @@
                 allAvailableSpecials.push(fromA || fromB);
             });
 
+            // Combine slots for eligibility check
+            const allSlots = [...slotsA, ...slotsB];
+
             bunks.forEach(bunk => {
                 const usable = allAvailableSpecials.filter(s => 
-                    canBunkUseSpecial(bunk, divisionName, s, historical, activityProps)
+                    canBunkUseSpecial(bunk, divisionName, s, historical, activityProps, allSlots)
                 );
                 
                 if (usable.length > 0) {
@@ -531,7 +670,7 @@
                     log(`  ${bunk}: ELIGIBLE (can use: ${usable.map(s => s.name).join(', ')})`);
                 } else {
                     ineligibleBunks.push(bunk);
-                    log(`  ${bunk}: INELIGIBLE (maxed out or restricted)`);
+                    log(`  ${bunk}: INELIGIBLE (maxed out, restricted, or locked)`);
                 }
             });
 
@@ -587,36 +726,44 @@
             const block1 = {};
             const specialWinnersA = new Set();
             
-            // Reset remaining slots
-            specialsBlockA.forEach(s => s.remainingSlots = s.capacity);
+            // Handle all-fallback case
+            if (effectiveA.allFallback) {
+                bunks.forEach(bunk => {
+                    block1[bunk] = fbAct;
+                    log(`  ${bunk} -> ${fbAct} (ALL LOCKED)`);
+                });
+            } else {
+                // Reset remaining slots
+                specialsBlockA.forEach(s => s.remainingSlots = s.capacity);
 
-            sortedEligible.forEach(bunk => {
-                const usable = getUsableSpecialsForBunk(bunk, divisionName, specialsBlockA, historical, activityProps);
-                
-                if (usable.length > 0) {
-                    const chosen = pickBestSpecialForBunk(bunk, usable, historical);
+                sortedEligible.forEach(bunk => {
+                    const usable = getUsableSpecialsForBunk(bunk, divisionName, specialsBlockA, historical, activityProps, slotsA);
                     
-                    if (chosen) {
-                        block1[bunk] = chosen.name;
-                        specialWinnersA.add(bunk);
-                        chosen.remainingSlots--;
-                        log(`  ${bunk} -> ${chosen.name} ⭐ (${chosen.remainingSlots} left for ${chosen.name})`);
+                    if (usable.length > 0) {
+                        const chosen = pickBestSpecialForBunk(bunk, usable, historical);
+                        
+                        if (chosen) {
+                            block1[bunk] = chosen.name;
+                            specialWinnersA.add(bunk);
+                            chosen.remainingSlots--;
+                            log(`  ${bunk} -> ${chosen.name} ⭐ (${chosen.remainingSlots} left for ${chosen.name})`);
+                        } else {
+                            block1[bunk] = effectiveA.open;
+                            log(`  ${bunk} -> ${effectiveA.open}`);
+                        }
                     } else {
-                        block1[bunk] = openAct;
-                        log(`  ${bunk} -> ${openAct}`);
+                        block1[bunk] = effectiveA.open;
+                        log(`  ${bunk} -> ${effectiveA.open} (no capacity)`);
                     }
-                } else {
-                    block1[bunk] = openAct;
-                    log(`  ${bunk} -> ${openAct} (no capacity)`);
-                }
-            });
+                });
 
-            ineligibleBunks.forEach(bunk => {
-                block1[bunk] = openAct;
-                log(`  ${bunk} -> ${openAct} (INELIGIBLE)`);
-            });
+                ineligibleBunks.forEach(bunk => {
+                    block1[bunk] = effectiveA.open;
+                    log(`  ${bunk} -> ${effectiveA.open} (INELIGIBLE)`);
+                });
+            }
 
-            log(`\n  Block A Summary: ${specialWinnersA.size} got specials, ${bunks.length - specialWinnersA.size} got ${openAct}`);
+            log(`\n  Block A Summary: ${specialWinnersA.size} got specials, ${bunks.length - specialWinnersA.size} got ${effectiveA.open || fbAct}`);
 
             // -----------------------------------------------------------------
             // STEP 6: BLOCK B ASSIGNMENT
@@ -627,56 +774,63 @@
             if (job.blockB) {
                 log("\n--- BLOCK B ASSIGNMENT ---");
                 
-                // Reset remaining slots for Block B
-                specialsBlockB.forEach(s => s.remainingSlots = s.capacity);
+                if (effectiveB.allFallback) {
+                    bunks.forEach(bunk => {
+                        block2[bunk] = fbAct;
+                        log(`  ${bunk} -> ${fbAct} (ALL LOCKED)`);
+                    });
+                } else {
+                    // Reset remaining slots for Block B
+                    specialsBlockB.forEach(s => s.remainingSlots = s.capacity);
 
-                // Winners from A get the open activity
-                log("Winners from A get OPEN activity:");
-                specialWinnersA.forEach(bunk => {
-                    block2[bunk] = openAct;
-                    log(`  ${bunk} -> ${openAct} (swapped)`);
-                });
+                    // Winners from A get the open activity
+                    log("Winners from A get OPEN activity:");
+                    specialWinnersA.forEach(bunk => {
+                        block2[bunk] = effectiveB.open;
+                        log(`  ${bunk} -> ${effectiveB.open} (swapped)`);
+                    });
 
-                // Losers from A try for specials
-                log("\nLosers from A try for SPECIAL:");
-                const losersFromA = sortedEligible.filter(b => !specialWinnersA.has(b));
+                    // Losers from A try for specials
+                    log("\nLosers from A try for SPECIAL:");
+                    const losersFromA = sortedEligible.filter(b => !specialWinnersA.has(b));
 
-                losersFromA.forEach(bunk => {
-                    const usable = getUsableSpecialsForBunk(bunk, divisionName, specialsBlockB, historical, activityProps);
-                    
-                    if (usable.length > 0) {
-                        const chosen = pickBestSpecialForBunk(bunk, usable, historical);
+                    losersFromA.forEach(bunk => {
+                        const usable = getUsableSpecialsForBunk(bunk, divisionName, specialsBlockB, historical, activityProps, slotsB);
                         
-                        if (chosen) {
-                            block2[bunk] = chosen.name;
-                            chosen.remainingSlots--;
-                            log(`  ${bunk} -> ${chosen.name} ⭐ (${chosen.remainingSlots} left)`);
-                            nextDayPriority = nextDayPriority.filter(p => p !== bunk);
+                        if (usable.length > 0) {
+                            const chosen = pickBestSpecialForBunk(bunk, usable, historical);
+                            
+                            if (chosen) {
+                                block2[bunk] = chosen.name;
+                                chosen.remainingSlots--;
+                                log(`  ${bunk} -> ${chosen.name} ⭐ (${chosen.remainingSlots} left)`);
+                                nextDayPriority = nextDayPriority.filter(p => p !== bunk);
+                            } else {
+                                block2[bunk] = fbAct;
+                                log(`  ${bunk} -> ${fbAct} (FALLBACK)`);
+                                if (!nextDayPriority.includes(bunk)) {
+                                    nextDayPriority.push(bunk);
+                                }
+                            }
                         } else {
                             block2[bunk] = fbAct;
-                            log(`  ${bunk} -> ${fbAct} (FALLBACK)`);
+                            log(`  ${bunk} -> ${fbAct} (FALLBACK - no usable)`);
                             if (!nextDayPriority.includes(bunk)) {
                                 nextDayPriority.push(bunk);
                             }
                         }
-                    } else {
-                        block2[bunk] = fbAct;
-                        log(`  ${bunk} -> ${fbAct} (FALLBACK - no usable)`);
-                        if (!nextDayPriority.includes(bunk)) {
-                            nextDayPriority.push(bunk);
-                        }
-                    }
-                });
+                    });
 
-                ineligibleBunks.forEach(bunk => {
-                    block2[bunk] = fbAct;
-                    log(`  ${bunk} -> ${fbAct} (INELIGIBLE)`);
-                });
+                    ineligibleBunks.forEach(bunk => {
+                        block2[bunk] = fbAct;
+                        log(`  ${bunk} -> ${fbAct} (INELIGIBLE)`);
+                    });
+                }
 
                 const specialsInB = Object.values(block2).filter(act => 
                     specialsBlockB.some(s => s.name === act)
                 ).length;
-                log(`\n  Block B Summary: ${specialsInB} got specials, ${bunks.length - specialsInB} got ${openAct}/${fbAct}`);
+                log(`\n  Block B Summary: ${specialsInB} got specials, ${bunks.length - specialsInB} got ${effectiveB.open || fbAct}`);
             }
 
             // -----------------------------------------------------------------
@@ -696,6 +850,8 @@
                 fallbackAct: fbAct,
                 capacityA,
                 capacityB,
+                effectiveA,
+                effectiveB,
                 availableSpecialsA: specialsBlockA.map(s => `${s.name}(cap:${s.capacity})`),
                 availableSpecialsB: specialsBlockB.map(s => `${s.name}(cap:${s.capacity})`),
                 block1,
@@ -730,7 +886,11 @@
                 a === "general activity slot" ||
                 a === "activity"
             );
-        }
+        },
+        
+        // Expose swim/pool helpers
+        isSwimOrPool: isSwimOrPool,
+        getCanonicalSwimName: getCanonicalSwimName
     };
 
     // =========================================================================
