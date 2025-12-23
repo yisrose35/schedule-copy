@@ -1,10 +1,11 @@
 // =================================================================
-// master_schedule_builder.js (UPDATED - DELETE & EDIT FEATURES)
+// master_schedule_builder.js (UPDATED - ELECTIVE TILE SUPPORT)
 //
 // Updates:
-// 1. Added "Update [Template Name]" button to save changes to current file.
-// 2. Wired up "Delete Selected Template" button.
-// 3. Tracks 'currentLoadedTemplate' to distinguish between new drafts and existing files.
+// 1. Added Elective tile type for reserving multiple activities
+// 2. Added "Update [Template Name]" button to save changes to current file.
+// 3. Wired up "Delete Selected Template" button.
+// 4. Tracks 'currentLoadedTemplate' to distinguish between new drafts and existing files.
 // =================================================================
 
 (function(){
@@ -48,6 +49,7 @@ const TILES=[
   {type:'special', name:'Special Activity', style:'background:#e8f5e9;border:1px solid #43a047;', description:'Special Activity slot only.'},
   {type:'smart', name:'Smart Tile', style:'background:#e3f2fd;border:2px dashed #0288d1;color:#01579b;', description:'Balances 2 activities with a fallback.'},
   {type:'split', name:'Split Activity', style:'background:#fff3e0;border:1px solid #f57c00;', description:'Two activities share the block (Switch halfway).'},
+  {type:'elective', name:'Elective', style:'background:#e1bee7;border:2px solid #8e24aa;color:#4a148c;', description:'Reserve multiple activities for this division only.'},
   {type:'league', name:'League Game', style:'background:#d1c4e9;border:1px solid #5e35b1;', description:'Regular League slot (Full Buyout).'},
   {type:'specialty_league', name:'Specialty League', style:'background:#fff8e1;border:1px solid #f9a825;', description:'Specialty League slot (Full Buyout).'},
   {type:'swim', name:'Swim', style:'background:#bbdefb;border:1px solid #1976d2;', description:'Pinned.'},
@@ -68,7 +70,7 @@ function mapEventNameForOptimizer(name){
 }
 
 // =================================================================
-// NEW: Field Selection Helper for Reserved Fields
+// Field Selection Helper for Reserved Fields
 // =================================================================
 function promptForReservedFields(eventName) {
   const globalSettings = window.loadGlobalSettings?.() || {};
@@ -113,6 +115,61 @@ function promptForReservedFields(eventName) {
   
   if (invalid.length > 0) {
     alert(`Warning: These fields were not found and will be ignored:\n${invalid.join(', ')}`);
+  }
+  
+  return validated;
+}
+
+// =================================================================
+// Elective Activity Selection Helper
+// =================================================================
+function promptForElectiveActivities(divName) {
+  const globalSettings = window.loadGlobalSettings?.() || {};
+  const app1 = globalSettings.app1 || {};
+  
+  const allFields = (app1.fields || []).map(f => f.name);
+  const specialActivities = (app1.specialActivities || []).map(s => s.name);
+  const allLocations = [...new Set([...allFields, ...specialActivities])].sort();
+  
+  if (allLocations.length === 0) {
+    alert('No fields or special activities configured. Please set them up first.');
+    return null;
+  }
+  
+  const activitiesInput = prompt(
+    `ELECTIVE for ${divName}\n\n` +
+    `Enter activities to RESERVE for this division (separated by commas).\n` +
+    `Other divisions will NOT be able to use these during this time.\n\n` +
+    `Available:\n${allLocations.join(', ')}\n\n` +
+    `Example: Swim, Court 1, Canteen`,
+    ''
+  );
+  
+  if (!activitiesInput || !activitiesInput.trim()) {
+    return null;
+  }
+  
+  // Parse and validate
+  const requested = activitiesInput.split(',').map(s => s.trim()).filter(Boolean);
+  const validated = [];
+  const invalid = [];
+  
+  requested.forEach(name => {
+    const match = allLocations.find(loc => loc.toLowerCase() === name.toLowerCase());
+    if (match) {
+      validated.push(match);
+    } else {
+      invalid.push(name);
+    }
+  });
+  
+  if (validated.length === 0) {
+    alert('No valid activities selected. Please try again.');
+    return null;
+  }
+  
+  if (invalid.length > 0) {
+    alert(`Warning: These were not found and will be ignored:\n${invalid.join(', ')}`);
   }
   
   return validated;
@@ -323,6 +380,7 @@ function renderPalette(){
     el.style.borderRadius='5px';
     el.style.cursor='grab';
     el.draggable=true;
+    el.title = tile.description || '';
     el.ondragstart=(e)=>{ e.dataTransfer.setData('application/json',JSON.stringify(tile)); };
     palette.appendChild(el);
   });
@@ -412,7 +470,7 @@ function renderGrid(){
   addRemoveListeners('.grid-event');
 }
 
-// --- Render Tile (UPDATED to show reserved fields) ---
+// --- Render Tile (UPDATED to show reserved fields and elective activities) ---
 function renderEventTile(ev, top, height){
     let tile = TILES.find(t=>t.name===ev.event);
     if(!tile && ev.type) tile = TILES.find(t=>t.type===ev.type);
@@ -420,11 +478,19 @@ function renderEventTile(ev, top, height){
     
     let label = `<strong>${ev.event}</strong><br>${ev.startTime}-${ev.endTime}`;
     
-    // NEW: Show reserved fields if any
-    if (ev.reservedFields && ev.reservedFields.length > 0) {
+    // Show reserved fields if any (for pinned events, NOT electives)
+    if (ev.reservedFields && ev.reservedFields.length > 0 && ev.type !== 'elective') {
         label += `<br><span style="font-size:0.7em;color:#c62828;">📍 ${ev.reservedFields.join(', ')}</span>`;
     }
     
+    // Show elective activities
+    if (ev.type === 'elective' && ev.electiveActivities && ev.electiveActivities.length > 0) {
+        const actList = ev.electiveActivities.slice(0, 4).join(', ');
+        const more = ev.electiveActivities.length > 4 ? ` +${ev.electiveActivities.length - 4}` : '';
+        label += `<br><span style="font-size:0.7em;color:#6a1b9a;">🎯 ${actList}${more}</span>`;
+    }
+    
+    // Smart tile fallback info
     if(ev.type==='smart' && ev.smartData){
         label += `<br><span style="font-size:0.75em">F: ${ev.smartData.fallbackActivity} (if ${ev.smartData.fallbackFor.substring(0,4)} busy)</span>`;
     }
@@ -505,7 +571,28 @@ function addDropListeners(selector){
                     subEvents: [{event:a1}, {event:a2}]
                 };
             }
-            // 3. PINNED TILES WITH FIELD RESERVATION
+            // 3. ELECTIVE TILE - Reserve multiple activities for this division
+            else if (tileData.type === 'elective') {
+                let st = prompt("Start Time:", startStr); if (!st) return;
+                let et = prompt("End Time:", endStr); if (!et) return;
+                
+                const activities = promptForElectiveActivities(divName);
+                if (!activities || activities.length === 0) return;
+                
+                const eventName = `Elective: ${activities.slice(0, 3).join(', ')}${activities.length > 3 ? '...' : ''}`;
+                
+                newEvent = {
+                    id: Date.now().toString(),
+                    type: 'elective',
+                    event: eventName,
+                    division: divName,
+                    startTime: st,
+                    endTime: et,
+                    electiveActivities: activities,
+                    reservedFields: activities // Also mark as reserved for field conflict detection
+                };
+            }
+            // 4. PINNED TILES WITH FIELD RESERVATION
             else if (['lunch','snacks','custom','dismissal','swim'].includes(tileData.type)) {
                 let name = tileData.name;
                 let reservedFields = [];
@@ -514,7 +601,7 @@ function addDropListeners(selector){
                     name = prompt("Event Name (e.g., 'Special with R. Rosenfeld'):", "Regroup");
                     if (!name) return;
                     
-                    // NEW: Ask for reserved fields
+                    // Ask for reserved fields
                     reservedFields = promptForReservedFields(name);
                 }
                 else if (tileData.type === 'swim') {
@@ -539,10 +626,10 @@ function addDropListeners(selector){
                     division: divName,
                     startTime: st,
                     endTime: et,
-                    reservedFields: reservedFields  // NEW: Store reserved fields
+                    reservedFields: reservedFields
                 };
             }
-            // 4. Standard & League Types
+            // 5. Standard & League Types
             else {
                 let name = tileData.name;
                 let finalType = tileData.type;
