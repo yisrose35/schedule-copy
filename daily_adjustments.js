@@ -202,8 +202,29 @@ function bumpOverlappingTiles(newEvent, divName) {
 }
 
 // =================================================================
-// RENDER PALETTE - EXACT COPY from master_schedule_builder.js
+// RENDER PALETTE - With tile info on click
 // =================================================================
+
+const TILE_DESCRIPTIONS = {
+  'activity': 'ACTIVITY SLOT: A flexible time block where the scheduler assigns either a sport or special activity based on availability and fairness rules.',
+  'sports': 'SPORTS SLOT: Dedicated time for sports activities only. The scheduler will assign an available field and sport, rotating fairly among bunks.',
+  'special': 'SPECIAL ACTIVITY: Time reserved for special activities like Art, Music, Drama, etc. Scheduler assigns based on capacity and usage limits.',
+  'smart': 'SMART TILE: Balances two activities (e.g., Swim/Art) across bunks. One group gets Activity A while another gets Activity B, then they swap. Includes fallback if primary is full.',
+  'split': 'SPLIT ACTIVITY: Divides the time block in half. First half is one activity, second half is another. Good for combining short activities.',
+  'elective': 'ELECTIVE: Reserves specific fields/activities for THIS division only. Other divisions cannot use the selected resources during this time.',
+  'league': 'LEAGUE GAME: Full buyout for a regular league matchup. All bunks in the division play head-to-head games. Fields are locked from other divisions.',
+  'specialty_league': 'SPECIALTY LEAGUE: Similar to regular leagues but for special sports (e.g., Hockey, Flag Football). Multiple games can run on the same field.',
+  'swim': 'SWIM: Pinned swim time. Automatically reserves the pool/swim area for this division.',
+  'lunch': 'LUNCH: Fixed lunch period. No scheduling occurs during this time.',
+  'snacks': 'SNACKS: Fixed snack break. No scheduling occurs during this time.',
+  'dismissal': 'DISMISSAL: End of day marker. Schedule generation stops at this point.',
+  'custom': 'CUSTOM PINNED: Create any fixed event (e.g., "Assembly", "Special Program"). You can optionally reserve specific fields.'
+};
+
+function showTileInfo(tile) {
+  const desc = TILE_DESCRIPTIONS[tile.type] || tile.description || 'No description available.';
+  alert(`${tile.name.toUpperCase()}\n\n${desc}`);
+}
 
 function renderPalette(paletteEl) {
   if (!paletteEl) {
@@ -221,10 +242,26 @@ function renderPalette(paletteEl) {
     el.style.cursor = 'grab';
     el.style.userSelect = 'none';
     el.draggable = true;
+    el.title = tile.description || 'Click for info';
+    
+    // Click handler for tile info
+    el.onclick = (e) => {
+      if (e.detail === 1) { // Single click
+        setTimeout(() => {
+          if (!el.dragging) {
+            showTileInfo(tile);
+          }
+        }, 200);
+      }
+    };
+    
     el.ondragstart = (e) => { 
+      el.dragging = true;
       e.dataTransfer.setData('application/json', JSON.stringify(tile)); 
       e.dataTransfer.effectAllowed = 'copy';
     };
+    el.ondragend = () => { el.dragging = false; };
+    
     paletteEl.appendChild(el);
   });
 }
