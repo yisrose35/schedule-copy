@@ -1,9 +1,9 @@
-
 // ============================================================================
-// scheduler_ui.js (GCM FINAL: LEAGUE SOURCE OF TRUTH)
+// scheduler_ui.js (UPDATED: ELECTIVE DISPLAY + LEAGUE SOURCE OF TRUTH)
 //
 // FIXES:
 // ✓ Connects UI directly to 'window.leagueAssignments' (The League Engine Output).
+// ✓ Elective tiles now display like leagues (combined cells showing activities)
 // ✓ No longer relies on "scanning bunks" for league data.
 // ✓ Guarantees the UI shows exactly what the League Generator created.
 // ============================================================================
@@ -329,7 +329,7 @@
         tdTime.textContent = block.label;
         tr.appendChild(tdTime);
 
-        // --- LEAGUE BLOCK RENDERER (The Critical Fix) ---
+        // --- LEAGUE BLOCK RENDERER ---
         if (block.event.startsWith("League Game") || block.event.startsWith("Specialty League")) {
           const td = document.createElement("td");
           td.colSpan = bunks.length;
@@ -342,12 +342,9 @@
           let titleHtml = block.event;
 
           // 1. CHECK THE MASTER SOURCE (window.leagueAssignments)
-          // This is the generated output from the League Engine
           const leagueData = window.leagueAssignments?.[div]?.[slotIdx];
           
           if (leagueData && leagueData.matchups) {
-              // Found authoritative data!
-              // Format matchups for display
               allMatchups = leagueData.matchups.map(m => 
                  `${m.teamA} vs ${m.teamB} — ${m.sport} @ ${m.field || 'TBD'}`
               );
@@ -380,6 +377,43 @@
 
           td.style.cursor = "pointer";
           td.onclick = () => editCell(bunks[0], block.startMin, block.endMin, block.event);
+
+          tr.appendChild(td);
+          tbody.appendChild(tr);
+          return;
+        }
+
+        // --- ELECTIVE BLOCK RENDERER (NEW!) ---
+        if (block.type === "elective" || block.event.toLowerCase().startsWith("elective")) {
+          const td = document.createElement("td");
+          td.colSpan = bunks.length;
+          td.style.background = "#f3e5f5"; // Light purple
+          td.style.fontWeight = "bold";
+
+          const activities = block.electiveActivities || block.reservedFields || [];
+          
+          let contentHtml = `<div style="color:#6a1b9a;">🎯 Elective</div>`;
+          
+          if (activities.length > 0) {
+            contentHtml += `<div style="font-size:0.9em;font-weight:normal;margin-top:4px;">`;
+            contentHtml += `<strong>Reserved for ${div}:</strong> ${activities.join(', ')}`;
+            contentHtml += `</div>`;
+            contentHtml += `<div style="font-size:0.8em;color:#666;margin-top:2px;">`;
+            contentHtml += `Other divisions cannot use these activities during this time.`;
+            contentHtml += `</div>`;
+          } else {
+            contentHtml += `<div style="font-size:0.85em;color:#666;">No activities specified</div>`;
+          }
+          
+          td.innerHTML = contentHtml;
+          td.style.cursor = "pointer";
+          td.onclick = () => {
+            const msg = `Elective Block for ${div}\n\n` +
+                        `Time: ${block.label}\n` +
+                        `Reserved Activities: ${activities.join(', ') || 'None'}\n\n` +
+                        `These activities are locked for other divisions during this time.`;
+            alert(msg);
+          };
 
           tr.appendChild(td);
           tbody.appendChild(tr);
