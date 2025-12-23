@@ -1,12 +1,11 @@
 // ============================================================================
-// scheduler_core_utils.js (FIXED v6 - SPORT PLAYER REQUIREMENTS)
+// scheduler_core_utils.js (FIXED v7 - ELECTIVE DIVISION LOCKS)
 // PART 1 of 3: THE FOUNDATION
 //
 // CRITICAL UPDATE:
-// - Integrated with GlobalFieldLocks for unified field availability checking
-// - canBlockFit() now checks GLOBAL LOCKS FIRST before any other checks
-// - NEW: Sport player requirements (min/max) as SOFT constraints
-// - Any field locked by leagues is COMPLETELY unavailable
+// - Division-aware lock checking for elective tiles
+// - canBlockFit() now passes division context to GlobalFieldLocks
+// - Elective tiles can lock fields for OTHER divisions while allowing their own
 // ============================================================================
 
 (function () {
@@ -239,14 +238,9 @@
     };
 
     // =================================================================
-    // 5. SPORT PLAYER REQUIREMENTS (NEW!)
+    // 5. SPORT PLAYER REQUIREMENTS
     // =================================================================
 
-    /**
-     * Get the min/max player requirements for a sport
-     * @param {string} sportName - The sport to check
-     * @returns {{ minPlayers: number|null, maxPlayers: number|null }}
-     */
     Utils.getSportPlayerRequirements = function(sportName) {
         if (!sportName) return { minPlayers: null, maxPlayers: null };
         
@@ -259,32 +253,21 @@
         };
     };
 
-    /**
-     * Check if player count is valid for a sport
-     * Returns: { valid: boolean, reason: string|null, severity: 'hard'|'soft'|null }
-     * 
-     * Hard violations: Way outside range (e.g., 5 players for baseball)
-     * Soft violations: Slightly outside range (e.g., 25 players for 24-max baseball)
-     */
     Utils.checkPlayerCountForSport = function(sportName, playerCount, isForLeague = false) {
-        // Don't apply to leagues
         if (isForLeague) {
             return { valid: true, reason: null, severity: null };
         }
         
         const reqs = Utils.getSportPlayerRequirements(sportName);
         
-        // No requirements = always valid
         if (reqs.minPlayers === null && reqs.maxPlayers === null) {
             return { valid: true, reason: null, severity: null };
         }
         
-        // Check minimum
         if (reqs.minPlayers !== null && playerCount < reqs.minPlayers) {
             const deficit = reqs.minPlayers - playerCount;
             const percentageUnder = deficit / reqs.minPlayers;
             
-            // Hard violation: more than 40% under minimum
             if (percentageUnder > 0.4) {
                 return { 
                     valid: false, 
@@ -293,7 +276,6 @@
                 };
             }
             
-            // Soft violation: slightly under
             return { 
                 valid: false, 
                 reason: `Below minimum (${playerCount}/${reqs.minPlayers})`,
@@ -301,12 +283,10 @@
             };
         }
         
-        // Check maximum
         if (reqs.maxPlayers !== null && playerCount > reqs.maxPlayers) {
             const excess = playerCount - reqs.maxPlayers;
             const percentageOver = excess / reqs.maxPlayers;
             
-            // Hard violation: more than 30% over maximum
             if (percentageOver > 0.3) {
                 return { 
                     valid: false, 
@@ -315,7 +295,6 @@
                 };
             }
             
-            // Soft violation: slightly over
             return { 
                 valid: false, 
                 reason: `Above maximum (${playerCount}/${reqs.maxPlayers})`,
@@ -326,9 +305,6 @@
         return { valid: true, reason: null, severity: null };
     };
 
-    /**
-     * Calculate the total player count for bunks using a field at a slot
-     */
     Utils.getFieldPlayerCount = function(fieldName, slotIndex, excludeBunk = null) {
         const bunkMeta = window.getBunkMetaData?.() || window.bunkMetaData || Utils._bunkMetaData || {};
         const schedules = window.scheduleAssignments || {};
@@ -413,7 +389,7 @@
     }
 
     // =================================================================
-    // 7. MAIN FIT LOGIC (WITH GLOBAL LOCK CHECK + PLAYER REQUIREMENTS)
+    // 7. MAIN FIT LOGIC (WITH DIVISION-AWARE LOCK CHECK)
     // =================================================================
 
     Utils.isTimeAvailable = function (slotIndex, props) {
@@ -461,16 +437,17 @@
 
     /**
      * =========================================================================
-     * MAIN FIT CHECK - NOW WITH GLOBAL LOCK CHECK + PLAYER REQUIREMENTS
+     * MAIN FIT CHECK - DIVISION-AWARE LOCK CHECKING FOR ELECTIVES
      * =========================================================================
      * This is the CRITICAL function that determines if a bunk can use a field.
      * 
      * CHECK ORDER:
      * 1. GLOBAL LOCKS (leagues) - If locked, IMMEDIATELY REJECT
-     * 2. Field reservations (skeleton)
-     * 3. Activity properties (availability, time rules, preferences)
-     * 4. Capacity checks
-     * 5. PLAYER REQUIREMENTS (soft check - adds penalty but doesn't reject outright)
+     * 2. DIVISION LOCKS (electives) - Check if this division is allowed
+     * 3. Field reservations (skeleton)
+     * 4. Activity properties (availability, time rules, preferences)
+     * 5. Capacity checks
+     * 6. Player requirements (soft check)
      * =========================================================================
      */
     Utils.canBlockFit = function (block, fieldName, activityProperties, fieldUsageBySlot, actName, forceLeague = false) {
@@ -492,13 +469,19 @@
         }
 
         // =================================================================
-        // ★★★ CRITICAL: GLOBAL LOCK CHECK FIRST ★★★
+        // ★★★ CRITICAL: DIVISION-AWARE GLOBAL LOCK CHECK ★★★
         // =================================================================
         if (window.GlobalFieldLocks && uniqueSlots.length > 0) {
-            const lockInfo = window.GlobalFieldLocks.isFieldLocked(fieldName, uniqueSlots);
+            // Pass the division context so elective locks work correctly
+            const divisionContext = block.divName || block.division;
+            const lockInfo = window.GlobalFieldLocks.isFieldLocked(fieldName, uniqueSlots, divisionContext);
             if (lockInfo) {
                 if (DEBUG_FITS) {
-                    console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - GLOBALLY LOCKED by ${lockInfo.lockedBy} (${lockInfo.leagueName || lockInfo.activity})`);
+                    if (lockInfo.type === 'division') {
+                        console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - ELECTIVE LOCKED for ${lockInfo.allowedDivision} (not ${divisionContext})`);
+                    } else {
+                        console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - GLOBALLY LOCKED by ${lockInfo.lockedBy}`);
+                    }
                 }
                 return false;
             }
@@ -592,11 +575,10 @@
                 const inList = rule.some(b => String(b) === bunkStr || parseInt(b) === bunkNum);
                 
                 if (!inList) {
-                    if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - limitUsage: bunk not in allowed list [${rule.slice(0,5).join(',')}...]`);
+                    if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - limitUsage: bunk not in allowed list`);
                     return false;
                 }
             }
-            if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: limitUsage PASSED - division ${block.divName} allowed`);
         }
 
         if (uniqueSlots.length === 0 && blockStartMin != null) {
@@ -614,7 +596,7 @@
         }
         
         if (uniqueSlots.length === 0) {
-            if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - no slots found for time ${blockStartMin}-${blockEndMin}`);
+            if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - no slots found`);
             return false;
         }
 
@@ -650,7 +632,7 @@
                     const activitiesMatch = allActivities.has(myActivity);
                     
                     if (!activitiesMatch) {
-                        if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - different activity (${actName} vs [${[...allActivities].join(', ')}])`);
+                        if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - different activity`);
                         return false;
                     }
                 }
@@ -662,7 +644,7 @@
             }
 
             // =================================================================
-            // SPORT PLAYER REQUIREMENTS (SOFT CHECK - only HARD violations reject)
+            // SPORT PLAYER REQUIREMENTS (SOFT CHECK)
             // =================================================================
             if (actName && !forceLeague) {
                 let currentHeadcount = 0;
@@ -674,13 +656,12 @@
                 const playerCheck = Utils.checkPlayerCountForSport(actName, projectedHeadcount, forceLeague);
                 
                 if (!playerCheck.valid && playerCheck.severity === 'hard') {
-                    if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - player count HARD violation: ${playerCheck.reason}`);
+                    if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - player count HARD violation`);
                     return false;
                 }
-                // Soft violations are handled by penalty scoring, not rejection
             }
 
-            // Legacy maxCapacity check (from sportMetaData.maxCapacity - kept for backwards compatibility)
+            // Legacy maxCapacity check
             const maxHeadcount = sportMeta[actName]?.maxCapacity ?? Infinity;
             
             if (maxHeadcount !== Infinity) {
@@ -690,7 +671,7 @@
                 });
                 
                 if (currentHeadcount + mySize > maxHeadcount) {
-                    if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - headcount exceeded (legacy check)`);
+                    if (DEBUG_FITS) console.log(`[FIT] ${block.bunk} - ${fieldName}: REJECTED - headcount exceeded`);
                     return false;
                 }
             }
@@ -702,14 +683,16 @@
 
     /**
      * Calculate sharing score - HIGHER is better
-     * NOW includes player requirement penalties
+     * NOW division-aware for elective locks
      */
     Utils.calculateSharingScore = function (block, fieldName, fieldUsageBySlot, actName) {
         if (!fieldUsageBySlot) fieldUsageBySlot = window.fieldUsageBySlot || {};
         
-        // First check if field is globally locked
+        // First check if field is locked (with division context)
         const slots = Utils.findSlotsForRange(block.startTime, block.endTime);
-        if (window.GlobalFieldLocks?.isFieldLocked(fieldName, slots)) {
+        const divisionContext = block.divName || block.division;
+        
+        if (window.GlobalFieldLocks?.isFieldLocked(fieldName, slots, divisionContext)) {
             return -999999; // Completely unavailable
         }
         
@@ -723,14 +706,13 @@
             if (scheduleUsage.count === 0) {
                 score += 100;
                 
-                // Check if bunk alone meets player requirements
                 if (actName) {
                     const playerCheck = Utils.checkPlayerCountForSport(actName, mySize, false);
                     if (!playerCheck.valid) {
                         if (playerCheck.severity === 'hard') {
-                            score -= 5000; // Heavy penalty for playing alone when way under minimum
+                            score -= 5000;
                         } else {
-                            score -= 500; // Moderate penalty for slightly under
+                            score -= 500;
                         }
                     }
                 }
@@ -759,15 +741,14 @@
                 if (sameActivity) {
                     score += 50;
                     
-                    // Check if combined size meets player requirements
                     if (actName) {
                         const playerCheck = Utils.checkPlayerCountForSport(actName, combinedSize, false);
                         if (playerCheck.valid) {
-                            score += 200; // Bonus for valid player count when sharing!
+                            score += 200;
                         } else if (playerCheck.severity === 'soft') {
-                            score -= 100; // Small penalty for slightly off
+                            score -= 100;
                         } else {
-                            score -= 2000; // Larger penalty for way off
+                            score -= 2000;
                         }
                     }
                 } else {
@@ -779,10 +760,6 @@
         return score;
     };
 
-    /**
-     * Calculate player count penalty for scoring purposes
-     * Returns penalty value (0 = no penalty, higher = worse)
-     */
     Utils.calculatePlayerCountPenalty = function(actName, playerCount, isLeague = false) {
         if (!actName || isLeague) return 0;
         
@@ -805,10 +782,10 @@
     // =================================================================
 
     Utils.timeline = {
-        checkAvailability(resourceName, startMin, endMin, weight, capacity, excludeBunk) {
-            // Check global locks first
+        checkAvailability(resourceName, startMin, endMin, weight, capacity, excludeBunk, divisionContext) {
+            // Check global locks first (with division context)
             const slots = Utils.findSlotsForRange(startMin, endMin);
-            if (window.GlobalFieldLocks?.isFieldLocked(resourceName, slots)) {
+            if (window.GlobalFieldLocks?.isFieldLocked(resourceName, slots, divisionContext)) {
                 return false;
             }
             
@@ -877,23 +854,19 @@
             const allSlots = window.unifiedTimes?.map((_, i) => i) || [];
             const lockInfo = window.GlobalFieldLocks.isFieldLocked(fieldName, allSlots);
             if (lockInfo) {
-                console.log('GLOBALLY LOCKED BY:', lockInfo);
+                console.log('LOCKED:', lockInfo);
             } else {
                 console.log('Not globally locked');
             }
         }
     };
 
-    /**
-     * Debug utility: Check player requirements for a sport
-     */
     Utils.debugSportRequirements = function(sportName) {
         const reqs = Utils.getSportPlayerRequirements(sportName);
         console.log(`\n=== ${sportName} PLAYER REQUIREMENTS ===`);
         console.log(`Min Players: ${reqs.minPlayers || 'Not set'}`);
         console.log(`Max Players: ${reqs.maxPlayers || 'Not set'}`);
         
-        // Test with some sample sizes
         [8, 12, 14, 18, 24, 28, 32].forEach(count => {
             const check = Utils.checkPlayerCountForSport(sportName, count, false);
             const status = check.valid ? '✅' : (check.severity === 'hard' ? '❌ HARD' : '⚠️ SOFT');
