@@ -1,5 +1,5 @@
 // ============================================================================
-// scheduler_core_main.js (FIXED v7 - BUNK OVERRIDES PRIORITY)
+// scheduler_core_main.js (FIXED v8 - ELECTIVE + SWIM/POOL ALIAS)
 //
 // ★★★ CRITICAL PROCESSING ORDER ★★★
 // 1. Initialize GlobalFieldLocks (RESET)
@@ -7,11 +7,14 @@
 //    - Personal Trips: Pinned tiles, no field usage
 //    - Sports: Register field usage for capacity tracking
 //    - Specials: Register field usage for capacity tracking
+// 2.5. Process Elective Tiles - Lock fields for other divisions
 // 3. Process Skeleton Blocks - identify leagues, smart tiles, activities
 // 4. ★ SPECIALTY LEAGUES FIRST ★ - Lock their fields globally
 // 5. ★ REGULAR LEAGUES SECOND ★ - Lock their fields globally
 // 6. Process Smart Tiles - respect all locks
 // 7. Run Total Solver for remaining activities - respect all locks
+//
+// SWIM/POOL ALIAS: "Swim" and "Pool" are treated as the same resource
 //
 // This ensures NO field double-booking across divisions!
 // ============================================================================
@@ -20,6 +23,37 @@
     'use strict';
 
     const TRANSITION_TYPE = window.TRANSITION_TYPE || "Transition/Buffer";
+
+    // -------------------------------------------------------------------------
+    // SWIM/POOL ALIAS SYSTEM
+    // -------------------------------------------------------------------------
+    const SWIM_POOL_ALIASES = ['swim', 'pool', 'swimming', 'swimming pool'];
+    
+    function isSwimOrPool(name) {
+        if (!name) return false;
+        const lower = name.toLowerCase().trim();
+        return SWIM_POOL_ALIASES.some(alias => lower.includes(alias));
+    }
+    
+    function getCanonicalPoolName(activityProperties) {
+        // Find the actual pool/swim field name in activity properties
+        const poolNames = ['Pool', 'pool', 'Swimming Pool', 'swimming pool', 'Swim', 'swim'];
+        for (const pn of poolNames) {
+            if (activityProperties?.[pn]) return pn;
+        }
+        return null;
+    }
+    
+    function resolveSwimPoolName(name, activityProperties) {
+        if (!isSwimOrPool(name)) return name;
+        
+        const canonical = getCanonicalPoolName(activityProperties);
+        if (canonical) {
+            console.log(`[ALIAS] Resolved "${name}" to "${canonical}"`);
+            return canonical;
+        }
+        return name;
+    }
 
     // -------------------------------------------------------------------------
     // Helpers
@@ -229,9 +263,9 @@
                     return;
                 }
 
-                // ★★★ CHECK GLOBAL LOCKS - Don't generate for locked fields ★★★
-                if (window.GlobalFieldLocks?.isFieldLocked(activityLabel, slots)) {
-                    console.log(`[SmartTile] ${bunk} - ${activityLabel} is LOCKED, skipping`);
+                // ★★★ CHECK GLOBAL LOCKS - Pass division context for elective support ★★★
+                if (window.GlobalFieldLocks?.isFieldLocked(activityLabel, slots, divName)) {
+                    console.log(`[SmartTile] ${bunk} - ${activityLabel} is LOCKED for ${divName}, skipping`);
                     return;
                 }
 
@@ -420,8 +454,8 @@
                 if (fieldsForSport.length > 0) {
                     // Find the first available field for this sport
                     for (const candidateField of fieldsForSport) {
-                        // Check if field is locked
-                        if (window.GlobalFieldLocks?.isFieldLocked(candidateField, slots)) {
+                        // Check if field is locked (pass division context for elective support)
+                        if (window.GlobalFieldLocks?.isFieldLocked(candidateField, slots, divName)) {
                             continue;
                         }
                         
@@ -472,9 +506,9 @@
                 // =====================================================
                 // SPECIAL ACTIVITY - Register usage, fill schedule
                 // =====================================================
-                // Check if the special activity is available (not locked)
-                if (window.GlobalFieldLocks?.isFieldLocked(activityName, slots)) {
-                    console.warn(`  → Special ${activityName} is LOCKED, cannot assign to ${bunk}`);
+                // Check if the special activity is available (not locked) - pass division context
+                if (window.GlobalFieldLocks?.isFieldLocked(activityName, slots, divName)) {
+                    console.warn(`  → Special ${activityName} is LOCKED for ${divName}, cannot assign to ${bunk}`);
                     return;
                 }
                 
@@ -557,15 +591,38 @@
             
             // Lock each activity for OTHER divisions (not the elective division)
             activities.forEach(activityName => {
+                // ★★★ SWIM/POOL ALIAS RESOLUTION ★★★
+                let resolvedName = activityName;
+                if (isSwimOrPool(activityName)) {
+                    resolvedName = resolveSwimPoolName(activityName, activityProperties);
+                    if (resolvedName !== activityName) {
+                        console.log(`  [ALIAS] Resolved "${activityName}" → "${resolvedName}"`);
+                    }
+                }
+                
                 if (window.GlobalFieldLocks) {
                     // Use a special lock that allows the elective division but blocks others
                     window.GlobalFieldLocks.lockFieldForDivision(
-                        activityName,
+                        resolvedName,
                         slots,
                         electiveDivision,
                         `Elective (${electiveDivision})`
                     );
-                    console.log(`  → Locked "${activityName}" for ${electiveDivision} only`);
+                    console.log(`  → Locked "${resolvedName}" for ${electiveDivision} only`);
+                    
+                    // Also lock swim/pool aliases if this is a pool activity
+                    if (isSwimOrPool(resolvedName)) {
+                        SWIM_POOL_ALIASES.forEach(alias => {
+                            if (alias.toLowerCase() !== resolvedName.toLowerCase()) {
+                                window.GlobalFieldLocks.lockFieldForDivision(
+                                    alias,
+                                    slots,
+                                    electiveDivision,
+                                    `Elective (${electiveDivision}) - Pool Alias`
+                                );
+                            }
+                        });
+                    }
                 }
             });
         });
@@ -657,7 +714,17 @@
             const normGA = normalizeGA(item.event);
             const normLg = normalizeLeague(item.event);
             const normSL = normalizeSpecialtyLeague(item.event);
-            const finalName = normGA || normLg || normSL || item.event;
+            let finalName = normGA || normLg || normSL || item.event;
+            
+            // ★★★ SWIM/POOL ALIAS RESOLUTION ★★★
+            // If the event is Swim, resolve to the actual pool/swim field name
+            if (isSwimOrPool(finalName)) {
+                const resolvedName = resolveSwimPoolName(finalName, activityProperties);
+                if (resolvedName !== finalName) {
+                    console.log(`[SKELETON] Resolved "${finalName}" → "${resolvedName}"`);
+                    finalName = resolvedName;
+                }
+            }
 
             const isLeague = /league/i.test(finalName) || /league/i.test(item.event);
             const isSpecialtyLeague = item.type === 'specialty_league' || /specialty\s*league/i.test(item.event);
@@ -956,9 +1023,9 @@ window.debugSpecialAvailability = function(startMin, endMin) {
         const isAvailable = props.available !== false;
         
         // Check global lock
-        let isLocked = false;
+        let lockInfo = null;
         if (window.GlobalFieldLocks && slots.length > 0) {
-            isLocked = window.GlobalFieldLocks.isFieldLocked(special.name, slots) !== null;
+            lockInfo = window.GlobalFieldLocks.isFieldLocked(special.name, slots);
         }
         
         let capacity = 1;
@@ -977,7 +1044,15 @@ window.debugSpecialAvailability = function(startMin, endMin) {
         
         console.log(`\n${special.name}:`);
         console.log(`  Available: ${isAvailable}`);
-        console.log(`  Globally Locked: ${isLocked ? '🔒 YES' : 'No'}`);
+        if (lockInfo) {
+            if (lockInfo.lockType === 'division') {
+                console.log(`  Locked: 🎯 DIVISION (allowed for ${lockInfo.allowedDivision})`);
+            } else {
+                console.log(`  Locked: 🔒 GLOBAL by ${lockInfo.lockedBy}`);
+            }
+        } else {
+            console.log(`  Locked: No`);
+        }
         console.log(`  Capacity: ${capacity}`);
         console.log(`  Current Usage: ${currentUsage}`);
         console.log(`  Remaining: ${capacity - currentUsage}`);
