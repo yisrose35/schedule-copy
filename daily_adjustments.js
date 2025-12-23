@@ -65,6 +65,7 @@ const TILES = [
   { type: 'special', name: 'Special Activity', style: 'background:#e8f5e9;border:1px solid #43a047;', description: 'Special Activity slot only.' },
   { type: 'smart', name: 'Smart Tile', style: 'background:#e3f2fd;border:2px dashed #0288d1;color:#01579b;', description: 'Balances 2 activities with a fallback.' },
   { type: 'split', name: 'Split Activity', style: 'background:#fff3e0;border:1px solid #f57c00;', description: 'Two activities share the block (Switch halfway).' },
+  { type: 'elective', name: 'Elective', style: 'background:#e1bee7;border:2px solid #8e24aa;color:#4a148c;', description: 'Reserve multiple activities for this division only.' },
   { type: 'league', name: 'League Game', style: 'background:#d1c4e9;border:1px solid #5e35b1;', description: 'Regular League slot (Full Buyout).' },
   { type: 'specialty_league', name: 'Specialty League', style: 'background:#fff8e1;border:1px solid #f9a825;', description: 'Specialty League slot (Full Buyout).' },
   { type: 'swim', name: 'Swim', style: 'background:#bbdefb;border:1px solid #1976d2;', description: 'Pinned.' },
@@ -370,8 +371,15 @@ function renderEventTile(ev, top, height) {
     content = `<div style="font-weight:600;line-height:1.3;">${eventName}</div><div style="font-size:${timeSize};opacity:0.85;">${timeStr}</div>`;
     
     // Show reserved fields if any (only on larger tiles)
-    if (ev.reservedFields && ev.reservedFields.length > 0 && adjustedHeight > 60) {
+    if (ev.reservedFields && ev.reservedFields.length > 0 && adjustedHeight > 60 && ev.type !== 'elective') {
       content += `<div style="font-size:0.65rem;color:#c62828;margin-top:2px;">📍 ${ev.reservedFields.join(', ')}</div>`;
+    }
+    
+    // Elective tile - show reserved activities
+    if (ev.type === 'elective' && ev.electiveActivities && adjustedHeight > 50) {
+      const actList = ev.electiveActivities.slice(0, 4).join(', ');
+      const more = ev.electiveActivities.length > 4 ? ` +${ev.electiveActivities.length - 4}` : '';
+      content += `<div style="font-size:0.65rem;color:#6a1b9a;margin-top:2px;">🎯 ${actList}${more}</div>`;
     }
     
     // Smart tile fallback info
@@ -729,7 +737,57 @@ function addDropListeners(gridEl) {
         let a2 = prompt("Activity 2 (Second Half):"); if (!a2) return;
         newEvent = { id: Date.now().toString(), type: 'split', event: `${a1} / ${a2}`, division: divName, startTime: st, endTime: et, subEvents: [{ event: a1 }, { event: a2 }] };
       }
-      // 3. Pinned Tiles
+      // 3. Elective Tile - Reserve multiple activities for this division
+      else if (tileData.type === 'elective') {
+        let st = prompt("Start Time:", startStr); if (!st) return;
+        let et = prompt("End Time:", endStr); if (!et) return;
+        
+        // Build list of available activities
+        const allFields = (masterSettings.app1.fields || []).map(f => f.name);
+        const specialActivities = (masterSettings.app1.specialActivities || []).map(s => s.name);
+        const allLocations = [...new Set([...allFields, ...specialActivities])].sort();
+        
+        const activitiesInput = prompt(
+          `ELECTIVE for ${divName}\n\n` +
+          `Enter activities to RESERVE for this division (separated by commas).\n` +
+          `Other divisions will NOT be able to use these during ${st} - ${et}.\n\n` +
+          `Available:\n${allLocations.join(', ')}\n\n` +
+          `Example: Swim, Court 1, Canteen`,
+          ''
+        );
+        if (!activitiesInput || !activitiesInput.trim()) return;
+        
+        // Parse and validate
+        const requested = activitiesInput.split(',').map(s => s.trim()).filter(Boolean);
+        const validated = [], invalid = [];
+        requested.forEach(name => {
+          const match = allLocations.find(loc => loc.toLowerCase() === name.toLowerCase());
+          if (match) validated.push(match);
+          else invalid.push(name);
+        });
+        
+        if (validated.length === 0) {
+          alert('No valid activities selected. Please try again.');
+          return;
+        }
+        
+        if (invalid.length > 0) {
+          alert(`Warning: These were not found and will be ignored:\n${invalid.join(', ')}`);
+        }
+        
+        const eventName = `Elective: ${validated.slice(0, 3).join(', ')}${validated.length > 3 ? '...' : ''}`;
+        newEvent = { 
+          id: Date.now().toString(), 
+          type: 'elective', 
+          event: eventName, 
+          division: divName, 
+          startTime: st, 
+          endTime: et, 
+          electiveActivities: validated,
+          reservedFields: validated // Also mark as reserved for field conflict detection
+        };
+      }
+      // 4. Pinned Tiles
       else if (['lunch', 'snacks', 'custom', 'dismissal', 'swim'].includes(tileData.type)) {
         let name = tileData.name;
         let reservedFields = [];
