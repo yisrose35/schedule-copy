@@ -536,6 +536,43 @@
         console.log(`[BunkOverride] Processed ${bunkOverrides.length} overrides`);
 
         // =========================================================================
+        // STEP 2.5: Process Elective Tiles - Lock activities for other divisions
+        // =========================================================================
+        console.log("\n[STEP 2.5] Processing elective tiles...");
+        const electiveTiles = manualSkeleton.filter(item => item.type === 'elective');
+        
+        electiveTiles.forEach(elective => {
+            const electiveDivision = elective.division;
+            const activities = elective.electiveActivities || [];
+            const startMin = Utils.parseTimeToMinutes(elective.startTime);
+            const endMin = Utils.parseTimeToMinutes(elective.endTime);
+            const slots = Utils.findSlotsForRange(startMin, endMin);
+            
+            if (activities.length === 0 || slots.length === 0) {
+                console.warn(`[Elective] Skipping elective for ${electiveDivision} - no activities or slots`);
+                return;
+            }
+            
+            console.log(`[Elective] ${electiveDivision}: Reserving ${activities.join(', ')} @ ${elective.startTime}-${elective.endTime}`);
+            
+            // Lock each activity for OTHER divisions (not the elective division)
+            activities.forEach(activityName => {
+                if (window.GlobalFieldLocks) {
+                    // Use a special lock that allows the elective division but blocks others
+                    window.GlobalFieldLocks.lockFieldForDivision(
+                        activityName,
+                        slots,
+                        electiveDivision,
+                        `Elective (${electiveDivision})`
+                    );
+                    console.log(`  → Locked "${activityName}" for ${electiveDivision} only`);
+                }
+            });
+        });
+        
+        console.log(`[Elective] Processed ${electiveTiles.length} elective tiles`);
+
+        // =========================================================================
         // STEP 3: Categorize Skeleton Blocks
         // =========================================================================
         console.log("\n[STEP 3] Categorizing skeleton blocks...");
