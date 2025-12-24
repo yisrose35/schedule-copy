@@ -1,6 +1,6 @@
 // ============================================================================
 // scheduler_core_main.js (FIXED v8 - ELECTIVE + SWIM/POOL ALIAS)
-//
+// ============================================================================
 // ★★★ CRITICAL PROCESSING ORDER ★★★
 // 1. Initialize GlobalFieldLocks (RESET)
 // 2. Process Bunk Overrides (pinned specific bunks) - NOW WITH PROPER HANDLING
@@ -23,6 +23,65 @@
     'use strict';
 
     const TRANSITION_TYPE = window.TRANSITION_TYPE || "Transition/Buffer";
+
+    // -------------------------------------------------------------------------
+    // RAINY DAY MODE HELPERS
+    // -------------------------------------------------------------------------
+    function isRainyDayModeActive() {
+        const dailyData = window.loadCurrentDailyData?.() || {};
+        return dailyData.rainyDayMode === true;
+    }
+
+    function getRainyDayFieldFilter() {
+        if (!isRainyDayModeActive()) return null;
+        
+        const g = window.loadGlobalSettings?.() || {};
+        const fields = g.app1?.fields || [];
+        
+        // Get all fields that are NOT rainy-day-available (outdoor fields)
+        const outdoorFields = fields
+            .filter(f => f.rainyDayAvailable !== true)
+            .map(f => f.name);
+        
+        // Get indoor fields for logging
+        const indoorFields = fields
+            .filter(f => f.rainyDayAvailable === true)
+            .map(f => f.name);
+        
+        console.log(`[RainyDay] Mode ACTIVE`);
+        console.log(`[RainyDay] Indoor fields (available): ${indoorFields.join(', ') || 'none'}`);
+        console.log(`[RainyDay] Outdoor fields (disabled): ${outdoorFields.join(', ') || 'none'}`);
+        
+        return {
+            disabledFields: outdoorFields,
+            indoorFields: indoorFields
+        };
+    }
+
+    function getRainyDaySpecialActivities() {
+        if (!isRainyDayModeActive()) return { rainyDayOnly: [], regularAvailable: null };
+        
+        const g = window.loadGlobalSettings?.() || {};
+        const specials = g.app1?.specialActivities || [];
+        
+        // Rainy day only activities - these ONLY appear on rainy days
+        const rainyDayOnly = specials
+            .filter(s => s.rainyDayOnly === true)
+            .map(s => s.name);
+        
+        // Activities available on rainy days (most specials by default)
+        const regularAvailable = specials
+            .filter(s => s.availableOnRainyDay !== false && s.rainyDayOnly !== true)
+            .map(s => s.name);
+        
+        console.log(`[RainyDay] Rainy-day-only activities: ${rainyDayOnly.join(', ') || 'none'}`);
+        console.log(`[RainyDay] Regular activities (still available): ${regularAvailable.join(', ') || 'none'}`);
+        
+        return {
+            rainyDayOnly,
+            regularAvailable
+        };
+    }
 
     // -------------------------------------------------------------------------
     // SWIM/POOL ALIAS SYSTEM
@@ -320,7 +379,7 @@
     // =========================================================================
     window.runSkeletonOptimizer = function (manualSkeleton, externalOverrides) {
         console.log("\n" + "=".repeat(70));
-        console.log("★★★ OPTIMIZER STARTED (v7 - BUNK OVERRIDES PRIORITY) ★★★");
+        console.log("★★★ OPTIMIZER STARTED (v9 - RAINY DAY AWARE) ★★★");
         console.log("=".repeat(70));
         
         const Utils = window.SchedulerCoreUtils;
@@ -328,7 +387,8 @@
         window.activityProperties = config.activityProperties;
         window.unifiedTimes = [];
 
-        const { 
+        // Change 'const' to 'let' for disabledFields to allow updates
+        let { 
             divisions, 
             activityProperties, 
             masterLeagues, 
@@ -369,6 +429,33 @@
         // Scan skeleton for field reservations
         window.fieldReservations = Utils.getFieldReservationsFromSkeleton(manualSkeleton);
         console.log("[INIT] Scanned skeleton for field reservations");
+
+        // =========================================================================
+        // ★★★ STEP 0.5: RAINY DAY MODE CHECK ★★★
+        // =========================================================================
+        const rainyDayFilter = getRainyDayFieldFilter();
+        const rainyDaySpecials = getRainyDaySpecialActivities();
+        
+        if (rainyDayFilter) {
+            console.log("\n" + "☔".repeat(35));
+            console.log("★★★ RAINY DAY MODE ACTIVE ★★★");
+            console.log("☔".repeat(35));
+            
+            // Add outdoor fields to disabled list
+            const existingDisabled = disabledFields || [];
+            disabledFields = [...new Set([...existingDisabled, ...rainyDayFilter.disabledFields])];
+            
+            // Update config object so downstream solvers see the disabled fields
+            config.disabledFields = disabledFields;
+
+            console.log(`[RainyDay] Total disabled fields: ${disabledFields.length}`);
+            
+            // Note: We don't need to explicitly "enable" rainy-day-only specials here 
+            // because they are likely in masterSpecials already. 
+            // The filtering logic (which is in logic fillers) uses the rainyDayOnly flag.
+            // Since we are only updating core_main, we ensure the disabledFields list is correct
+            // so smart tiles and other logic in this file don't use outdoor fields.
+        }
 
         // =========================================================================
         // STEP 1: Build Time Grid
@@ -880,6 +967,7 @@
         console.log(`[SOLVER] Processing ${remainingActivityBlocks.length} activity blocks.`);
         
         if (window.totalSolverEngine && remainingActivityBlocks.length > 0) {
+            // Pass the updated config with modified disabledFields
             window.totalSolverEngine.solveSchedule(remainingActivityBlocks, config);
         }
 
@@ -1057,10 +1145,44 @@ window.debugSpecialAvailability = function(startMin, endMin) {
         console.log(`  Current Usage: ${currentUsage}`);
         console.log(`  Remaining: ${capacity - currentUsage}`);
         
-        if (isAvailable && !isLocked) {
+        if (isAvailable && !lockInfo) {
             totalCapacity += (capacity - currentUsage);
         }
     });
     
     console.log(`\n=== TOTAL AVAILABLE CAPACITY: ${totalCapacity} ===\n`);
+};
+
+window.debugRainyDayMode = function() {
+    const dailyData = window.loadCurrentDailyData?.() || {};
+    const g = window.loadGlobalSettings?.() || {};
+    const fields = g.app1?.fields || [];
+    const specials = g.app1?.specialActivities || [];
+    
+    console.log('\n' + '='.repeat(60));
+    console.log('RAINY DAY MODE DEBUG');
+    console.log('='.repeat(60));
+    
+    console.log(`\nStatus: ${dailyData.rainyDayMode ? '🌧️ ACTIVE' : '☀️ INACTIVE'}`);
+    
+    console.log('\n--- FIELDS ---');
+    fields.forEach(f => {
+        const status = f.rainyDayAvailable ? '🏠 Indoor' : '🌳 Outdoor';
+        console.log(`  ${f.name}: ${status}`);
+    });
+    
+    console.log('\n--- SPECIAL ACTIVITIES ---');
+    specials.forEach(s => {
+        let flags = [];
+        if (s.rainyDayOnly) flags.push('🌧️ Rainy Only');
+        if (s.availableOnRainyDay === false) flags.push('☀️ Sunny Only');
+        console.log(`  ${s.name}: ${flags.length ? flags.join(', ') : 'Always available'}`);
+    });
+    
+    console.log('\n--- DAILY OVERRIDES ---');
+    const overrides = dailyData.overrides || {};
+    console.log(`  Disabled Fields: ${(overrides.disabledFields || []).join(', ') || 'none'}`);
+    console.log(`  Pre-Rainy Disabled: ${(dailyData.preRainyDayDisabledFields || []).join(', ') || 'none'}`);
+    
+    console.log('\n' + '='.repeat(60));
 };
