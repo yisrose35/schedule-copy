@@ -1,7 +1,7 @@
 // ============================================================================
 // global_field_locks.js - UNIFIED FIELD LOCK SYSTEM
 // ============================================================================
-// This module provides a SINGLE SOURCE OF TRUTH for field availability.
+// Beta: This module provides a SINGLE SOURCE OF TRUTH for field availability.
 // ALL schedulers (specialty leagues, regular leagues, smart tiles, solver)
 // MUST use this system to check and register field usage.
 //
