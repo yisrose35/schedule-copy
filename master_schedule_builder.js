@@ -1,6 +1,6 @@
 // =================================================================
 // master_schedule_builder.js (UPDATED - ELECTIVE TILE SUPPORT)
-//
+//Beta
 // Updates:
 // 1. Added Elective tile type for reserving multiple activities
 // 2. Added "Update [Template Name]" button to save changes to current file.
