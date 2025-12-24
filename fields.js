@@ -1,10 +1,11 @@
 // ============================================================================
-// fields.js — MERGED: NEW UX + EXISTING LOGIC + SPORT PLAYER REQUIREMENTS
+// fields.js — MERGED: NEW UX + SPORT PLAYER REQS + RAINY DAY AVAILABILITY
 // ============================================================================
 // 1. Layout: Apple-inspired Two-Pane with Collapsible Detail Sections.
-// 2. Logic: Retains all Transition (Zones/Occupancy), Sharing, and Priority logic.
+// 2. Logic: Retains all Transition, Sharing, Priority, and Sport logic.
 // 3. Fix: Access & Restrictions toggle stays open and updates locally.
-// 4. NEW: Sport Player Requirements section for min/max players per sport
+// 4. Feat: Sport Player Requirements section.
+// 5. NEW: Weather & Availability (Rainy Day Mode configuration).
 // ============================================================================
 
 (function(){
@@ -205,7 +206,7 @@ function initFieldsTab(){
 }
 
 //------------------------------------------------------------------
-// DATA LOADING (Preserving Logic)
+// DATA LOADING
 //------------------------------------------------------------------
 function loadData(){
     const app1 = (window.loadGlobalSettings?.().app1) || {};
@@ -231,6 +232,9 @@ function loadData(){
             occupiesField:false,
             minDurationMin:0
         };
+
+        // NEW: Rainy Day Default
+        f.rainyDayAvailable = f.rainyDayAvailable ?? false;
     });
 }
 
@@ -351,7 +355,6 @@ function renderSportRulesSection() {
         const isHidden = bodyEl.style.display === 'none';
         bodyEl.style.display = isHidden ? 'block' : 'none';
         caretEl.style.transform = isHidden ? 'rotate(180deg)' : 'rotate(0deg)';
-        // Visual polish: remove extra padding on bottom if open? No, keep standard spacing.
     };
 
     // Add event listeners for Inputs
@@ -545,21 +548,25 @@ function renderDetailPane(){
     detailPaneEl.appendChild(section("Activities", summaryActivities(item), 
         () => renderActivities(item, allSports)));
 
-    // Transition & Zones (Logic from Code 2)
+    // Transition & Zones
     detailPaneEl.appendChild(section("Transition & Zone Rules", summaryTransition(item), 
         () => renderTransition(item)));
 
-    // Access & Priority (Logic from Code 2)
+    // Access & Priority
     detailPaneEl.appendChild(section("Access & Restrictions", summaryAccess(item), 
         () => renderAccess(item)));
 
-    // Sharing Rules (Logic from Code 2)
+    // Sharing Rules
     detailPaneEl.appendChild(section("Sharing Rules", summarySharing(item), 
         () => renderSharing(item)));
 
     // Time Rules
     detailPaneEl.appendChild(section("Time Rules", summaryTime(item), 
         () => renderTimeRules(item)));
+
+    // Weather & Availability (Rainy Day) - NEW
+    detailPaneEl.appendChild(section("Weather & Availability", summaryWeather(item), 
+        () => renderWeatherSettings(item)));
 }
 
 //------------------------------------------------------------------
@@ -602,7 +609,7 @@ function section(title, summary, builder){
 }
 
 //------------------------------------------------------------------
-// CONTENT GENERATORS (Combining Code 1 Style with Code 2 Logic)
+// CONTENT GENERATORS
 //------------------------------------------------------------------
 
 function summaryActivities(f){ return f.activities.length ? `${f.activities.length} sports selected` : "No sports selected"; }
@@ -614,6 +621,7 @@ function summaryAccess(f){
 }
 function summaryTransition(f){ return `${f.transition.preMin}m Pre / ${f.transition.postMin}m Post`; }
 function summaryTime(f){ return f.timeRules.length ? `${f.timeRules.length} rule(s) active` : "Available all day"; }
+function summaryWeather(f) { return f.rainyDayAvailable ? "🏠 Indoor (Rain OK)" : "🌳 Outdoor"; }
 
 
 // 1. ACTIVITIES
@@ -662,7 +670,7 @@ function renderActivities(item, allSports){
     return box;
 }
 
-// 2. TRANSITION (Logic from Code 2)
+// 2. TRANSITION
 function renderTransition(item){
     const t = item.transition;
     const box = document.createElement("div");
@@ -725,7 +733,7 @@ function renderTransition(item){
     return box;
 }
 
-// 3. SHARING (Logic from Code 2)
+// 3. SHARING
 function renderSharing(item){
     const container = document.createElement("div");
     const rules = item.sharableWith;
@@ -789,7 +797,7 @@ function renderSharing(item){
     return container;
 }
 
-// 4. ACCESS & PRIORITY (Refactored to stay open)
+// 4. ACCESS & PRIORITY
 function renderAccess(item){
     const container = document.createElement("div");
 
@@ -933,7 +941,7 @@ function renderAccess(item){
     return container;
 }
 
-// 5. TIME RULES (Logic from Code 2)
+// 5. TIME RULES
 function renderTimeRules(item){
     const container = document.createElement("div");
     
@@ -990,6 +998,62 @@ function renderTimeRules(item){
     return container;
 }
 
+// 6. WEATHER / RAINY DAY AVAILABILITY
+function renderWeatherSettings(item) {
+    const container = document.createElement("div");
+    
+    const isIndoor = item.rainyDayAvailable === true;
+    
+    container.innerHTML = `
+        <div style="margin-bottom: 16px;">
+            <p style="font-size: 0.85rem; color: #6b7280; margin: 0 0 12px 0;">
+                Mark this field as indoor/covered to keep it available during Rainy Day Mode.
+                Outdoor fields will be automatically disabled when rainy weather is activated.
+            </p>
+            
+            <div style="display: flex; align-items: center; gap: 12px; padding: 14px; 
+                        background: ${isIndoor ? '#ecfdf5' : '#fef3c7'}; 
+                        border: 1px solid ${isIndoor ? '#a7f3d0' : '#fcd34d'};
+                        border-radius: 10px; transition: all 0.2s ease;">
+                <span style="font-size: 28px;">${isIndoor ? '🏠' : '🌳'}</span>
+                <div style="flex: 1;">
+                    <div style="font-weight: 600; color: ${isIndoor ? '#065f46' : '#92400e'};">
+                        ${isIndoor ? 'Indoor / Covered' : 'Outdoor'}
+                    </div>
+                    <div style="font-size: 0.85rem; color: ${isIndoor ? '#047857' : '#b45309'};">
+                        ${isIndoor ? 'Available on rainy days' : 'Disabled during rainy days'}
+                    </div>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="rainy-day-toggle" ${isIndoor ? 'checked' : ''}>
+                    <span class="slider"></span>
+                </label>
+            </div>
+        </div>
+        
+        <div style="background: #f9fafb; border-radius: 8px; padding: 12px; font-size: 0.85rem; color: #4b5563;">
+            <strong>💡 Tip:</strong> Indoor facilities like gyms, covered courts, and activity rooms 
+            should be marked as indoor. Outdoor fields like soccer fields, baseball diamonds, 
+            and open courts should remain as outdoor.
+        </div>
+    `;
+    
+    // Bind toggle
+    container.querySelector('#rainy-day-toggle').onchange = function() {
+        item.rainyDayAvailable = this.checked;
+        saveData();
+        // Update the parent container to reflect the change
+        const parentContainer = container.parentElement;
+        parentContainer.innerHTML = '';
+        parentContainer.appendChild(renderWeatherSettings(item));
+        // Update summary
+        const summaryEl = container.closest('.detail-section')?.querySelector('.detail-section-summary');
+        if (summaryEl) summaryEl.textContent = summaryWeather(item);
+    };
+    
+    return container;
+}
+
 //------------------------------------------------------------------
 // HELPERS
 //------------------------------------------------------------------
@@ -1017,7 +1081,8 @@ function addField(){
         limitUsage:{ enabled:false, divisions:{} },
         preferences:{ enabled:false, exclusive:false, list:[] },
         timeRules:[],
-        transition:{ preMin:0, postMin:0, label:"Travel", zone:window.DEFAULT_ZONE_NAME || "Default", occupiesField:false, minDurationMin:0 }
+        transition:{ preMin:0, postMin:0, label:"Travel", zone:window.DEFAULT_ZONE_NAME || "Default", occupiesField:false, minDurationMin:0 },
+        rainyDayAvailable: false
     });
 
     addFieldInput.value = "";
